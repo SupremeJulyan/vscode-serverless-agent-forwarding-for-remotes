@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { readdir, readFile } from 'node:fs/promises';
-import { BridgeConfig, expandHome, loadConfig, MountConfig, resolveMount } from './config';
+import { BridgeConfig, ensureConfigFile, expandHome, loadConfig, MountConfig, resolveMount } from './config';
 import { commandExists, commandSucceeds } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 
@@ -24,6 +24,9 @@ interface PendingUnmount {
 const pendingOpenKey = 'serverlessRemote.pendingOpen';
 const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
 const pendingOpenTtlMs = 5 * 60 * 1000;
+const openConfigAction = 'Open Config';
+
+class ConfigActionRequiredError extends Error {}
 
 function settings(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('serverlessRemote');
@@ -37,13 +40,19 @@ async function readConfig(): Promise<BridgeConfig> {
   try {
     return await loadConfig(configPath());
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new ConfigActionRequiredError(`No config file was found at ${configPath()}.`);
+    }
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Cannot read ${configPath()}: ${message}`);
+    throw new ConfigActionRequiredError(`Cannot read ${configPath()}: ${message}`);
   }
 }
 
 async function selectMount(placeHolder: string): Promise<MountConfig | undefined> {
   const config = await readConfig();
+  if (config.mounts.length === 0) {
+    throw new ConfigActionRequiredError('No remote hosts or folders are configured yet.');
+  }
   const picked = await vscode.window.showQuickPick(
     config.mounts.map((mount) => ({
       label: mount.name,
@@ -284,7 +293,8 @@ async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<v
 }
 
 async function openConfig(): Promise<void> {
-  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(configPath()));
+  const resolvedPath = await ensureConfigFile(configPath());
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolvedPath));
   await vscode.window.showTextDocument(document);
 }
 
@@ -293,7 +303,17 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
     await action();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    void vscode.window.showErrorMessage(`Serverless Remote SSH: ${message}`);
+    if (error instanceof ConfigActionRequiredError) {
+      const selected = await vscode.window.showErrorMessage(
+        `Serverless Remote SSH: ${message}`,
+        openConfigAction
+      );
+      if (selected === openConfigAction) {
+        await vscode.commands.executeCommand(`${commandPrefix}.openConfig`);
+      }
+      return;
+    }
+    await vscode.window.showErrorMessage(`Serverless Remote SSH: ${message}`);
   }
 }
 

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
-import { expandHome, parseConfig, resolveMount } from '../src/config';
+import { ensureConfigFile, expandHome, parseConfig, resolveMount } from '../src/config';
 
 test('parses and resolves a mount through its host reference', () => {
   const config = parseConfig({
@@ -29,4 +32,16 @@ test('rejects an unknown remote terminal mode', () => {
 
 test('preserves a Windows drive-letter mount path', () => {
   assert.equal(expandHome('x:'), 'X:');
+});
+
+test('creates a minimal config without overwriting an existing config', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-'));
+  const configPath = path.join(directory, 'nested', 'config.json');
+
+  assert.equal(await ensureConfigFile(configPath), configPath);
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), { hosts: [], mounts: [] });
+
+  await writeFile(configPath, '{"hosts":["keep-me"]}\n');
+  await ensureConfigFile(configPath);
+  assert.equal(await readFile(configPath, 'utf8'), '{"hosts":["keep-me"]}\n');
 });

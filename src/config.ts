@@ -33,6 +33,8 @@ export interface ResolvedMount extends MountConfig {
   hostConfig: HostConfig;
 }
 
+const emptyConfig = `${JSON.stringify({ hosts: [], mounts: [] }, null, 2)}\n`;
+
 export function expandHome(value: string): string {
   if (/^[a-zA-Z]:[\\/]?$/.test(value)) {
     return value.slice(0, 2).toUpperCase();
@@ -105,6 +107,19 @@ export function parseConfig(value: unknown): BridgeConfig {
 export async function loadConfig(configPath: string): Promise<BridgeConfig> {
   const content = await fs.readFile(expandHome(configPath), 'utf8');
   return parseConfig(JSON.parse(content) as unknown);
+}
+
+export async function ensureConfigFile(configPath: string): Promise<string> {
+  const resolvedPath = expandHome(configPath);
+  await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+  try {
+    await fs.writeFile(resolvedPath, emptyConfig, { encoding: 'utf8', flag: 'wx' });
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) {
+      throw error;
+    }
+  }
+  return resolvedPath;
 }
 
 export function resolveMount(config: BridgeConfig, mount: MountConfig): ResolvedMount {
