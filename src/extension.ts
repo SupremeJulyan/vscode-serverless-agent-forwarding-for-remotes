@@ -10,7 +10,8 @@ import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import {
-  downloadInstaller, installMsiPackages, sshfsWinInstaller, winFspInstaller, WindowsInstaller
+  downloadInstaller, hasWindowsInstallDirectory, installMsiPackages, sshfsWinInstaller,
+  winFspInstaller, WindowsInstaller
 } from './windows-installer';
 
 const commandPrefix = 'serverlessRemote';
@@ -582,11 +583,13 @@ async function offerWindowsDependencyInstall(
   if (platformAdapter.kind !== 'windows') return;
   const missing: WindowsInstaller[] = [];
   const missingCommands: string[] = [];
-  if (!await commandExists('fsptool-x64.exe')) {
+  const hasWinFsp = await commandExists('fsptool-x64.exe') || await hasWindowsInstallDirectory('WinFsp');
+  if (!hasWinFsp) {
     missing.push(winFspInstaller);
     missingCommands.push('fsptool-x64.exe');
   }
-  if (!await commandExists('sshfs-win.exe')) {
+  const hasSshfsWin = await commandExists('sshfs-win.exe') || await hasWindowsInstallDirectory('SSHFS-Win');
+  if (!hasSshfsWin) {
     missing.push(sshfsWinInstaller);
     missingCommands.push('sshfs-win.exe');
   }
