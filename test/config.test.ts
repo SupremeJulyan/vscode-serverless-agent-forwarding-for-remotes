@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { ensureConfigFile, expandHome, parseConfig, resolveMount } from '../src/config';
+import { ensureConfigFile, expandHome, parseConfig, resolveMount, saveConfig } from '../src/config';
 
 test('parses and resolves a mount through its host reference', () => {
   const config = parseConfig({
@@ -14,6 +14,19 @@ test('parses and resolves a mount through its host reference', () => {
   const resolved = resolveMount(config, config.mounts[0]);
   assert.equal(resolved.hostConfig.ip, '10.0.0.2');
   assert.equal(resolved.remote_terminal, 'open');
+});
+
+test('saves a configuration that can be loaded as JSON', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-save-'));
+  const configPath = path.join(directory, 'config.json');
+  const config = {
+    encrypt_passwords: true,
+    hosts: [{ name: 'dev', ip: '10.0.0.2', user: 'alice', port: 22, vpn: true }],
+    mounts: [{ name: 'project', host: 'dev', remote_path: '/srv/project', remote_terminal: 'open' as const }]
+  };
+
+  await saveConfig(configPath, config);
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), config);
 });
 
 test('rejects a missing host reference', () => {
@@ -31,10 +44,11 @@ test('rejects an unknown remote terminal mode', () => {
 });
 
 test('preserves a Windows drive-letter mount path', () => {
-  assert.equal(expandHome('x:'), 'X:');
+  assert.equal(expandHome('x:'), 'X:\\');
+  assert.equal(expandHome('x:\\'), 'X:\\');
 });
 
-test('creates a documented config template without overwriting an existing config', async () => {
+test('creates a minimal config template without overwriting an existing config', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-'));
   const configPath = path.join(directory, 'nested', 'config.json');
 
@@ -43,8 +57,7 @@ test('creates a documented config template without overwriting an existing confi
   assert.deepEqual(created.hosts, []);
   assert.deepEqual(created.mounts, []);
   assert.equal(created.encrypt_passwords, true);
-  assert.equal(created._field_help.hosts.private_key_path.includes('私钥路径'), true);
-  assert.equal(created._example.mounts[0].local_paths.windows, 'X:');
+  assert.deepEqual(Object.keys(created).sort(), ['encrypt_passwords', 'hosts', 'mounts']);
   assert.deepEqual(parseConfig(created), { encrypt_passwords: true, hosts: [], mounts: [] });
 
   await writeFile(configPath, '{"hosts":["keep-me"]}\n');

@@ -49,13 +49,7 @@
           }]
         }
       ]
-    },
-    "_comment": { "type": "string", "description": "配置说明，不参与连接。" },
-    "_field_help": { "type": "object", "description": "字段说明，不参与连接。" },
-    "_example": { "type": "object", "description": "填写示例，不参与连接。" }
-  },
-  "patternProperties": {
-    "^_": { "description": "说明字段，不参与连接。" }
+    }
   },
   "additionalProperties": false,
   "definitions": {

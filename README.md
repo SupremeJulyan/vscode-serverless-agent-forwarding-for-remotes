@@ -51,6 +51,10 @@ Example:
 - `Serverless Remote SSH: Mount` and `Unmount` manage a selected SSHFS entry.
 - `Serverless Remote SSH: Show Status` opens an output panel summarizing every mount and, on WSL, the SSHFS/SSH relay state.
 - `Serverless Remote SSH: Open Config` opens the shared JSON configuration.
+- `Serverless Remote SSH: Add SSH Config` prompts for each SSH host field and saves it to the shared configuration.
+- `Serverless Remote SSH: Add SSHFS Config` prompts for each mount field, including the referenced SSH host and terminal mode.
+
+Passwords entered through `Add SSH Config` are encrypted in the bridge-compatible `enc:v1:` format before the configuration is written. The encryption master password is kept in VS Code SecretStorage. On Windows, an existing plaintext password is migrated automatically the next time its SSHFS mount is opened.
 
 For a `now` mount, the extension asks which local directory should receive the mount. For other modes, `local_paths` selects a path for the current platform and falls back to `local_path`. On Windows, configure a drive letter instead of a POSIX path.
 

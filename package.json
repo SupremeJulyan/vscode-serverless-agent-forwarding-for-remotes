@@ -13,12 +13,15 @@
   "extensionKind": ["workspace"],
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:serverlessRemote.openFolder",
     "onCommand:serverlessRemote.openTerminal",
     "onCommand:serverlessRemote.mount",
     "onCommand:serverlessRemote.unmount",
     "onCommand:serverlessRemote.status",
-    "onCommand:serverlessRemote.openConfig"
+    "onCommand:serverlessRemote.openConfig",
+    "onCommand:serverlessRemote.addSshConfig",
+    "onCommand:serverlessRemote.addSshfsConfig"
   ],
   "contributes": {
     "commands": [
@@ -27,7 +30,9 @@
       { "command": "serverlessRemote.mount", "title": "Serverless Remote SSH: Mount" },
       { "command": "serverlessRemote.unmount", "title": "Serverless Remote SSH: Unmount" },
       { "command": "serverlessRemote.status", "title": "Serverless Remote SSH: Show Status" },
-      { "command": "serverlessRemote.openConfig", "title": "Serverless Remote SSH: Open Config" }
+      { "command": "serverlessRemote.openConfig", "title": "Serverless Remote SSH: Open Config" },
+      { "command": "serverlessRemote.addSshConfig", "title": "Serverless Remote SSH: Add SSH Config" },
+      { "command": "serverlessRemote.addSshfsConfig", "title": "Serverless Remote SSH: Add SSHFS Config" }
     ],
     "menus": {
       "commandPalette": [
@@ -36,7 +41,9 @@
         { "command": "serverlessRemote.mount" },
         { "command": "serverlessRemote.unmount" },
         { "command": "serverlessRemote.status" },
-        { "command": "serverlessRemote.openConfig" }
+        { "command": "serverlessRemote.openConfig" },
+        { "command": "serverlessRemote.addSshConfig" },
+        { "command": "serverlessRemote.addSshfsConfig" }
       ]
     },
     "jsonValidation": [

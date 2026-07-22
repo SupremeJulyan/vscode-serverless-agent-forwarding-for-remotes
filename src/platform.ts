@@ -8,6 +8,7 @@ export interface CommandPlan {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
+  stdin?: string;
 }
 
 export interface PlatformAdapter {
@@ -95,6 +96,36 @@ function windowsUnc(remote: ResolvedMount): string {
   return `\\\\sshfs.${suffix}\\${host.user}@${host.ip}${port}\\${remotePath}`;
 }
 
+const windowsPasswordMountScript = `
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$source = @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class NetworkDrive {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct NETRESOURCE {
+    public int dwScope, dwType, dwDisplayType, dwUsage;
+    public string lpLocalName, lpRemoteName, lpComment, lpProvider;
+  }
+  [DllImport("mpr.dll", CharSet = CharSet.Unicode)]
+  static extern int WNetAddConnection2(ref NETRESOURCE resource, string password, string username, int flags);
+  public static void Mount(string localName, string remoteName, string username, string password) {
+    var resource = new NETRESOURCE { dwType = 1, lpLocalName = localName, lpRemoteName = remoteName };
+    int result = WNetAddConnection2(ref resource, password, username, 0);
+    if (result != 0) throw new Win32Exception(result);
+  }
+}
+'@
+Add-Type -TypeDefinition $source
+[NetworkDrive]::Mount(
+  $env:SERVERLESS_REMOTE_DRIVE,
+  $env:SERVERLESS_REMOTE_UNC,
+  $env:SERVERLESS_REMOTE_USER,
+  $env:SERVERLESS_REMOTE_PASSWORD
+)
+`;
+
 class WindowsAdapter implements PlatformAdapter {
   readonly kind = 'windows' as const;
   dependencies(): string[] { return ['ssh', 'net', 'sshfs-win.exe']; }
@@ -116,7 +147,22 @@ class WindowsAdapter implements PlatformAdapter {
         ]
       };
     }
-    return { command: 'net', args: ['use', this.drive(localPath), windowsUnc(remote), '/persistent:no'] };
+    const drive = this.drive(localPath);
+    const unc = windowsUnc(remote);
+    if (remote.hostConfig.password) {
+      return {
+        command: 'powershell.exe',
+        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', windowsPasswordMountScript],
+        env: {
+          SERVERLESS_REMOTE_DRIVE: drive,
+          SERVERLESS_REMOTE_UNC: unc,
+          SERVERLESS_REMOTE_USER: remote.hostConfig.user,
+          SERVERLESS_REMOTE_PASSWORD: remote.hostConfig.password
+        },
+        stdin: ''
+      };
+    }
+    return { command: 'net', args: ['use', drive, unc, '/persistent:no'] };
   }
   unmount(_remote: ResolvedMount, localPath: string): CommandPlan {
     return { command: 'net', args: ['use', this.drive(localPath), '/delete', '/y'] };

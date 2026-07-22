@@ -47,6 +47,20 @@ test('Windows builds an SSHFS-Win root-relative UNC mapping', () => {
   assert.deepEqual(plan.args, ['use', 'X:', '\\\\sshfs.r\\alice@10.0.0.2!2222\\srv\\project', '/persistent:no']);
 });
 
+test('Windows passes password credentials through the environment to the network API', () => {
+  const passwordRemote = { ...remote, hostConfig: { ...remote.hostConfig, password: 'secret value' } };
+  const plan = createPlatformAdapter('windows').mount(passwordRemote, 'X:');
+  assert.equal(plan.command, 'powershell.exe');
+  assert.equal(plan.args.includes('secret value'), false);
+  assert.equal(plan.args.at(-1)?.includes('WNetAddConnection2'), true);
+  assert.equal(plan.env?.SERVERLESS_REMOTE_DRIVE, 'X:');
+  assert.equal(plan.env?.SERVERLESS_REMOTE_UNC, '\\\\sshfs.r\\alice@10.0.0.2!2222\\srv\\project');
+  assert.equal(plan.env?.SERVERLESS_REMOTE_USER, 'alice');
+  assert.equal(plan.env?.SERVERLESS_REMOTE_PASSWORD, 'secret value');
+  assert.equal(plan.stdin, '');
+  assert.equal(plan.args.includes('secret value'), false);
+});
+
 test('Windows passes a custom private key to sshfs-win advanced mode', () => {
   const keyed = { ...remote, hostConfig: { ...remote.hostConfig, private_key_path: 'C:\\Keys\\dev' } };
   const plan = createPlatformAdapter('windows').mount(keyed, 'Y:');

@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CommandPlan } from './platform';
 
@@ -31,6 +31,31 @@ export async function commandSucceeds(plan: CommandPlan): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function executeWithStdin(plan: CommandPlan): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(plan.command, plan.args, {
+      cwd: plan.cwd,
+      env: { ...process.env, ...plan.env },
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = Buffer.concat([...stderr, ...stdout]).toString().trim();
+      reject(new Error(detail || `${plan.command} exited with code ${code ?? 'unknown'}`));
+    });
+    child.stdin.end(plan.stdin);
+  });
 }
 
 export async function waitForMount(target: string, timeoutSeconds: number): Promise<boolean> {

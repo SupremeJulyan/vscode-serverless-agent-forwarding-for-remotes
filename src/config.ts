@@ -34,66 +34,16 @@ export interface ResolvedMount extends MountConfig {
 }
 
 const configTemplate = {
-  _comment: '请按 _field_help 和 _example 填写；hosts 与 mounts 可配置多项。以 _ 开头的说明字段不会参与连接。',
   encrypt_passwords: true,
   hosts: [],
-  mounts: [],
-  _field_help: {
-    encrypt_passwords: '是否由配套 bridge 加密保存密码；建议保持 true。',
-    hosts: {
-      name: '主机唯一名称，供 mounts.host 引用。',
-      ip: '服务器 IP 地址或域名。',
-      user: 'SSH 登录用户名。',
-      port: 'SSH 端口，通常为 22。',
-      vpn: '是否通过 VPN 可见的网络连接。',
-      private_key_path: '私钥路径；使用密钥登录时填写，例如 ~/.ssh/id_ed25519。',
-      password: 'SSH 密码；与私钥按实际登录方式选择，避免提交到版本库。'
-    },
-    mounts: {
-      name: '远程目录的显示名称。',
-      host: '对应 hosts 中的 name。',
-      remote_path: '服务器上的绝对目录路径。',
-      local_path: '通用本地挂载路径；没有平台专用路径时使用。',
-      local_paths: {
-        windows: 'Windows 使用盘符，例如 X:。',
-        macos: 'macOS 本地挂载目录。',
-        linux: 'Linux 本地挂载目录。',
-        wsl: 'WSL 本地挂载目录。'
-      },
-      remote_terminal: 'open：打开目录后连接终端；now：每次临时选择挂载目录；never：不打开终端。'
-    }
-  },
-  _example: {
-    hosts: [{
-      name: 'dev',
-      ip: '10.0.0.2',
-      user: 'alice',
-      port: 22,
-      vpn: true,
-      private_key_path: '~/.ssh/id_ed25519',
-      password: '按需填写；使用私钥时删除此项'
-    }],
-    mounts: [{
-      name: 'project',
-      host: 'dev',
-      remote_path: '/home/alice/project',
-      local_path: '~/mnt/project',
-      local_paths: {
-        windows: 'X:',
-        macos: '/Users/alice/mnt/project',
-        linux: '/home/alice/mnt/project',
-        wsl: '/home/alice/mnt/project'
-      },
-      remote_terminal: 'open'
-    }]
-  }
+  mounts: []
 };
 
 const emptyConfig = `${JSON.stringify(configTemplate, null, 2)}\n`;
 
 export function expandHome(value: string): string {
   if (/^[a-zA-Z]:[\\/]?$/.test(value)) {
-    return value.slice(0, 2).toUpperCase();
+    return `${value.slice(0, 2).toUpperCase()}\\`;
   }
   if (value === '~') {
     return os.homedir();
@@ -176,6 +126,21 @@ export async function ensureConfigFile(configPath: string): Promise<string> {
     }
   }
   return resolvedPath;
+}
+
+export async function saveConfig(configPath: string, config: BridgeConfig): Promise<void> {
+  const resolvedPath = expandHome(configPath);
+  await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+  const temporaryPath = path.join(
+    path.dirname(resolvedPath),
+    `.config-${process.pid}-${Date.now()}.json`
+  );
+  try {
+    await fs.writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(temporaryPath, resolvedPath);
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
+  }
 }
 
 export function resolveMount(config: BridgeConfig, mount: MountConfig): ResolvedMount {
