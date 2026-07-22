@@ -76,11 +76,11 @@ class WslAdapter implements PlatformAdapter {
   mount(remote: ResolvedMount, localPath: string): CommandPlan {
     return {
       command: 'sshfs-bridge', args: ['mount', remote.name], cwd: localPath,
-      env: { SSHFS_BRIDGE_NO_TERMINAL: '1' }
+      env: { SSHFS_BRIDGE_NO_TERMINAL: '1' }, stdin: ''
     };
   }
   unmount(remote: ResolvedMount): CommandPlan {
-    return { command: 'sshfs-bridge', args: ['unmount', remote.name] };
+    return { command: 'sshfs-bridge', args: ['unmount', remote.name], stdin: '' };
   }
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return { command: 'mountpoint', args: ['-q', '--', localPath] };

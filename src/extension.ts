@@ -124,7 +124,12 @@ async function executeTask(plan: CommandPlan): Promise<void> {
     'Serverless Remote SSH',
     execution
   );
-  task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, panel: vscode.TaskPanelKind.Dedicated };
+  task.presentationOptions = {
+    reveal: vscode.TaskRevealKind.Always,
+    panel: vscode.TaskPanelKind.Dedicated,
+    close: true,
+    showReuseMessage: false
+  };
   await vscode.tasks.executeTask(task);
 }
 
@@ -319,6 +324,14 @@ function workspaceUsesPath(localPath: string): boolean {
 }
 
 async function executeUnmount(mount: MountConfig, localPath: string): Promise<void> {
+  let disposedTaskTerminal = false;
+  for (const terminal of vscode.window.terminals) {
+    if (terminal.name.includes('sshfs-bridge mount ')) {
+      terminal.dispose();
+      disposedTaskTerminal = true;
+    }
+  }
+  if (disposedTaskTerminal) await new Promise((resolve) => setTimeout(resolve, 300));
   const config = await readConfig();
   await executePlan(platformAdapter.unmount(resolveMount(config, mount), localPath));
 }
