@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Serverless Remote SSH Configuration",
+  "description": "SSH hosts and remote folders used by Serverless Remote SSH.",
+  "type": "object",
+  "required": ["hosts", "mounts"],
+  "properties": {
+    "encrypt_passwords": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否由配套 bridge 加密保存密码，建议启用。"
+    },
+    "hosts": {
+      "type": "array",
+      "description": "可连接的 SSH 主机。",
+      "items": { "$ref": "#/definitions/host" },
+      "defaultSnippets": [
+        {
+          "label": "添加 SSH 主机",
+          "body": [{
+            "name": "${1:dev}",
+            "ip": "${2:10.0.0.2}",
+            "user": "${3:alice}",
+            "port": 22,
+            "vpn": true,
+            "private_key_path": "${4:~/.ssh/id_ed25519}"
+          }]
+        }
+      ]
+    },
+    "mounts": {
+      "type": "array",
+      "description": "需要挂载或打开的远程目录。",
+      "items": { "$ref": "#/definitions/mount" },
+      "defaultSnippets": [
+        {
+          "label": "添加远程目录",
+          "body": [{
+            "name": "${1:project}",
+            "host": "${2:dev}",
+            "remote_path": "${3:/home/alice/project}",
+            "local_paths": {
+              "windows": "${4:X:}",
+              "macos": "${5:/Users/alice/mnt/project}",
+              "linux": "${6:/home/alice/mnt/project}",
+              "wsl": "${7:/home/alice/mnt/project}"
+            },
+            "remote_terminal": "open"
+          }]
+        }
+      ]
+    },
+    "_comment": { "type": "string", "description": "配置说明，不参与连接。" },
+    "_field_help": { "type": "object", "description": "字段说明，不参与连接。" },
+    "_example": { "type": "object", "description": "填写示例，不参与连接。" }
+  },
+  "patternProperties": {
+    "^_": { "description": "说明字段，不参与连接。" }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "host": {
+      "type": "object",
+      "required": ["name", "ip", "user"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "主机唯一名称，供 mounts.host 引用。" },
+        "ip": { "type": "string", "minLength": 1, "description": "服务器 IP 地址或域名。" },
+        "user": { "type": "string", "minLength": 1, "description": "SSH 登录用户名。" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 22, "description": "SSH 端口。" },
+        "vpn": { "type": "boolean", "default": false, "description": "是否通过 VPN 可见的网络连接。" },
+        "private_key_path": { "type": "string", "description": "SSH 私钥路径，例如 ~/.ssh/id_ed25519。" },
+        "password": { "type": "string", "description": "SSH 密码；使用私钥时无需填写，避免提交到版本库。" }
+      },
+      "additionalProperties": false
+    },
+    "mount": {
+      "type": "object",
+      "required": ["name", "host", "remote_path"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "远程目录的显示名称。" },
+        "host": { "type": "string", "minLength": 1, "description": "对应 hosts 中的 name。" },
+        "remote_path": { "type": "string", "minLength": 1, "description": "服务器上的绝对目录路径。" },
+        "local_path": { "type": "string", "description": "没有平台专用路径时使用的通用本地挂载路径。" },
+        "local_paths": {
+          "type": "object",
+          "description": "各平台的本地挂载路径。",
+          "properties": {
+            "windows": { "type": "string", "pattern": "^[A-Za-z]:$", "description": "Windows 盘符，例如 X:。" },
+            "macos": { "type": "string", "description": "macOS 本地挂载目录。" },
+            "linux": { "type": "string", "description": "Linux 本地挂载目录。" },
+            "wsl": { "type": "string", "description": "WSL 本地挂载目录。" }
+          },
+          "additionalProperties": false
+        },
+        "remote_terminal": {
+          "type": "string",
+          "enum": ["open", "now", "never"],
+          "enumDescriptions": ["打开目录后连接终端。", "每次临时选择挂载目录。", "不打开终端。"],
+          "default": "open",
+          "description": "远程终端的打开方式。"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -34,12 +34,18 @@ test('preserves a Windows drive-letter mount path', () => {
   assert.equal(expandHome('x:'), 'X:');
 });
 
-test('creates a minimal config without overwriting an existing config', async () => {
+test('creates a documented config template without overwriting an existing config', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-'));
   const configPath = path.join(directory, 'nested', 'config.json');
 
   assert.equal(await ensureConfigFile(configPath), configPath);
-  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), { hosts: [], mounts: [] });
+  const created = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.deepEqual(created.hosts, []);
+  assert.deepEqual(created.mounts, []);
+  assert.equal(created.encrypt_passwords, true);
+  assert.equal(created._field_help.hosts.private_key_path.includes('私钥路径'), true);
+  assert.equal(created._example.mounts[0].local_paths.windows, 'X:');
+  assert.deepEqual(parseConfig(created), { encrypt_passwords: true, hosts: [], mounts: [] });
 
   await writeFile(configPath, '{"hosts":["keep-me"]}\n');
   await ensureConfigFile(configPath);

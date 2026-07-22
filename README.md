@@ -59,7 +59,7 @@ For a `now` mount, the extension asks which local directory should receive the m
 ## Install
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.7.0.vsix
+code --install-extension vscode-serverless-remote-ssh-0.7.3.vsix
 ```
 
 After installation, use the `$(remote) Serverless SSH` status bar item or open the Command Palette.

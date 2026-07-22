@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.7.3
+
+- Add JSON Schema completion, validation, snippets, and hover help for the shared configuration.
+
+## 0.7.2
+
+- Add a complete, annotated configuration template for first-time setup.
+
+## 0.7.1
+
+- Create a minimal configuration file when Open Config is used for the first time.
+- Guide users to Open Config when configuration is missing, unreadable, or empty.
 - Close a workspace that is using a mount before unmounting it, then resume the unmount after VS Code reloads.
 - Show mount and WSL relay diagnostics in the Output panel instead of opening an SSH terminal.
 
