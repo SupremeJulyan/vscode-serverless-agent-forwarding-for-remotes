@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { readdir, readFile } from 'node:fs/promises';
 import { BridgeConfig, expandHome, loadConfig, MountConfig, resolveMount } from './config';
 import { commandExists, commandSucceeds } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
@@ -12,7 +15,14 @@ interface PendingOpen {
   createdAt: number;
 }
 
+interface PendingUnmount {
+  mountName: string;
+  localPath: string;
+  createdAt: number;
+}
+
 const pendingOpenKey = 'serverlessRemote.pendingOpen';
+const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
 const pendingOpenTtlMs = 5 * 60 * 1000;
 
 function settings(): vscode.WorkspaceConfiguration {
@@ -186,24 +196,91 @@ async function openTerminal(mountConfig?: MountConfig, cwd?: string): Promise<vo
   terminal.show();
 }
 
-async function unmount(): Promise<void> {
+function workspaceUsesPath(localPath: string): boolean {
+  const mountPath = path.resolve(localPath);
+  return vscode.workspace.workspaceFolders?.some((folder) => {
+    const workspacePath = path.resolve(folder.uri.fsPath);
+    const relative = path.relative(mountPath, workspacePath);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  }) ?? false;
+}
+
+async function executeUnmount(mount: MountConfig, localPath: string): Promise<void> {
+  const config = await readConfig();
+  await executePlan(platformAdapter.unmount(resolveMount(config, mount), localPath));
+}
+
+async function unmount(context: vscode.ExtensionContext): Promise<void> {
   const mount = await selectMount('Select a remote folder to unmount');
   if (mount) {
-    const config = await readConfig();
-    const resolved = resolveMount(config, mount);
     const localPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
     if (!localPath) throw new Error(`Mount '${mount.name}' has no recorded local_path`);
-    await executePlan(platformAdapter.unmount(resolved, expandHome(localPath)));
+    const expandedPath = expandHome(localPath);
+    if (workspaceUsesPath(expandedPath)) {
+      await context.globalState.update(pendingUnmountKey, {
+        mountName: mount.name, localPath: expandedPath, createdAt: Date.now()
+      } satisfies PendingUnmount);
+      await vscode.commands.executeCommand('workbench.action.closeFolder');
+      return;
+    }
+    await executeUnmount(mount, expandedPath);
   }
 }
 
-async function showStatus(): Promise<void> {
-  const mount = await selectMount('Select a remote folder to inspect');
-  if (!mount) return;
-  const localPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
-  if (!localPath) return;
+async function relayStatusLines(): Promise<string[]> {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+  const runtimeRoot = process.env.XDG_RUNTIME_DIR ?? os.tmpdir();
+  const poolPath = path.join(runtimeRoot, `vpn-relay-pool-${uid ?? 'unknown'}`);
+  try {
+    const stateFiles = (await readdir(poolPath)).filter((name) => name.endsWith('.state'));
+    const lines = await Promise.all(stateFiles.map(async (name) => {
+      const [pid, port, host, targetPort] = (await readFile(path.join(poolPath, name), 'utf8')).trim().split('\n');
+      return `  registered: 127.0.0.1:${port} -> ${host}:${targetPort} (Windows PID ${pid})`;
+    }));
+    return lines.length ? lines : ['  no registered relays'];
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? ['  no registered relays'] : [`  unavailable: ${String(error)}`];
+  }
+}
+
+async function showStatus(output: vscode.OutputChannel): Promise<void> {
   const config = await readConfig();
-  await executePlan(platformAdapter.status(resolveMount(config, mount), expandHome(localPath)));
+  output.clear();
+  output.appendLine('Mounts');
+  for (const mount of config.mounts) {
+    const localPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
+    if (!localPath) {
+      output.appendLine(`  ${mount.name}: not configured for ${platformAdapter.kind}`);
+      continue;
+    }
+    const expandedPath = expandHome(localPath);
+    const mounted = await commandSucceeds(platformAdapter.status(resolveMount(config, mount), expandedPath));
+    output.appendLine(`  ${mount.name}: ${mounted ? 'mounted' : 'not mounted'} (${expandedPath})`);
+  }
+  output.appendLine('');
+  output.appendLine('Relay');
+  if (platformAdapter.kind === 'wsl') {
+    for (const line of await relayStatusLines()) output.appendLine(line);
+  } else {
+    output.appendLine(`  Not required on ${platformAdapter.kind}; connections use the native network stack.`);
+  }
+  output.show(true);
+}
+
+async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<void> {
+  const pending = context.globalState.get<PendingUnmount>(pendingUnmountKey);
+  if (!pending) return;
+  if (!pending.createdAt || Date.now() - pending.createdAt > pendingOpenTtlMs) {
+    await context.globalState.update(pendingUnmountKey, undefined);
+    return;
+  }
+  if (workspaceUsesPath(pending.localPath)) return;
+  const config = await readConfig();
+  const mount = config.mounts.find((item) => item.name === pending.mountName);
+  await context.globalState.update(pendingUnmountKey, undefined);
+  if (!mount) throw new Error(`Pending unmount no longer exists: ${pending.mountName}`);
+  await executeUnmount(mount, pending.localPath);
 }
 
 async function openConfig(): Promise<void> {
@@ -231,12 +308,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.window.showWarningMessage(`Serverless Remote SSH requires: ${missing.join(', ')}`);
   }
 
+  const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
+  context.subscriptions.push(statusOutput);
   const registrations: Array<[string, () => Promise<void>]> = [
     ['openFolder', () => guard(() => openRemoteFolder(context))],
     ['openTerminal', () => guard(() => openTerminal())],
     ['mount', () => guard(() => mount())],
-    ['unmount', () => guard(unmount)],
-    ['status', () => guard(showStatus)],
+    ['unmount', () => guard(() => unmount(context))],
+    ['status', () => guard(() => showStatus(statusOutput))],
     ['openConfig', () => guard(openConfig)]
   ];
   for (const [name, handler] of registrations) {
@@ -250,6 +329,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar.command = `${commandPrefix}.openFolder`;
   statusBar.show();
   context.subscriptions.push(statusBar);
+  await guard(() => resumePendingUnmount(context));
   await guard(() => resumePendingOpen(context));
 }
 

@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- Close a workspace that is using a mount before unmounting it, then resume the unmount after VS Code reloads.
+- Show mount and WSL relay diagnostics in the Output panel instead of opening an SSH terminal.
+
 ## 0.7.0
 
 - Fixed WSL and macOS mount-state detection.
