@@ -62,6 +62,7 @@ Passwords entered through `Add SSH Config` are encrypted in the bridge-compatibl
 For a `now` mount, the extension asks which local directory should receive the mount. For other modes, `local_paths` selects a path for the current platform and falls back to `local_path`. On Windows, configure a drive letter instead of a POSIX path.
 
 `vpn: true` means “use the VPN-visible network path.” On WSL the bridge starts and shares the Windows TCP relay. On native Windows, macOS, and Linux no extra relay is needed because SSHFS runs in the same network namespace as that platform's VPN client.
+The macOS and Linux configuration wizard hides the relay option, and their status output does not include a relay section.
 
 ## Install
 

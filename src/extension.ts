@@ -371,12 +371,10 @@ async function showStatus(output: vscode.OutputChannel): Promise<void> {
     const mounted = await commandSucceeds(platformAdapter.status(resolveMount(config, mount), expandedPath));
     output.appendLine(`  ${mount.name}: ${mounted ? 'mounted' : 'not mounted'} (${expandedPath})`);
   }
-  output.appendLine('');
-  output.appendLine('Relay');
   if (platformAdapter.kind === 'wsl') {
+    output.appendLine('');
+    output.appendLine('Relay');
     for (const line of await relayStatusLines()) output.appendLine(line);
-  } else {
-    output.appendLine(`  Not required on ${platformAdapter.kind}; connections use the native network stack.`);
   }
   output.show(true);
 }
@@ -467,11 +465,15 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
       ? undefined : '端口必须是 1–65535 的整数'
   });
   if (portText === undefined) return;
-  const vpn = await vscode.window.showQuickPick([
-    { label: 'Yes', description: '使用 VPN 中继（默认）', value: true },
-    { label: 'No', description: '直接连接服务器', value: false }
-  ], { title, placeHolder: '是否使用 VPN 中继？', ignoreFocusOut: true });
-  if (!vpn) return;
+  let vpn: boolean | undefined;
+  if (platformAdapter.kind !== 'macos' && platformAdapter.kind !== 'linux') {
+    const selectedVpn = await vscode.window.showQuickPick([
+      { label: 'Yes', description: '使用 VPN 中继（默认）', value: true },
+      { label: 'No', description: '直接连接服务器', value: false }
+    ], { title, placeHolder: '是否使用 VPN 中继？', ignoreFocusOut: true });
+    if (!selectedVpn) return;
+    vpn = selectedVpn.value;
+  }
 
   const config = await editableConfig();
   const normalizedName = name.trim();
@@ -481,9 +483,9 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
     name: normalizedName,
     ip: ip.trim(),
     user: user.trim(),
-    port: Number(portText),
-    vpn: vpn.value
+    port: Number(portText)
   };
+  if (vpn !== undefined) host.vpn = vpn;
   if (privateKeyPath.trim()) host.private_key_path = privateKeyPath.trim();
   if (password) {
     const masterPassword = await promptMasterPassword(context, true);
