@@ -12,6 +12,9 @@ The extension selects a platform adapter and exposes every remote folder as a re
 - WSL: `ssh-bridge`, `sshfs-bridge`, and `mountpoint`
 - Unified configuration at `~/.wsl-vpn-ssh/config.json`
 
+On Windows, if WinFsp or SSHFS-Win is missing, the extension asks for confirmation before downloading the pinned official MSI installers, verifies their SHA-256 checksums, and starts the administrator installation.
+Declining the prompt is remembered for that installer version; use `Serverless Remote SSH: Install Windows Dependencies` to retry manually.
+
 Example:
 
 ```json

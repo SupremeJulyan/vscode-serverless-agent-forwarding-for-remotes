@@ -9,6 +9,9 @@ import {
 import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
+import {
+  downloadInstaller, installMsiPackages, sshfsWinInstaller, winFspInstaller, WindowsInstaller
+} from './windows-installer';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -32,6 +35,7 @@ const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const addSshfsConfigAction = 'Add SSHFS Config';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
+const dismissedWindowsInstallKey = 'serverlessRemote.dismissedWindowsInstall';
 
 class ConfigActionRequiredError extends Error {
   constructor(message: string, readonly actions = [openConfigAction]) {
@@ -572,9 +576,67 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
   }
 }
 
+async function offerWindowsDependencyInstall(
+  context: vscode.ExtensionContext, force = false
+): Promise<void> {
+  if (platformAdapter.kind !== 'windows') return;
+  const missing: WindowsInstaller[] = [];
+  const missingCommands: string[] = [];
+  if (!await commandExists('fsptool-x64.exe')) {
+    missing.push(winFspInstaller);
+    missingCommands.push('fsptool-x64.exe');
+  }
+  if (!await commandExists('sshfs-win.exe')) {
+    missing.push(sshfsWinInstaller);
+    missingCommands.push('sshfs-win.exe');
+  }
+  if (missing.length === 0) {
+    if (force) void vscode.window.showInformationMessage('WinFsp 和 SSHFS-Win 均已安装。');
+    return;
+  }
+  const fingerprint = missingCommands.join('|');
+  if (!force && context.globalState.get<string>(dismissedWindowsInstallKey) === fingerprint) return;
+
+  const installAction = '下载并安装';
+  const selected = await vscode.window.showWarningMessage(
+    `Serverless Remote SSH 缺少：${missing.map((item) => item.name).join('、')}。是否从官方 GitHub 下载并安装？`,
+    { modal: true, detail: '安装程序将校验 SHA-256，并请求 Windows 管理员权限。' },
+    installAction
+  );
+  if (selected !== installAction) {
+    await context.globalState.update(dismissedWindowsInstallKey, fingerprint);
+    return;
+  }
+
+  const paths = await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: '正在下载 Serverless Remote SSH 的 Windows 依赖',
+    cancellable: false
+  }, async (progress) => {
+    const downloaded: string[] = [];
+    for (let index = 0; index < missing.length; index++) {
+      const installer = missing[index];
+      progress.report({
+        message: installer.name,
+        increment: index === 0 ? 0 : 100 / missing.length
+      });
+      downloaded.push(await downloadInstaller(installer, context.globalStorageUri.fsPath));
+    }
+    return downloaded;
+  });
+  await installMsiPackages(paths);
+  await context.globalState.update(dismissedWindowsInstallKey, undefined);
+  const reload = await vscode.window.showInformationMessage(
+    'Windows 依赖安装完成。请重载 VS Code 后继续。',
+    '重载窗口'
+  );
+  if (reload === '重载窗口') await vscode.commands.executeCommand('workbench.action.reloadWindow');
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const missing = [];
   for (const command of platformAdapter.dependencies()) {
+    if (platformAdapter.kind === 'windows' && command === 'sshfs-win.exe') continue;
     if (!await commandExists(command)) {
       missing.push(command);
     }
@@ -582,6 +644,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (missing.length) {
     void vscode.window.showWarningMessage(`Serverless Remote SSH requires: ${missing.join(', ')}`);
   }
+  await guard(() => offerWindowsDependencyInstall(context));
 
   const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
   context.subscriptions.push(statusOutput);
@@ -593,7 +656,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ['status', () => guard(() => showStatus(statusOutput))],
     ['openConfig', () => guard(openConfig)],
     ['addSshConfig', () => guard(() => addSshConfig(context))],
-    ['addSshfsConfig', () => guard(addSshfsConfig)]
+    ['addSshfsConfig', () => guard(addSshfsConfig)],
+    ['installWindowsDependencies', () => guard(() => offerWindowsDependencyInstall(context, true))]
   ];
   for (const [name, handler] of registrations) {
     context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));

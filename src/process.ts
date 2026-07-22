@@ -6,7 +6,11 @@ const execFileAsync = promisify(execFile);
 
 export async function commandExists(command: string): Promise<boolean> {
   try {
-    await execFileAsync('sh', ['-lc', `command -v "$1" >/dev/null 2>&1`, 'sh', command]);
+    if (process.platform === 'win32') {
+      await execFileAsync('where.exe', [command], { windowsHide: true });
+    } else {
+      await execFileAsync('sh', ['-lc', `command -v "$1" >/dev/null 2>&1`, 'sh', command]);
+    }
     return true;
   } catch {
     return false;
