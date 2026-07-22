@@ -1,0 +1,75 @@
+{
+  "name": "vscode-serverless-remote-ssh",
+  "displayName": "Serverless Remote SSH",
+  "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
+  "version": "0.7.0",
+  "publisher": "julyan",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["ssh", "sshfs", "remote", "wsl", "serverless"],
+  "extensionKind": ["workspace"],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:serverlessRemote.openFolder",
+    "onCommand:serverlessRemote.openTerminal",
+    "onCommand:serverlessRemote.mount",
+    "onCommand:serverlessRemote.unmount",
+    "onCommand:serverlessRemote.status",
+    "onCommand:serverlessRemote.openConfig"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "serverlessRemote.openFolder", "title": "Serverless Remote SSH: Open Remote Folder", "icon": "$(remote-explorer)" },
+      { "command": "serverlessRemote.openTerminal", "title": "Serverless Remote SSH: Open Remote Terminal", "icon": "$(terminal)" },
+      { "command": "serverlessRemote.mount", "title": "Serverless Remote SSH: Mount" },
+      { "command": "serverlessRemote.unmount", "title": "Serverless Remote SSH: Unmount" },
+      { "command": "serverlessRemote.status", "title": "Serverless Remote SSH: Show Status" },
+      { "command": "serverlessRemote.openConfig", "title": "Serverless Remote SSH: Open Config" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "serverlessRemote.openFolder" },
+        { "command": "serverlessRemote.openTerminal" },
+        { "command": "serverlessRemote.mount" },
+        { "command": "serverlessRemote.unmount" },
+        { "command": "serverlessRemote.status" },
+        { "command": "serverlessRemote.openConfig" }
+      ]
+    },
+    "configuration": {
+      "title": "Serverless Remote SSH",
+      "properties": {
+        "serverlessRemote.configPath": {
+          "type": "string",
+          "default": "~/.wsl-vpn-ssh/config.json",
+          "description": "Path to the shared ssh-bridge/sshfs-bridge configuration file."
+        },
+        "serverlessRemote.mountTimeout": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "Seconds to wait for an SSHFS mount before reporting a timeout."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "compile": "npm run check-types && node esbuild.js",
+    "package": "npm run check-types && node esbuild.js --production",
+    "vscode:prepublish": "npm run package",
+    "test": "npm run check-types && tsx --test test/*.test.ts",
+    "vsix": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.6.2",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}
