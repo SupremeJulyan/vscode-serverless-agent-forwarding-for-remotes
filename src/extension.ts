@@ -148,7 +148,7 @@ async function executeTask(plan: CommandPlan): Promise<void> {
   await vscode.tasks.executeTask(task);
 }
 
-async function executePlan(plan: CommandPlan): Promise<void> {
+async function executePlan(plan: CommandPlan, timeoutMs?: number): Promise<void> {
   if (plan.stdin !== undefined) {
     if (plan.command === 'sshfs-bridge' && bridgeOutput) {
       bridgeOutput.show(true);
@@ -157,7 +157,7 @@ async function executePlan(plan: CommandPlan): Promise<void> {
         await executeWithStdin(plan, {
           stdout: (chunk) => bridgeOutput?.append(chunk),
           stderr: (chunk) => bridgeOutput?.append(chunk)
-        });
+        }, timeoutMs);
         bridgeOutput.appendLine(`[完成] ${plan.command} ${plan.args.join(' ')}`);
       } catch (error) {
         bridgeOutput.appendLine(`[失败] ${error instanceof Error ? error.message : String(error)}`);
@@ -165,7 +165,7 @@ async function executePlan(plan: CommandPlan): Promise<void> {
       }
       return;
     }
-    await executeWithStdin(plan);
+    await executeWithStdin(plan, {}, timeoutMs);
     return;
   }
   await executeTask(plan);
@@ -221,6 +221,24 @@ async function decryptHostPassword(context: vscode.ExtensionContext, encrypted: 
   }
 }
 
+async function bridgeMasterPasswordEnv(
+  context: vscode.ExtensionContext, config: BridgeConfig, host: HostConfig
+): Promise<Record<string, string>> {
+  if (platformAdapter.kind !== 'wsl' || !host.password) return {};
+  const encrypted = isEncryptedPassword(host.password);
+  if (encrypted) {
+    // This validates a stored value and prompts again immediately if it is
+    // stale, rather than failing inside the non-interactive bridge process.
+    await decryptHostPassword(context, host.password);
+    const masterPassword = await context.secrets.get(masterPasswordSecret);
+    if (!masterPassword) throw new Error('无法读取配置加密主口令');
+    return { WSL_VPN_MASTER_PASSWORD: masterPassword };
+  }
+  if (!config.encrypt_passwords) return {};
+  const masterPassword = await promptMasterPassword(context, true);
+  return { WSL_VPN_MASTER_PASSWORD: masterPassword };
+}
+
 async function resolveStoredHostPassword(
   context: vscode.ExtensionContext, config: BridgeConfig, host: HostConfig
 ): Promise<HostConfig> {
@@ -253,14 +271,23 @@ async function ensureMounted(
         resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
       }
       let mountPlan = platformAdapter.mount(resolved, localPath);
+      if (platformAdapter.kind === 'wsl') {
+        mountPlan = {
+          ...mountPlan,
+          env: {
+            ...mountPlan.env,
+            ...await bridgeMasterPasswordEnv(context, config, resolved.hostConfig)
+          }
+        };
+      }
       if (
         platformUsesAskpass(platformAdapter.kind) && resolved.hostConfig.password
       ) {
         credentials = await createAskpassCredentials(resolved.hostConfig.password);
         mountPlan = { ...mountPlan, env: { ...mountPlan.env, ...credentials.env } };
       }
-      await executePlan(mountPlan);
       const timeout = settings().get<number>('mountTimeout', 30);
+      await executePlan(mountPlan, timeout * 1000);
       if (!await waitForPlan(statusPlan, timeout)) {
         throw new Error(`Timed out waiting for mount: ${localPath}. Check the task terminal for details.`);
       }
@@ -391,11 +418,12 @@ async function openTerminal(
     }
   }
   const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd);
+  const bridgeEnv = await bridgeMasterPasswordEnv(context, config, resolved.hostConfig);
   const terminal = vscode.window.createTerminal({
     name: terminalName,
     shellPath: plan.command,
     shellArgs: plan.args,
-    env: { SSH_BRIDGE_MOUNT_NAME: mount.name, ...credentials?.env },
+    env: { SSH_BRIDGE_MOUNT_NAME: mount.name, ...bridgeEnv, ...credentials?.env },
     // The local mount path is only used to calculate remoteCwd above. During
     // an open-folder window reload VS Code briefly has an empty workspace and
     // rejects terminal cwd values outside the user home. SSH changes to the

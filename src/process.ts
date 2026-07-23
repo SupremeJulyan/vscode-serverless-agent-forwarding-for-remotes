@@ -43,15 +43,29 @@ export interface ProcessOutputHandlers {
 }
 
 export async function executeWithStdin(
-  plan: CommandPlan, handlers: ProcessOutputHandlers = {}
+  plan: CommandPlan, handlers: ProcessOutputHandlers = {}, timeoutMs?: number
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    let timedOut = false;
     const child = spawn(plan.command, plan.args, {
       cwd: plan.cwd,
       env: { ...process.env, ...plan.env },
       windowsHide: true,
+      detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe']
     });
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
+      timedOut = true;
+      if (child.pid && process.platform !== 'win32') {
+        try {
+          process.kill(-child.pid, 'SIGTERM');
+          return;
+        } catch {
+          // Fall back to terminating the direct child below.
+        }
+      }
+      child.kill();
+    }, timeoutMs);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => {
@@ -62,8 +76,19 @@ export async function executeWithStdin(
       stderr.push(chunk);
       handlers.stderr?.(chunk.toString());
     });
-    child.once('error', reject);
+    child.once('error', (error) => {
+      if (timer) clearTimeout(timer);
+      reject(error);
+    });
     child.once('close', (code) => {
+      if (timer) clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(
+          `Timed out after ${Math.ceil((timeoutMs ?? 0) / 1000)} seconds: ` +
+          `${plan.command} ${plan.args.join(' ')}`
+        ));
+        return;
+      }
       if (code === 0) {
         resolve();
         return;

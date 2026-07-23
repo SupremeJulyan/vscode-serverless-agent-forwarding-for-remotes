@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.12
+
+- Pass the VS Code-stored encryption master password to WSL bridge commands and
+  time out blocked non-interactive mount processes.
 - Start the local SSH client from the user home so macOS can create the remote
   terminal while an SSHFS folder is replacing an empty VS Code workspace.
 
