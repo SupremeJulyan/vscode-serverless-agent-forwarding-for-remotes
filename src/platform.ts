@@ -65,7 +65,7 @@ class UnixAdapter implements PlatformAdapter {
   unmount(_remote: ResolvedMount, localPath: string): CommandPlan {
     return this.kind === 'macos'
       ? { command: 'umount', args: [localPath] }
-      : { command: 'fusermount3', args: ['-u', '--', localPath] };
+      : { command: 'fusermount3', args: ['-uz', '--', localPath] };
   }
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return this.kind === 'macos'
