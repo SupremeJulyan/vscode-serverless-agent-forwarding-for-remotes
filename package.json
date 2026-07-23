@@ -2,7 +2,7 @@
   "name": "vscode-serverless-remote-ssh",
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {

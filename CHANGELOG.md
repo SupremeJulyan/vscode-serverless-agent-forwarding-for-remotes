@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.8.4
+
+- Force-stop SSHFS/FUSE process groups that ignore `SIGTERM`, ensuring the
+  fixed 8-second connection timeout actually completes.
+
 ## 0.8.3
 
 - Use a fixed 8-second connection timeout and offer `Open Config` when the network

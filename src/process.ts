@@ -47,6 +47,7 @@ export async function executeWithStdin(
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let timedOut = false;
+    let forceKillTimer: NodeJS.Timeout | undefined;
     const child = spawn(plan.command, plan.args, {
       cwd: plan.cwd,
       env: { ...process.env, ...plan.env },
@@ -59,10 +60,24 @@ export async function executeWithStdin(
       if (child.pid && process.platform !== 'win32') {
         try {
           process.kill(-child.pid, 'SIGTERM');
-          return;
         } catch {
           // Fall back to terminating the direct child below.
+          child.kill();
         }
+        // Some sshfs/FUSE processes do not exit on SIGTERM. Without escalation,
+        // the promise keeps waiting for "close" forever after the timeout fires.
+        forceKillTimer = setTimeout(() => {
+          if (child.pid) {
+            try {
+              process.kill(-child.pid, 'SIGKILL');
+              return;
+            } catch {
+              // Fall back to terminating the direct child below.
+            }
+          }
+          child.kill('SIGKILL');
+        }, 250);
+        return;
       }
       child.kill();
     }, timeoutMs);
@@ -78,10 +93,12 @@ export async function executeWithStdin(
     });
     child.once('error', (error) => {
       if (timer) clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       reject(error);
     });
     child.once('close', (code) => {
       if (timer) clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       if (timedOut) {
         reject(new Error(
           `Timed out after ${Math.ceil((timeoutMs ?? 0) / 1000)} seconds: ` +
