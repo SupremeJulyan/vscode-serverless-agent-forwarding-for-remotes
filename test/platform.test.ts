@@ -23,6 +23,10 @@ test('WSL delegates mount and relay handling to bridge commands', () => {
     env: { SSHFS_BRIDGE_NO_TERMINAL: '1' }, stdin: ''
   });
   assert.deepEqual(adapter.terminal(remote.hostConfig), { command: 'ssh-bridge', args: ['dev'] });
+  assert.deepEqual(adapter.terminal(remote.hostConfig, "/srv/project/it's here"), {
+    command: 'ssh-bridge',
+    args: ['dev', `cd -- '/srv/project/it'\"'\"'s here' && exec "\${SHELL:-/bin/sh}" -l`]
+  });
   assert.deepEqual(adapter.status(remote, '/mnt/project'), {
     command: 'mountpoint', args: ['-q', '--', '/mnt/project']
   });
@@ -49,7 +53,10 @@ test('native Unix platforms provide non-interactive shutdown unmount commands', 
     command: 'umount', args: ['/Users/alice/project']
   });
   assert.deepEqual(createPlatformAdapter('linux').unmount(remote, '/mnt/project'), {
-    command: 'fusermount3', args: ['-uz', '--', '/mnt/project']
+    command: 'fusermount3', args: ['-u', '--', '/mnt/project'], stdin: ''
+  });
+  assert.deepEqual(createPlatformAdapter('linux').lazyUnmount?.(remote, '/mnt/project'), {
+    command: 'fusermount3', args: ['-uz', '--', '/mnt/project'], stdin: ''
   });
 });
 

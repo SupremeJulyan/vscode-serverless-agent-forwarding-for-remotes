@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.13
+
+- Open WSL remote terminals in the subdirectory corresponding to the active
+  local SSHFS path, without reusing a terminal from a different subdirectory.
+- Fall back to lazy Linux unmounting only when a normal unmount reports that
+  the mount point is busy.
+
 ## 0.7.12
 
 - Pass the VS Code-stored encryption master password to WSL bridge commands and

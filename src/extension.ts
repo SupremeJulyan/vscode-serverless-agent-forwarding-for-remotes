@@ -396,20 +396,24 @@ async function openTerminal(
   if (!mount) {
     return;
   }
-  const terminalName = `SSH: ${mount.name}`;
-  const existingTerminal = vscode.window.terminals.find((terminal) => terminal.name === terminalName);
-  if (existingTerminal) {
-    existingTerminal.show();
-    return;
-  }
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
   const configuredLocalPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
   const localRoot = configuredLocalPath ? expandHome(configuredLocalPath) : undefined;
   const localCwd = cwd ?? localRoot;
-  const remoteCwd = platformAdapter.kind !== 'wsl' && localRoot && localCwd
+  const remoteCwd = localRoot && localCwd
     ? remotePathForLocalPath(mount.remote_path, localRoot, localCwd, platformAdapter.kind)
     : undefined;
+  const remoteRoot = path.posix.normalize(mount.remote_path);
+  const remoteRelative = remoteCwd ? path.posix.relative(remoteRoot, remoteCwd) : '';
+  const terminalName = remoteRelative
+    ? `SSH: ${mount.name} — ${remoteRelative}`
+    : `SSH: ${mount.name}`;
+  const existingTerminal = vscode.window.terminals.find((terminal) => terminal.name === terminalName);
+  if (existingTerminal) {
+    existingTerminal.show();
+    return;
+  }
   let credentials: AskpassCredentials | undefined;
   if (platformUsesAskpass(platformAdapter.kind)) {
     resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
@@ -484,8 +488,22 @@ async function executeUnmount(mount: MountConfig, localPath: string): Promise<vo
   }
   if (disposedTaskTerminal) await new Promise((resolve) => setTimeout(resolve, 300));
   const config = await readConfig();
-  await executePlan(platformAdapter.unmount(resolveMount(config, mount), localPath));
+  await executePlatformUnmount(resolveMount(config, mount), localPath);
   nativeSessionMounts.delete(path.resolve(localPath));
+}
+
+async function executePlatformUnmount(remote: ResolvedMount, localPath: string): Promise<void> {
+  try {
+    await executePlan(platformAdapter.unmount(remote, localPath));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (platformAdapter.kind !== 'linux'
+      || !message.includes('Device or resource busy')
+      || !platformAdapter.lazyUnmount) {
+      throw error;
+    }
+    await executePlan(platformAdapter.lazyUnmount(remote, localPath));
+  }
 }
 
 async function unmount(context: vscode.ExtensionContext): Promise<void> {
@@ -874,6 +892,6 @@ export async function deactivate(): Promise<void> {
   await Promise.allSettled(mounts.map(async ({ remote, localPath }) => {
     const statusPlan = platformAdapter.status(remote, localPath);
     if (!await commandSucceeds(statusPlan)) return;
-    await commandSucceeds(platformAdapter.unmount(remote, localPath));
+    await executePlatformUnmount(remote, localPath);
   }));
 }

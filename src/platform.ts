@@ -16,6 +16,7 @@ export interface PlatformAdapter {
   dependencies(): string[];
   mount(remote: ResolvedMount, localPath: string): CommandPlan;
   unmount(remote: ResolvedMount, localPath: string): CommandPlan;
+  lazyUnmount?(remote: ResolvedMount, localPath: string): CommandPlan;
   status(remote: ResolvedMount, localPath: string): CommandPlan;
   terminal(host: HostConfig, remoteCwd?: string): CommandPlan;
 }
@@ -35,6 +36,10 @@ function sshArgs(host: HostConfig, remoteCwd?: string): string[] {
     args.push(`cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`);
   }
   return args;
+}
+
+function remoteLoginCommand(remoteCwd: string): string {
+  return `cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`;
 }
 
 function sshfsArgs(remote: ResolvedMount, localPath: string): string[] {
@@ -65,7 +70,10 @@ class UnixAdapter implements PlatformAdapter {
   unmount(_remote: ResolvedMount, localPath: string): CommandPlan {
     return this.kind === 'macos'
       ? { command: 'umount', args: [localPath] }
-      : { command: 'fusermount3', args: ['-uz', '--', localPath] };
+      : { command: 'fusermount3', args: ['-u', '--', localPath], stdin: '' };
+  }
+  lazyUnmount(_remote: ResolvedMount, localPath: string): CommandPlan {
+    return { command: 'fusermount3', args: ['-uz', '--', localPath], stdin: '' };
   }
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return this.kind === 'macos'
@@ -96,7 +104,9 @@ class WslAdapter implements PlatformAdapter {
     return { command: 'mountpoint', args: ['-q', '--', localPath] };
   }
   terminal(host: HostConfig, _remoteCwd?: string): CommandPlan {
-    return { command: 'ssh-bridge', args: [host.name] };
+    const args = [host.name];
+    if (_remoteCwd) args.push(remoteLoginCommand(_remoteCwd));
+    return { command: 'ssh-bridge', args };
   }
 }
 
