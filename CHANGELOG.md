@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Start the local SSH client from the user home so macOS can create the remote
+  terminal while an SSHFS folder is replacing an empty VS Code workspace.
+
 ## 0.7.11
 
 - Keep newly created native SSHFS mounts alive while replacing the current VS Code workspace with the mounted directory.

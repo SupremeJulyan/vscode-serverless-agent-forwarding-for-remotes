@@ -396,7 +396,12 @@ async function openTerminal(
     shellPath: plan.command,
     shellArgs: plan.args,
     env: { SSH_BRIDGE_MOUNT_NAME: mount.name, ...credentials?.env },
-    cwd: localCwd,
+    // The local mount path is only used to calculate remoteCwd above. During
+    // an open-folder window reload VS Code briefly has an empty workspace and
+    // rejects terminal cwd values outside the user home. SSH changes to the
+    // mapped directory remotely, so starting the local client at home is both
+    // sufficient and safe in that transient state.
+    cwd: os.homedir(),
     isTransient: true
   });
   if (credentials) {
