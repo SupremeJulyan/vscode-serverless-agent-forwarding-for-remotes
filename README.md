@@ -12,7 +12,8 @@
 - macOS：macFUSE SSHFS 和 OpenSSH
 - Linux：SSHFS、FUSE 3 和 OpenSSH
 - WSL：`ssh-bridge`、`sshfs-bridge` 和 `mountpoint`
-- 所有平台共用配置文件：`~/.wsl-vpn-ssh/config.json`
+- 原生 Windows、macOS 和 Linux 默认配置文件：`~/serverless-remote-ssh/config.json`
+- WSL 默认配置文件：`~/.wsl-vpn-ssh/config.json`，继续与 `ssh-bridge` 和 `sshfs-bridge` 共用
 
 在 Windows 上，如果缺少 WinFsp 或 SSHFS-Win，插件会先请求确认，然后下载锁定版本的官方 MSI 安装程序、校验 SHA-256，并启动需要管理员权限的安装过程。拒绝安装后，插件会记住当前安装程序版本；如需重试，可运行 `Serverless Remote SSH: Install Windows Dependencies`。
 
@@ -80,7 +81,7 @@
 2. 打开 VS Code，选择活动栏中的**扩展**图标，或者按 `Ctrl+Shift+X`；macOS 使用 `Cmd+Shift+X`。
 3. 选择扩展视图右上角的**视图和更多操作...**（`...`）菜单。
 4. 选择**从 VSIX 安装...**。
-5. 选择 `vscode-serverless-remote-ssh-0.7.9.vsix` 并确认安装。
+5. 选择 `vscode-serverless-remote-ssh-0.7.10.vsix` 并确认安装。
 6. 如果 VS Code 提示重新加载窗口，选择**立即重新加载**。
 7. 安装完成后，使用状态栏中的 `$(remote) Serverless SSH`，或者打开命令面板并运行 `Serverless Remote SSH` 命令。
 
@@ -89,7 +90,7 @@
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.7.9.vsix
+code --install-extension vscode-serverless-remote-ssh-0.7.10.vsix
 ```
 
 ## 开发

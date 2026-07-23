@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.10
+
+- Change the native Windows, macOS, and Linux default configuration path to `~/serverless-remote-ssh/config.json`; WSL keeps `~/.wsl-vpn-ssh/config.json` for bridge compatibility.
+
 ## 0.7.9
 
 - Automatically open the matching remote terminal when VS Code opens a configured mount directory or one of its subdirectories.

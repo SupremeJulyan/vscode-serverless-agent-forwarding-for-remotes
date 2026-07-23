@@ -2,7 +2,7 @@
   "name": "vscode-serverless-remote-ssh",
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -55,7 +55,10 @@
     },
     "jsonValidation": [
       {
-        "fileMatch": "**/.wsl-vpn-ssh/config.json",
+        "fileMatch": [
+          "**/serverless-remote-ssh/config.json",
+          "**/.wsl-vpn-ssh/config.json"
+        ],
         "url": "./schemas/config.schema.json"
       }
     ],
@@ -64,8 +67,8 @@
       "properties": {
         "serverlessRemote.configPath": {
           "type": "string",
-          "default": "~/.wsl-vpn-ssh/config.json",
-          "description": "Path to the shared ssh-bridge/sshfs-bridge configuration file."
+          "default": "~/serverless-remote-ssh/config.json",
+          "description": "Native default: ~/serverless-remote-ssh/config.json. WSL default: ~/.wsl-vpn-ssh/config.json. An explicit value overrides the platform default."
         },
         "serverlessRemote.mountTimeout": {
           "type": "number",

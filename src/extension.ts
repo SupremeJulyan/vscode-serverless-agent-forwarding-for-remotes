@@ -41,6 +41,8 @@ const addSshConfigAction = 'Add SSH Config';
 const addSshfsConfigAction = 'Add SSHFS Config';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const dismissedWindowsInstallKey = 'serverlessRemote.dismissedWindowsInstall';
+const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
+const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 
@@ -55,7 +57,12 @@ function settings(): vscode.WorkspaceConfiguration {
 }
 
 function configPath(): string {
-  return expandHome(settings().get<string>('configPath', '~/.wsl-vpn-ssh/config.json'));
+  const inspected = settings().inspect<string>('configPath');
+  const configured = inspected?.workspaceFolderValue
+    ?? inspected?.workspaceValue
+    ?? inspected?.globalValue;
+  const defaultPath = platformAdapter.kind === 'wsl' ? defaultWslConfigPath : defaultNativeConfigPath;
+  return expandHome(configured ?? defaultPath);
 }
 
 async function readConfig(): Promise<BridgeConfig> {
