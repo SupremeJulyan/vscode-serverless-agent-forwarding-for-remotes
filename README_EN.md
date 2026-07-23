@@ -11,9 +11,9 @@ The extension selects a platform adapter and exposes every remote folder as a re
 - Windows: [WinFsp](https://github.com/winfsp/winfsp/releases/latest) and [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest); the default mount is drive `R:`
 - macOS: [macFUSE](https://macfuse.github.io/), [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS), and OpenSSH
 - Linux: SSHFS, FUSE 3, and OpenSSH
-- WSL: `ssh-bridge`, `sshfs-bridge`, and `mountpoint`
+- WSL: [`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge), [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge), and `mountpoint`
 - Native Windows, macOS, and Linux default to `~/serverless-remote-ssh/config.json`
-- WSL keeps `~/.wsl-vpn-ssh/config.json` shared with `ssh-bridge` and `sshfs-bridge`
+- WSL keeps `~/.wsl-vpn-ssh/config.json` shared with [`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) and [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
 
 Windows requires OpenSSH Client, [WinFsp](https://github.com/winfsp/winfsp/releases/latest), and [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest). Run `Serverless Remote SSH: Install Dependencies Tips` to check missing software and open the corresponding download page.
 On macOS, a missing dependency prompt provides official download links for [macFUSE](https://macfuse.github.io/) and [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS).

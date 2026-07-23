@@ -11,9 +11,9 @@
 - Windows：[WinFsp](https://github.com/winfsp/winfsp/releases/latest) 和 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest)；默认挂载到 `R:` 盘
 - macOS：[macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS)，以及 OpenSSH
 - Linux：SSHFS、FUSE 3 和 OpenSSH
-- WSL：`ssh-bridge`、`sshfs-bridge` 和 `mountpoint`
+- WSL：[`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)、[`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) 和 `mountpoint`
 - 原生 Windows、macOS 和 Linux 默认配置文件：`~/serverless-remote-ssh/config.json`
-- WSL 默认配置文件：`~/.wsl-vpn-ssh/config.json`，继续与 `ssh-bridge` 和 `sshfs-bridge` 共用
+- WSL 默认配置文件：`~/.wsl-vpn-ssh/config.json`，继续与 [`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) 和 [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) 共用
 
 在 Windows 上必须安装 OpenSSH Client、[WinFsp](https://github.com/winfsp/winfsp/releases/latest) 和 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest)。运行 `Serverless Remote SSH: Install Dependencies Tips` 可以检查缺失项并显示对应的下载入口。
 
