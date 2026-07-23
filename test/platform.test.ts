@@ -48,7 +48,7 @@ test('native SSHFS mounts the SSH login directory for a dot remote path', () => 
 
   const windowsPlan = createPlatformAdapter('windows').mount(loginDirectory, 'R:');
   assert.deepEqual(windowsPlan.args, [
-    'use', 'R:', '\\\\sshfs.r\\alice@10.0.0.2!2222\\', '/persistent:no'
+    'use', 'R:', '\\\\sshfs\\alice@10.0.0.2!2222', '/persistent:no'
   ]);
 });
 
@@ -86,6 +86,16 @@ test('Windows builds an SSHFS-Win root-relative UNC mapping', () => {
   const plan = createPlatformAdapter('windows').mount(remote, 'X:');
   assert.equal(plan.command, 'net');
   assert.deepEqual(plan.args, ['use', 'X:', '\\\\sshfs.r\\alice@10.0.0.2!2222\\srv\\project', '/persistent:no']);
+});
+
+test('Windows maps a password-protected login directory without an empty UNC path', () => {
+  const loginDirectory = {
+    ...remote,
+    remote_path: '.',
+    hostConfig: { ...remote.hostConfig, port: 22, password: 'secret value' }
+  };
+  const plan = createPlatformAdapter('windows').mount(loginDirectory, 'R:');
+  assert.equal(plan.env?.SERVERLESS_REMOTE_UNC, '\\\\sshfs\\alice@10.0.0.2');
 });
 
 test('Windows passes password credentials through the environment to the network API', () => {

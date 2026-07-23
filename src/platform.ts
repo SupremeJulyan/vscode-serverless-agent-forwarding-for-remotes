@@ -113,12 +113,15 @@ class WslAdapter implements PlatformAdapter {
 
 function windowsUnc(remote: ResolvedMount): string {
   const host = remote.hostConfig;
-  const suffix = host.private_key_path ? 'kr' : 'r';
+  const rootRelative = remote.remote_path.startsWith('/');
+  const provider = host.private_key_path
+    ? (rootRelative ? 'sshfs.kr' : 'sshfs.k')
+    : (rootRelative ? 'sshfs.r' : 'sshfs');
   const port = host.port && host.port !== 22 ? `!${host.port}` : '';
   const remotePath = remote.remote_path === '.'
-    ? ''
-    : remote.remote_path.replace(/^\/+/, '').replace(/\//g, '\\');
-  return `\\\\sshfs.${suffix}\\${host.user}@${host.ip}${port}\\${remotePath}`;
+    ? []
+    : [remote.remote_path.replace(/^\/+/, '').replace(/\//g, '\\')];
+  return [`\\\\${provider}\\${host.user}@${host.ip}${port}`, ...remotePath].join('\\');
 }
 
 const windowsPasswordMountScript = `

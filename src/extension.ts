@@ -11,8 +11,7 @@ import { CommandPlan, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import {
-  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
-  usesWorkspaceRelativeDefault
+  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath
 } from './mount-path';
 import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
@@ -105,9 +104,7 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
 async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
   const configuredPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  if (configuredPath && !usesWorkspaceRelativeDefault(mount, platformAdapter.kind)) {
-    return expandHome(configuredPath);
-  }
+  if (configuredPath) return expandHome(configuredPath);
   return defaultMountDirectory(mount, current, platformAdapter.kind);
 }
 
@@ -250,6 +247,13 @@ async function ensureMounted(
   context: vscode.ExtensionContext, mount: MountConfig, localPath: string
 ): Promise<boolean> {
   const config = await readConfig();
+  if (platformAdapter.kind === 'wsl') {
+    const configuredMount = config.mounts.find((item) => item.name === mount.name);
+    if (configuredMount && configuredMount.local_path !== localPath) {
+      configuredMount.local_path = localPath;
+      await saveConfig(configPath(), config);
+    }
+  }
   const resolved = resolveMount(config, mount);
   const statusPlan = platformAdapter.status(resolved, localPath);
   if (!await commandSucceeds(statusPlan)) {
@@ -317,10 +321,13 @@ async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void>
   await context.globalState.update(pendingOpenKey, {
     mountName: mount.name, localPath, createdAt: Date.now(), ownsMount
   });
-  workspaceSwitchMountPath = path.resolve(localPath);
+  const absoluteLocalPath = path.resolve(localPath);
+  workspaceSwitchMountPath = absoluteLocalPath;
   try {
     const opened = await vscode.commands.executeCommand<boolean | undefined>(
-      'vscode.openFolder', vscode.Uri.file(localPath), false
+      'vscode.openFolder',
+      vscode.Uri.file(absoluteLocalPath),
+      { forceReuseWindow: true }
     );
     if (opened === false) {
       workspaceSwitchMountPath = undefined;
@@ -715,6 +722,7 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
     name: normalizedName,
     host: normalizedName,
     remote_path: '.',
+    local_path: localPath,
     remote_terminal: 'open'
   };
   if (platformAdapter.kind === 'windows') mount.local_path = 'R:';

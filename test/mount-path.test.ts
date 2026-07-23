@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MountConfig } from '../src/config';
 import {
-  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
-  usesWorkspaceRelativeDefault
+  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath
 } from '../src/mount-path';
 
 const mounts: MountConfig[] = [
@@ -73,12 +72,4 @@ test('default mount directories follow the current folder on Unix-like platforms
 test('Windows keeps the default drive-letter mount', () => {
   const mount: MountConfig = { name: 'testgkn', host: 'dev', remote_path: '.' };
   assert.equal(defaultMountDirectory(mount, 'C:\\Users\\julyan', 'windows'), 'R:\\');
-});
-
-test('recognizes legacy wizard paths as workspace-relative defaults', () => {
-  const mount: MountConfig = {
-    name: 'testgkn', host: 'dev', remote_path: '.', local_path: '/old/workspace/testgkn'
-  };
-  assert.equal(usesWorkspaceRelativeDefault(mount, 'wsl'), true);
-  assert.equal(usesWorkspaceRelativeDefault({ ...mount, remote_path: '/srv' }, 'wsl'), false);
 });
