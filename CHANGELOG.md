@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.7.15
+
+- Dispose a mount's existing WSL bridge terminal before switching folders so
+  VS Code cannot reconnect the renamed `sshpass` PTY alongside a new terminal.
+
 ## 0.7.14
 
 - Prevent duplicate WSL SSH terminals when pending-folder recovery and

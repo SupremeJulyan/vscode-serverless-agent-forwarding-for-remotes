@@ -105,6 +105,7 @@ class WslAdapter implements PlatformAdapter {
   }
   terminal(host: HostConfig, _remoteCwd?: string): CommandPlan {
     const args = [host.name];
+    if (_remoteCwd) args.unshift('--tty');
     if (_remoteCwd) args.push(remoteLoginCommand(_remoteCwd));
     return { command: 'ssh-bridge', args };
   }

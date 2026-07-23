@@ -330,6 +330,18 @@ async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void>
     return;
   }
   const ownsMount = await ensureMounted(context, mount, localPath);
+  // VS Code can reconnect a terminal across vscode.openFolder even when it was
+  // created as transient. Once ssh-bridge execs sshpass, the revived terminal's
+  // title no longer matches "SSH: <mount>", so startup auto-connect would open
+  // a second terminal. Close this mount's bridge terminal before switching;
+  // resumePendingOpen creates exactly one terminal in the destination window.
+  const config = await readConfig();
+  const host = resolveMount(config, mount).hostConfig;
+  for (const terminal of vscode.window.terminals) {
+    if (isBridgeTerminalForMount(terminal, mount.name, host.name)) {
+      terminal.dispose();
+    }
+  }
   await context.globalState.update(pendingOpenKey, {
     mountName: mount.name, localPath, createdAt: Date.now(), ownsMount
   });
@@ -355,6 +367,21 @@ function sameLocalPath(left: string, right: string): boolean {
   return platformAdapter.kind === 'windows'
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
+}
+
+function isBridgeTerminalForMount(
+  terminal: vscode.Terminal, mountName: string, hostName: string
+): boolean {
+  const options = terminal.creationOptions;
+  if (!('shellPath' in options)) return false;
+  const identity = options.env?.[terminalIdentityEnv];
+  if (identity?.startsWith(`${mountName}\0`)) return true;
+  const configuredMount = options.env?.SSH_BRIDGE_MOUNT_NAME;
+  if (configuredMount === mountName) return true;
+  const args = Array.isArray(options.shellArgs) ? options.shellArgs : [];
+  return typeof options.shellPath === 'string'
+    && path.basename(options.shellPath) === 'ssh-bridge'
+    && args[0] === hostName;
 }
 
 async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void> {

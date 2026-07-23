@@ -25,7 +25,7 @@ test('WSL delegates mount and relay handling to bridge commands', () => {
   assert.deepEqual(adapter.terminal(remote.hostConfig), { command: 'ssh-bridge', args: ['dev'] });
   assert.deepEqual(adapter.terminal(remote.hostConfig, "/srv/project/it's here"), {
     command: 'ssh-bridge',
-    args: ['dev', `cd -- '/srv/project/it'\"'\"'s here' && exec "\${SHELL:-/bin/sh}" -l`]
+    args: ['--tty', 'dev', `cd -- '/srv/project/it'\"'\"'s here' && exec "\${SHELL:-/bin/sh}" -l`]
   });
   assert.deepEqual(adapter.status(remote, '/mnt/project'), {
     command: 'mountpoint', args: ['-q', '--', '/mnt/project']
