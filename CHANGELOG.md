@@ -4,6 +4,12 @@
 
 - Force-stop SSHFS/FUSE process groups that ignore `SIGTERM`, ensuring the
   fixed 8-second connection timeout actually completes.
+- Resolve WSL bridge executables through the login shell so tools installed in
+  `~/.local/bin` remain available to the VS Code extension host.
+- Do not launch the WSL bridge from inside its mount point, avoiding misleading
+  `spawn ENOENT` errors when a previous FUSE mount is disconnected.
+- Recognize SSH connection resets and similar network failures, and avoid
+  repeating streamed bridge output inside the final failure line.
 
 ## 0.8.3
 

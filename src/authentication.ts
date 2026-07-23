@@ -14,6 +14,22 @@ export function isAuthenticationFailure(error: unknown): boolean {
   return authenticationFailurePatterns.some((pattern) => pattern.test(message));
 }
 
+const networkFailurePatterns = [
+  /connection reset by peer/i,
+  /connection (?:refused|closed|timed out)/i,
+  /connection unexpectedly closed/i,
+  /no route to host/i,
+  /network is unreachable/i,
+  /operation timed out/i,
+  /could not connect/i,
+  /kex_exchange_identification.*closed/i
+];
+
+export function isNetworkFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return networkFailurePatterns.some((pattern) => pattern.test(message));
+}
+
 export function passwordValueOffset(content: string, hostName: string): number | undefined {
   const escapedName = JSON.stringify(hostName);
   const namePattern = new RegExp(`"name"\\s*:\\s*${escapedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);

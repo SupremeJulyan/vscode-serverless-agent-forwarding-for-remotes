@@ -17,7 +17,9 @@ import {
 import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
 import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
-import { isAuthenticationFailure, passwordValueOffset } from './authentication';
+import {
+  isAuthenticationFailure, isNetworkFailure, passwordValueOffset
+} from './authentication';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -150,14 +152,22 @@ async function executePlan(plan: CommandPlan, timeoutMs?: number): Promise<void>
     if (plan.command === 'sshfs-bridge' && bridgeOutput) {
       bridgeOutput.show(true);
       bridgeOutput.appendLine(`[${new Date().toLocaleString()}] $ ${plan.command} ${plan.args.join(' ')}`);
+      let emittedOutput = false;
       try {
         await executeWithStdin(plan, {
-          stdout: (chunk) => bridgeOutput?.append(chunk),
-          stderr: (chunk) => bridgeOutput?.append(chunk)
+          stdout: (chunk) => {
+            emittedOutput = true;
+            bridgeOutput?.append(chunk);
+          },
+          stderr: (chunk) => {
+            emittedOutput = true;
+            bridgeOutput?.append(chunk);
+          }
         }, timeoutMs);
         bridgeOutput.appendLine(`[完成] ${plan.command} ${plan.args.join(' ')}`);
       } catch (error) {
-        bridgeOutput.appendLine(`[失败] ${error instanceof Error ? error.message : String(error)}`);
+        const detail = error instanceof Error ? error.message : String(error);
+        bridgeOutput.appendLine(emittedOutput ? '[失败]' : `[失败] ${detail}`);
         throw error;
       }
       return;
@@ -269,9 +279,9 @@ async function ensureMounted(
   const statusPlan = platformAdapter.status(resolved, localPath);
   if (!await commandSucceeds(statusPlan)) {
     let credentials: AskpassCredentials | undefined;
-    const connectionFailure = async (): Promise<ConfigActionRequiredError> => {
+    const connectionFailure = async (clearPassword: boolean): Promise<ConfigActionRequiredError> => {
       const hostIndex = config.hosts.findIndex((host) => host.name === resolved.hostConfig.name);
-      if (hostIndex >= 0 && config.hosts[hostIndex].password) {
+      if (clearPassword && hostIndex >= 0 && config.hosts[hostIndex].password) {
         config.hosts[hostIndex] = { ...config.hosts[hostIndex], password: '' };
         await saveConfig(configPath(), config);
       }
@@ -312,11 +322,14 @@ async function ensureMounted(
         await executePlan(mountPlan, connectionTimeoutMs);
       } catch (error) {
         const timedOut = error instanceof Error && error.message.startsWith('Timed out after ');
-        if (!timedOut && (!resolved.hostConfig.password || !isAuthenticationFailure(error))) throw error;
-        throw await connectionFailure();
+        const authenticationFailed = Boolean(
+          resolved.hostConfig.password && isAuthenticationFailure(error)
+        );
+        if (!timedOut && !authenticationFailed && !isNetworkFailure(error)) throw error;
+        throw await connectionFailure(authenticationFailed);
       }
       if (!await waitForPlan(statusPlan, connectionDeadline)) {
-        throw await connectionFailure();
+        throw await connectionFailure(false);
       }
       if (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux') {
         nativeSessionMounts.set(path.resolve(localPath), { remote: resolved, localPath });

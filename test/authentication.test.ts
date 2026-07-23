@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isAuthenticationFailure, passwordValueOffset } from '../src/authentication';
+import {
+  isAuthenticationFailure, isNetworkFailure, passwordValueOffset
+} from '../src/authentication';
 
 test('recognizes common SSH password authentication failures', () => {
   assert.equal(isAuthenticationFailure(new Error('Permission denied, please try again.')), true);
   assert.equal(isAuthenticationFailure(new Error('Authentication failed')), true);
   assert.equal(isAuthenticationFailure(new Error('Connection timed out')), false);
+});
+
+test('recognizes common SSH network failures separately from password failures', () => {
+  assert.equal(isNetworkFailure(new Error('read: Connection reset by peer')), true);
+  assert.equal(isNetworkFailure(new Error('ssh: connect to host x: Connection refused')), true);
+  assert.equal(isNetworkFailure(new Error('Network is unreachable')), true);
+  assert.equal(isNetworkFailure(new Error('Permission denied')), false);
 });
 
 test('finds the empty password value for a named host', () => {

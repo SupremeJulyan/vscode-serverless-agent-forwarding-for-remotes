@@ -19,7 +19,7 @@ test('detects WSL separately from Linux', () => {
 test('WSL delegates mount and relay handling to bridge commands', () => {
   const adapter = createPlatformAdapter('wsl');
   assert.deepEqual(adapter.mount(remote, '/mnt/project'), {
-    command: 'sshfs-bridge', args: ['mount', 'project'], cwd: '/mnt/project',
+    command: 'sshfs-bridge', args: ['mount', 'project'],
     env: { SSHFS_BRIDGE_NO_TERMINAL: '1' }, stdin: ''
   });
   assert.deepEqual(adapter.terminal(remote.hostConfig), { command: 'ssh-bridge', args: ['dev'] });

@@ -42,13 +42,30 @@ export interface ProcessOutputHandlers {
   stderr?: (chunk: string) => void;
 }
 
+async function resolveExecutable(command: string, env?: NodeJS.ProcessEnv): Promise<string> {
+  if (process.platform === 'win32' || command.includes('/')) return command;
+  try {
+    const { stdout } = await execFileAsync(
+      'sh', ['-lc', 'command -v "$1"', 'sh', command],
+      { env: { ...process.env, ...env } }
+    );
+    const resolved = stdout.trim().split(/\r?\n/, 1)[0];
+    return resolved.startsWith('/') ? resolved : command;
+  } catch {
+    return command;
+  }
+}
+
 export async function executeWithStdin(
   plan: CommandPlan, handlers: ProcessOutputHandlers = {}, timeoutMs?: number
 ): Promise<void> {
+  // VS Code's extension host can have an older PATH than its login shell.
+  // Resolve bridge tools through that shell before spawning them directly.
+  const command = await resolveExecutable(plan.command, plan.env);
   await new Promise<void>((resolve, reject) => {
     let timedOut = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
-    const child = spawn(plan.command, plan.args, {
+    const child = spawn(command, plan.args, {
       cwd: plan.cwd,
       env: { ...process.env, ...plan.env },
       windowsHide: true,

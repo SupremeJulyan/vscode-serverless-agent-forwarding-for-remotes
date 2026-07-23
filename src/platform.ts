@@ -91,9 +91,11 @@ class UnixAdapter implements PlatformAdapter {
 class WslAdapter implements PlatformAdapter {
   readonly kind = 'wsl' as const;
   dependencies(): string[] { return ['ssh-bridge', 'sshfs-bridge', 'mountpoint']; }
-  mount(remote: ResolvedMount, localPath: string): CommandPlan {
+  mount(remote: ResolvedMount, _localPath: string): CommandPlan {
     return {
-      command: 'sshfs-bridge', args: ['mount', remote.name], cwd: localPath,
+      // A disconnected FUSE mount cannot be used as a process cwd: Node reports
+      // that failure as a misleading `spawn <command> ENOENT`.
+      command: 'sshfs-bridge', args: ['mount', remote.name],
       env: { SSHFS_BRIDGE_NO_TERMINAL: '1' }, stdin: ''
     };
   }
