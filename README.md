@@ -62,7 +62,7 @@ Example:
 - `Serverless Remote SSH: Add SSH Config` prompts for each SSH host field and saves it to the shared configuration.
 - `Serverless Remote SSH: Add SSHFS Config` prompts for each mount field, including the referenced SSH host and terminal mode.
 
-Passwords entered through `Add SSH Config` are encrypted in the bridge-compatible `enc:v1:` format before the configuration is written. The encryption master password is kept in VS Code SecretStorage. On Windows, an existing plaintext password is migrated automatically the next time its SSHFS mount is opened.
+Passwords entered through `Add SSH Config` are encrypted in the bridge-compatible `enc:v1:` format before the configuration is written. The encryption master password is kept in VS Code SecretStorage. On Windows and macOS, an existing plaintext password is migrated automatically the next time it is used. macOS supplies the decrypted password to OpenSSH and SSHFS through a short-lived `SSH_ASKPASS` helper; the password is never added to command arguments or task output.
 
 For a `now` mount, the extension asks which local directory should receive the mount. For other modes, `local_paths` selects a path for the current platform and falls back to `local_path`. On Windows, configure a drive letter instead of a POSIX path.
 

@@ -44,6 +44,11 @@ test('macOS checks the exact mount table entry instead of using df', () => {
   });
 });
 
+test('macOS SSH terminal accepts a new host key without routing the prompt through ASKPASS', () => {
+  const plan = createPlatformAdapter('macos').terminal(remote.hostConfig);
+  assert.deepEqual(plan.args.slice(0, 4), ['-p', '2222', '-o', 'StrictHostKeyChecking=accept-new']);
+});
+
 test('Windows builds an SSHFS-Win root-relative UNC mapping', () => {
   const plan = createPlatformAdapter('windows').mount(remote, 'X:');
   assert.equal(plan.command, 'net');

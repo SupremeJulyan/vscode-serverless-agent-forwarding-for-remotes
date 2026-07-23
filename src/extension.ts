@@ -15,6 +15,7 @@ import {
   winFspInstaller, WindowsInstaller
 } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
+import { AskpassCredentials, createAskpassCredentials } from './askpass';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -209,7 +210,7 @@ async function decryptHostPassword(context: vscode.ExtensionContext, encrypted: 
   }
 }
 
-async function secureWindowsHost(
+async function resolveStoredHostPassword(
   context: vscode.ExtensionContext, config: BridgeConfig, host: HostConfig
 ): Promise<HostConfig> {
   if (!host.password) return host;
@@ -231,15 +232,25 @@ async function ensureMounted(
 ): Promise<void> {
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
-  if (platformAdapter.kind === 'windows') {
-    resolved.hostConfig = await secureWindowsHost(context, config, resolved.hostConfig);
-  }
   const statusPlan = platformAdapter.status(resolved, localPath);
   if (!await commandSucceeds(statusPlan)) {
-    await executePlan(platformAdapter.mount(resolved, localPath));
-    const timeout = settings().get<number>('mountTimeout', 30);
-    if (!await waitForPlan(statusPlan, timeout)) {
-      throw new Error(`Timed out waiting for mount: ${localPath}. Check the task terminal for details.`);
+    let credentials: AskpassCredentials | undefined;
+    try {
+      if (platformAdapter.kind === 'windows' || platformAdapter.kind === 'macos') {
+        resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
+      }
+      let mountPlan = platformAdapter.mount(resolved, localPath);
+      if (platformAdapter.kind === 'macos' && resolved.hostConfig.password) {
+        credentials = await createAskpassCredentials(resolved.hostConfig.password);
+        mountPlan = { ...mountPlan, env: { ...mountPlan.env, ...credentials.env } };
+      }
+      await executePlan(mountPlan);
+      const timeout = settings().get<number>('mountTimeout', 30);
+      if (!await waitForPlan(statusPlan, timeout)) {
+        throw new Error(`Timed out waiting for mount: ${localPath}. Check the task terminal for details.`);
+      }
+    } finally {
+      await credentials?.cleanup();
     }
   }
 }
@@ -311,7 +322,7 @@ async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void
 }
 
 async function openTerminal(
-  _context: vscode.ExtensionContext, mountConfig?: MountConfig, cwd?: string
+  context: vscode.ExtensionContext, mountConfig?: MountConfig, cwd?: string
 ): Promise<void> {
   let mount = mountConfig;
   if (!mount) {
@@ -337,16 +348,35 @@ async function openTerminal(
   }
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
+  let credentials: AskpassCredentials | undefined;
+  if (platformAdapter.kind === 'macos') {
+    resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
+    if (resolved.hostConfig.password) {
+      credentials = await createAskpassCredentials(resolved.hostConfig.password);
+    }
+  }
   const plan = platformAdapter.terminal(resolved.hostConfig);
   const terminal = vscode.window.createTerminal({
     name: terminalName,
     shellPath: plan.command,
     shellArgs: plan.args,
-    env: { SSH_BRIDGE_MOUNT_NAME: mount.name },
+    env: { SSH_BRIDGE_MOUNT_NAME: mount.name, ...credentials?.env },
     cwd: cwd ?? ((mount.local_paths?.[platformAdapter.kind] ?? mount.local_path)
       ? expandHome(mount.local_paths?.[platformAdapter.kind] ?? mount.local_path!) : undefined),
     isTransient: true
   });
+  if (credentials) {
+    const disposable = vscode.window.onDidCloseTerminal((closed) => {
+      if (closed === terminal) {
+        disposable.dispose();
+        void credentials?.cleanup();
+      }
+    });
+    setTimeout(() => {
+      disposable.dispose();
+      void credentials?.cleanup();
+    }, pendingOpenTtlMs);
+  }
   terminal.show();
 }
 

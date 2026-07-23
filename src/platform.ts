@@ -21,7 +21,7 @@ export interface PlatformAdapter {
 }
 
 function sshArgs(host: HostConfig): string[] {
-  const args = ['-p', String(host.port ?? 22)];
+  const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
   if (host.private_key_path) {
     args.push('-i', host.private_key_path);
   }
