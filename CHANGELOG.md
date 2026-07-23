@@ -2,6 +2,8 @@
 
 ## 0.8.3
 
+- Use a fixed 8-second connection timeout and offer `Open Config` when the network
+  is unreachable or the saved SSH password may be wrong.
 - Encrypt passwords while creating SSH configurations and migrate legacy plaintext passwords on use.
 - Resolve wizard-created WSL, Linux, and macOS mount directories below the workspace from which Open Remote Folder is invoked.
 - Report SSH password authentication failures, clear the rejected password, and open the configuration with the replacement field selected.

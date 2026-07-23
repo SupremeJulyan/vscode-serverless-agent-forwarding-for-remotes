@@ -26,10 +26,10 @@ export async function isMountpoint(target: string): Promise<boolean> {
   }
 }
 
-export async function commandSucceeds(plan: CommandPlan): Promise<boolean> {
+export async function commandSucceeds(plan: CommandPlan, timeoutMs = 3000): Promise<boolean> {
   try {
     await execFileAsync(plan.command, plan.args, {
-      cwd: plan.cwd, env: { ...process.env, ...plan.env }, timeout: 3000
+      cwd: plan.cwd, env: { ...process.env, ...plan.env }, timeout: timeoutMs
     });
     return true;
   } catch {

@@ -63,12 +63,6 @@
           "type": "string",
           "default": "~/serverless-remote-ssh/config.json",
           "description": "Native default: ~/serverless-remote-ssh/config.json. WSL default: ~/.wsl-vpn-ssh/config.json. An explicit value overrides the platform default."
-        },
-        "serverlessRemote.mountTimeout": {
-          "type": "number",
-          "default": 30,
-          "minimum": 1,
-          "description": "Seconds to wait for an SSHFS mount before reporting a timeout."
         }
       }
     }

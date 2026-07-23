@@ -38,6 +38,7 @@ interface PendingUnmount {
 const pendingOpenKey = 'serverlessRemote.pendingOpen';
 const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
 const pendingOpenTtlMs = 5 * 60 * 1000;
+const connectionTimeoutMs = 8_000;
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
@@ -167,11 +168,13 @@ async function executePlan(plan: CommandPlan, timeoutMs?: number): Promise<void>
   await executeTask(plan);
 }
 
-async function waitForPlan(plan: CommandPlan, timeoutSeconds: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutSeconds * 1000;
+async function waitForPlan(plan: CommandPlan, deadline: number): Promise<boolean> {
   while (Date.now() < deadline) {
-    if (await commandSucceeds(plan)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (await commandSucceeds(plan, Math.max(1, Math.min(3000, deadline - Date.now())))) return true;
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(500, remaining)));
+    }
   }
   return false;
 }
@@ -266,6 +269,18 @@ async function ensureMounted(
   const statusPlan = platformAdapter.status(resolved, localPath);
   if (!await commandSucceeds(statusPlan)) {
     let credentials: AskpassCredentials | undefined;
+    const connectionFailure = async (): Promise<ConfigActionRequiredError> => {
+      const hostIndex = config.hosts.findIndex((host) => host.name === resolved.hostConfig.name);
+      if (hostIndex >= 0 && config.hosts[hostIndex].password) {
+        config.hosts[hostIndex] = { ...config.hosts[hostIndex], password: '' };
+        await saveConfig(configPath(), config);
+      }
+      return new ConfigActionRequiredError(
+        `主机“${resolved.hostConfig.name}”网络连接失败或者密码错误，请打开配置设置新密码。`,
+        [openConfigAction],
+        resolved.hostConfig.name
+      );
+    };
     try {
       if (resolved.hostConfig.password) {
         resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
@@ -292,24 +307,16 @@ async function ensureMounted(
           stdin: ''
         };
       }
-      const timeout = settings().get<number>('mountTimeout', 30);
+      const connectionDeadline = Date.now() + connectionTimeoutMs;
       try {
-        await executePlan(mountPlan, timeout * 1000);
+        await executePlan(mountPlan, connectionTimeoutMs);
       } catch (error) {
-        if (!resolved.hostConfig.password || !isAuthenticationFailure(error)) throw error;
-        const hostIndex = config.hosts.findIndex((host) => host.name === resolved.hostConfig.name);
-        if (hostIndex >= 0) {
-          config.hosts[hostIndex] = { ...config.hosts[hostIndex], password: '' };
-          await saveConfig(configPath(), config);
-        }
-        throw new ConfigActionRequiredError(
-          `主机“${resolved.hostConfig.name}”的 SSH 密码错误。请在已打开的配置中输入新密码；下次连接成功前会自动将明文密码加密。`,
-          [openConfigAction],
-          resolved.hostConfig.name
-        );
+        const timedOut = error instanceof Error && error.message.startsWith('Timed out after ');
+        if (!timedOut && (!resolved.hostConfig.password || !isAuthenticationFailure(error))) throw error;
+        throw await connectionFailure();
       }
-      if (!await waitForPlan(statusPlan, timeout)) {
-        throw new Error(`Timed out waiting for mount: ${localPath}. Check the task terminal for details.`);
+      if (!await waitForPlan(statusPlan, connectionDeadline)) {
+        throw await connectionFailure();
       }
       if (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux') {
         nativeSessionMounts.set(path.resolve(localPath), { remote: resolved, localPath });
@@ -783,11 +790,6 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof ConfigActionRequiredError) {
-      if (error.hostName) {
-        void vscode.window.showErrorMessage(`Serverless Remote SSH: ${message}`);
-        await vscode.commands.executeCommand(`${commandPrefix}.openConfig`, error.hostName);
-        return;
-      }
       const selected = await vscode.window.showErrorMessage(
         `Serverless Remote SSH: ${message}`,
         ...error.actions
