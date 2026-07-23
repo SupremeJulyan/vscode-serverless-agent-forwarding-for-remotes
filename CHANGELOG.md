@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.7
+
 - Remove the Explorer `R` shortcut; remote terminals are opened explicitly through `Open Remote Terminal`.
 
 ## 0.7.6
