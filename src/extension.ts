@@ -43,6 +43,7 @@ const pendingOpenTtlMs = 5 * 60 * 1000;
 const connectionTimeoutMs = 8_000;
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
+const openRemoteTerminalAction = 'Open Remote Terminal';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
@@ -409,6 +410,25 @@ function isBridgeTerminalForMount(
   return typeof options.shellPath === 'string'
     && path.basename(options.shellPath) === 'ssh-bridge'
     && args[0] === hostName;
+}
+
+function isManagedRemoteTerminal(terminal: vscode.Terminal): boolean {
+  const options = terminal.creationOptions;
+  return 'env' in options && typeof options.env?.[terminalIdentityEnv] === 'string';
+}
+
+async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promise<void> {
+  if (!isManagedRemoteTerminal(terminal)
+    || terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
+    return;
+  }
+  const selected = await vscode.window.showWarningMessage(
+    `远程终端“${terminal.name}”已退出。请运行“Serverless Remote SSH: Open Remote Terminal”重新打开。`,
+    openRemoteTerminalAction
+  );
+  if (selected === openRemoteTerminalAction) {
+    await vscode.commands.executeCommand(`${commandPrefix}.openTerminal`);
+  }
 }
 
 async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void> {
@@ -872,6 +892,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   for (const [name, handler] of registrations) {
     context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));
   }
+  context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
+    void suggestReopeningClosedTerminal(terminal);
+  }));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
     void guard(() => autoOpenWorkspaceTerminal(context));
   }));

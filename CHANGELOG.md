@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.8.5
+
+- Prompt to run `Serverless Remote SSH: Open Remote Terminal` when a managed
+  SSH terminal exits because its local bridge process ended.
+- Let the VS Code extension exclusively manage remote terminals instead of
+  relying on the retired Bash prompt hook from `wsl-vpn-ssh-bridge`.
+
 ## 0.8.4
 
 - Force-stop SSHFS/FUSE process groups that ignore `SIGTERM`, ensuring the
