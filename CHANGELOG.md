@@ -4,7 +4,7 @@
 
 ## 0.7.5
 
-- Add manual VSIX installation instructions and a Simplified Chinese README.
+- Add manual VSIX installation instructions, use Simplified Chinese as the default README, and provide English in `README_EN.md`.
 - Automatically unmount Linux and macOS SSHFS mounts created by the current extension session when the VS Code window closes.
 
 ## 0.7.4
