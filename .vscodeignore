@@ -4,5 +4,6 @@ test/**
 tsconfig.json
 esbuild.js
 node_modules/**
+gknzy/**
 *.vsix
 package-lock.json

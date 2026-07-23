@@ -17,6 +17,7 @@ import {
 import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
 import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
+import { isAuthenticationFailure, passwordValueOffset } from './authentication';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -49,7 +50,11 @@ const openingTerminalIds = new Set<string>();
 let workspaceSwitchMountPath: string | undefined;
 
 class ConfigActionRequiredError extends Error {
-  constructor(message: string, readonly actions = [openConfigAction]) {
+  constructor(
+    message: string,
+    readonly actions = [openConfigAction],
+    readonly hostName?: string
+  ) {
     super(message);
   }
 }
@@ -279,10 +284,30 @@ async function ensureMounted(
         platformUsesAskpass(platformAdapter.kind) && resolved.hostConfig.password
       ) {
         credentials = await createAskpassCredentials(resolved.hostConfig.password!);
-        mountPlan = { ...mountPlan, env: { ...mountPlan.env, ...credentials.env } };
+        mountPlan = {
+          ...mountPlan,
+          env: { ...mountPlan.env, ...credentials.env },
+          // Waiting for sshfs lets authentication failures reach the extension
+          // instead of degrading into a generic mount timeout.
+          stdin: ''
+        };
       }
       const timeout = settings().get<number>('mountTimeout', 30);
-      await executePlan(mountPlan, timeout * 1000);
+      try {
+        await executePlan(mountPlan, timeout * 1000);
+      } catch (error) {
+        if (!resolved.hostConfig.password || !isAuthenticationFailure(error)) throw error;
+        const hostIndex = config.hosts.findIndex((host) => host.name === resolved.hostConfig.name);
+        if (hostIndex >= 0) {
+          config.hosts[hostIndex] = { ...config.hosts[hostIndex], password: '' };
+          await saveConfig(configPath(), config);
+        }
+        throw new ConfigActionRequiredError(
+          `主机“${resolved.hostConfig.name}”的 SSH 密码错误。请在已打开的配置中输入新密码；下次连接成功前会自动将明文密码加密。`,
+          [openConfigAction],
+          resolved.hostConfig.name
+        );
+      }
       if (!await waitForPlan(statusPlan, timeout)) {
         throw new Error(`Timed out waiting for mount: ${localPath}. Check the task terminal for details.`);
       }
@@ -602,10 +627,19 @@ async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<v
   await executeUnmount(mount, pending.localPath);
 }
 
-async function openConfig(): Promise<void> {
+async function openConfig(hostName?: string): Promise<void> {
   const resolvedPath = await ensureConfigFile(configPath());
   const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolvedPath));
-  await vscode.window.showTextDocument(document);
+  const editor = await vscode.window.showTextDocument(document);
+  if (!hostName) return;
+  const offset = passwordValueOffset(document.getText(), hostName);
+  if (offset === undefined) return;
+  const position = document.positionAt(offset);
+  editor.selection = new vscode.Selection(position, position);
+  editor.revealRange(
+    new vscode.Range(position, position),
+    vscode.TextEditorRevealType.InCenterIfOutsideViewport
+  );
 }
 
 interface InputOptions {
@@ -749,12 +783,17 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof ConfigActionRequiredError) {
+      if (error.hostName) {
+        void vscode.window.showErrorMessage(`Serverless Remote SSH: ${message}`);
+        await vscode.commands.executeCommand(`${commandPrefix}.openConfig`, error.hostName);
+        return;
+      }
       const selected = await vscode.window.showErrorMessage(
         `Serverless Remote SSH: ${message}`,
         ...error.actions
       );
       if (selected === openConfigAction) {
-        await vscode.commands.executeCommand(`${commandPrefix}.openConfig`);
+        await vscode.commands.executeCommand(`${commandPrefix}.openConfig`, error.hostName);
       } else if (selected === addSshConfigAction) {
         await vscode.commands.executeCommand(`${commandPrefix}.addSshConfig`);
       }
@@ -811,7 +850,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ['openTerminal', () => guard(() => openTerminal(context))],
     ['close', () => guard(() => closeRemote(context))],
     ['status', () => guard(() => showStatus(statusOutput))],
-    ['openConfig', () => guard(openConfig)],
+    ['openConfig', () => guard(() => openConfig())],
     ['addSshConfig', () => guard(() => addSshConfig(context))],
     ['installDependenciesTips', () => guard(() => showDependencyTips())]
   ];

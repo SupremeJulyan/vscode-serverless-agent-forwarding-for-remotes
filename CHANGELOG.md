@@ -1,9 +1,10 @@
 # Change Log
 
-## Unreleased
+## 0.8.3
 
 - Encrypt passwords while creating SSH configurations and migrate legacy plaintext passwords on use.
 - Resolve wizard-created WSL, Linux, and macOS mount directories below the workspace from which Open Remote Folder is invoked.
+- Report SSH password authentication failures, clear the rejected password, and open the configuration with the replacement field selected.
 
 ## 0.8.1
 
