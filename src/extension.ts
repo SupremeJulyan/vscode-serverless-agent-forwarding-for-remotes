@@ -9,6 +9,7 @@ import {
 import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
+import { findMountForPath } from './mount-path';
 import {
   downloadInstaller, hasWindowsInstallDirectory, installMsiPackages, sshfsWinInstaller,
   winFspInstaller, WindowsInstaller
@@ -295,15 +296,33 @@ async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void
 async function openTerminal(
   _context: vscode.ExtensionContext, mountConfig?: MountConfig, cwd?: string
 ): Promise<void> {
-  const mount = mountConfig ?? await selectMount('Select a remote terminal');
+  let mount = mountConfig;
   if (!mount) {
+    const config = await readConfig();
+    const currentPath = vscode.window.activeTextEditor?.document.uri.scheme === 'file'
+      ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+      : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const match = currentPath
+      ? findMountForPath(config.mounts, currentPath, platformAdapter.kind, expandHome)
+      : undefined;
+    mount = match?.mount;
+    cwd = match?.cwd;
+  }
+  mount ??= await selectMount('Select a remote terminal');
+  if (!mount) {
+    return;
+  }
+  const terminalName = `SSH: ${mount.name}`;
+  const existingTerminal = vscode.window.terminals.find((terminal) => terminal.name === terminalName);
+  if (existingTerminal) {
+    existingTerminal.show();
     return;
   }
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
   const plan = platformAdapter.terminal(resolved.hostConfig);
   const terminal = vscode.window.createTerminal({
-    name: `SSH: ${mount.name}`,
+    name: terminalName,
     shellPath: plan.command,
     shellArgs: plan.args,
     env: { SSH_BRIDGE_MOUNT_NAME: mount.name },

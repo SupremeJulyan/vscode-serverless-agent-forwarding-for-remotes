@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Open the matching SSH terminal directly with `R` from Explorer when the current directory is a configured mount or one of its children, preserving the corresponding remote subdirectory.
+- Reuse the matching SSH terminal when it is already open instead of starting a duplicate connection.
+
 ## 0.7.3
 
 - Add JSON Schema completion, validation, snippets, and hover help for the shared configuration.

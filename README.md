@@ -51,6 +51,7 @@ Example:
 
 - `Serverless Remote SSH: Open Remote Folder` mounts the selected entry, opens its local SSHFS directory, and opens a remote terminal in that folder.
 - `Serverless Remote SSH: Open Remote Terminal` starts `ssh-bridge` in an integrated terminal.
+- Press `R` while the Explorer has focus to open the matching SSH terminal. When the workspace or active file is inside a configured mount, the extension connects immediately and enters the corresponding remote subdirectory.
 - `Serverless Remote SSH: Mount` and `Unmount` manage a selected SSHFS entry.
 - `Serverless Remote SSH: Show Status` opens an output panel summarizing every mount and, on WSL, the SSHFS/SSH relay state.
 - `Serverless Remote SSH: Open Config` opens the shared JSON configuration.
