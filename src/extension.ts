@@ -3,18 +3,15 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import {
-  BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig, RemoteTerminalMode,
-  resolveMount, saveConfig
+  BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
+  parseSshLogin, resolveMount, saveConfig
 } from './config';
 import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import { findMountForPath, findMountForPaths, remotePathForLocalPath } from './mount-path';
-import {
-  downloadInstaller, hasWindowsInstallDirectory, installMsiPackages, sshfsWinInstaller,
-  winFspInstaller, WindowsInstaller
-} from './windows-installer';
+import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
 import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
 
@@ -39,9 +36,7 @@ const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
 const pendingOpenTtlMs = 5 * 60 * 1000;
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
-const addSshfsConfigAction = 'Add SSHFS Config';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
-const dismissedWindowsInstallKey = 'serverlessRemote.dismissedWindowsInstall';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const terminalIdentityEnv = 'SERVERLESS_REMOTE_TERMINAL_ID';
@@ -76,7 +71,7 @@ async function readConfig(): Promise<BridgeConfig> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new ConfigActionRequiredError(
         `No config file was found at ${configPath()}.`,
-        [addSshConfigAction, addSshfsConfigAction]
+        [addSshConfigAction]
       );
     }
     const message = error instanceof Error ? error.message : String(error);
@@ -89,14 +84,14 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
   if (config.mounts.length === 0) {
     throw new ConfigActionRequiredError(
       'No remote folders are configured yet.',
-      [addSshConfigAction, addSshfsConfigAction]
+      [addSshConfigAction]
     );
   }
   const picked = await vscode.window.showQuickPick(
     config.mounts.map((mount) => ({
       label: mount.name,
       description: `${mount.host}: ${mount.remote_path}`,
-      detail: mount.local_path ? expandHome(mount.local_path) : `${mount.remote_terminal ?? 'open'} mode`,
+      detail: mount.local_path ? expandHome(mount.local_path) : 'Uses the platform default mount path',
       mount
     })),
     { placeHolder, matchOnDescription: true, matchOnDetail: true }
@@ -106,20 +101,10 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
 
 async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
   const configuredPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
-  if (mount.remote_terminal !== 'now') {
-    if (!configuredPath) {
-      throw new Error(`Mount '${mount.name}' has no local_path`);
-    }
-    return expandHome(configuredPath);
-  }
-  const selected = await vscode.window.showOpenDialog({
-    canSelectFiles: false,
-    canSelectFolders: true,
-    canSelectMany: false,
-    openLabel: `Mount ${mount.name} here`,
-    title: 'Choose the local directory for now mode'
-  });
-  return selected?.[0]?.fsPath;
+  if (configuredPath) return expandHome(configuredPath);
+  if (platformAdapter.kind === 'windows') return 'R:\\';
+  const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  return path.basename(current) === mount.name ? current : path.join(current, mount.name);
 }
 
 async function executeTask(plan: CommandPlan): Promise<void> {
@@ -248,6 +233,7 @@ async function resolveStoredHostPassword(
   if (isEncryptedPassword(host.password)) {
     return { ...host, password: await decryptHostPassword(context, host.password) };
   }
+  if (!config.encrypt_passwords) return host;
   const plainPassword = host.password;
   const masterPassword = await promptMasterPassword(context, true);
   const encrypted = await encryptPassword(plainPassword, masterPassword);
@@ -302,20 +288,6 @@ async function ensureMounted(
     }
   }
   return false;
-}
-
-async function mount(context: vscode.ExtensionContext, mountConfig?: MountConfig): Promise<string | undefined> {
-  const mount = mountConfig ?? await selectMount('Select a remote folder to mount');
-  if (!mount) {
-    return undefined;
-  }
-  const localPath = await mountDirectory(mount);
-  if (!localPath) {
-    return undefined;
-  }
-  await ensureMounted(context, mount, localPath);
-  void vscode.window.showInformationMessage(`${mount.name} mounted at ${localPath}`);
-  return localPath;
 }
 
 async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void> {
@@ -510,7 +482,7 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
     : undefined;
   const candidates = activePath ? [activePath, ...workspacePaths] : workspacePaths;
   const match = findMountForPaths(config.mounts, candidates, platformAdapter.kind, expandHome);
-  if (!match || (match.mount.remote_terminal ?? 'open') !== 'open') return;
+  if (!match) return;
   await openTerminal(context, match.mount, match.cwd);
 }
 
@@ -551,12 +523,11 @@ async function executePlatformUnmount(remote: ResolvedMount, localPath: string):
   }
 }
 
-async function unmount(context: vscode.ExtensionContext): Promise<void> {
-  const mount = await selectMount('Select a remote folder to unmount');
+async function closeRemote(context: vscode.ExtensionContext): Promise<void> {
+  const mount = await selectMount('Select a remote folder to close');
   if (mount) {
-    const localPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
-    if (!localPath) throw new Error(`Mount '${mount.name}' has no recorded local_path`);
-    const expandedPath = expandHome(localPath);
+    const expandedPath = await mountDirectory(mount);
+    if (!expandedPath) return;
     if (workspaceUsesPath(expandedPath)) {
       await context.globalState.update(pendingUnmountKey, {
         mountName: mount.name, localPath: expandedPath, createdAt: Date.now()
@@ -590,12 +561,8 @@ async function showStatus(output: vscode.OutputChannel): Promise<void> {
   output.clear();
   output.appendLine('Mounts');
   for (const mount of config.mounts) {
-    const localPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
-    if (!localPath) {
-      output.appendLine(`  ${mount.name}: not configured for ${platformAdapter.kind}`);
-      continue;
-    }
-    const expandedPath = expandHome(localPath);
+    const expandedPath = await mountDirectory(mount);
+    if (!expandedPath) continue;
     const mounted = await commandSucceeds(platformAdapter.status(resolveMount(config, mount), expandedPath));
     output.appendLine(`  ${mount.name}: ${mounted ? 'mounted' : 'not mounted'} (${expandedPath})`);
   }
@@ -664,41 +631,58 @@ async function confirmReplacement(kind: string, name: string, exists: boolean): 
   ) === '覆盖';
 }
 
-async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
+async function addSshConfig(): Promise<void> {
   const title = 'Add SSH Config';
   const name = await input({
-    title, prompt: '配置名称（供 SSHFS 配置引用）', value: 'dev', validateInput: required('配置名称')
+    title, prompt: '配置名称', value: 'dev', validateInput: required('配置名称')
   });
   if (name === undefined) return;
-  const ip = await input({
-    title, prompt: '服务器 IP 地址或主机名', value: '10.0.0.2', validateInput: required('服务器地址')
+  const loginText = await input({
+    title,
+    prompt: 'SSH 登录地址',
+    value: `${os.userInfo().username}@10.0.0.1`,
+    placeHolder: 'user@10.0.0.1',
+    validateInput: (value) => parseSshLogin(value) ? undefined : '请输入 user@IP 或 user@主机名'
   });
-  if (ip === undefined) return;
-  const user = await input({
-    title, prompt: 'SSH 登录用户名', value: os.userInfo().username, validateInput: required('用户名')
-  });
-  if (user === undefined) return;
+  if (loginText === undefined) return;
+  const login = parseSshLogin(loginText);
+  if (!login) throw new Error('SSH 登录地址格式无效');
   const password = await input({
-    title, prompt: 'SSH 密码（可选，推荐使用私钥；保存前使用主口令加密）',
-    placeHolder: '留空则不保存密码', password: true
+    title,
+    prompt: 'SSH 密码（留空则改用私钥）',
+    placeHolder: '输入密码，或留空后按 Enter',
+    password: true
   });
   if (password === undefined) return;
-  const privateKeyPath = await input({
-    title, prompt: 'SSH 私钥路径（可选）', placeHolder: '例如 ~/.ssh/id_ed25519'
-  });
-  if (privateKeyPath === undefined) return;
-  const portText = await input({
-    title, prompt: 'SSH 端口', value: '22',
-    validateInput: (value) => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 65535
-      ? undefined : '端口必须是 1–65535 的整数'
-  });
-  if (portText === undefined) return;
-  let vpn: boolean | undefined;
-  if (platformAdapter.kind !== 'macos' && platformAdapter.kind !== 'linux') {
+  let privateKeyPath: string | undefined;
+  if (!password) {
+    privateKeyPath = await input({
+      title,
+      prompt: 'SSH 私钥路径',
+      value: '~/.ssh/id_ed25519',
+      placeHolder: '例如 ~/.ssh/id_ed25519',
+      validateInput: required('私钥路径')
+    });
+    if (privateKeyPath === undefined) return;
+  }
+  let vpn = false;
+  if (platformAdapter.kind === 'wsl') {
     const selectedVpn = await vscode.window.showQuickPick([
-      { label: 'Yes', description: '使用 VPN 中继（默认）', value: true },
-      { label: 'No', description: '直接连接服务器', value: false }
-    ], { title, placeHolder: '是否使用 VPN 中继？', ignoreFocusOut: true });
+      {
+        label: 'No',
+        description: 'false（默认）：不使用外部 VPN 中继',
+        value: false
+      },
+      {
+        label: 'Yes',
+        description: 'true：使用 aTrust 等外部 VPN 时启用中继',
+        value: true
+      }
+    ], {
+      title,
+      placeHolder: '是否使用外部 VPN（如 aTrust）？',
+      ignoreFocusOut: true
+    });
     if (!selectedVpn) return;
     vpn = selectedVpn.value;
   }
@@ -709,79 +693,35 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
   if (!await confirmReplacement('SSH', normalizedName, existingIndex >= 0)) return;
   const host: HostConfig = {
     name: normalizedName,
-    ip: ip.trim(),
-    user: user.trim(),
-    port: Number(portText)
+    ip: login.host,
+    user: login.user,
+    port: 22
   };
-  if (vpn !== undefined) host.vpn = vpn;
-  if (privateKeyPath.trim()) host.private_key_path = privateKeyPath.trim();
-  if (password) {
-    const masterPassword = await promptMasterPassword(context, true);
-    host.password = await encryptPassword(password, masterPassword);
-  }
+  if (platformAdapter.kind === 'wsl') host.vpn = vpn;
+  if (privateKeyPath) host.private_key_path = privateKeyPath.trim();
+  if (password) host.password = password;
   if (existingIndex >= 0) config.hosts[existingIndex] = host;
   else config.hosts.push(host);
-  config.encrypt_passwords = true;
-  await saveConfig(configPath(), config);
-  void vscode.window.showInformationMessage(`已保存 SSH 配置“${normalizedName}”`);
-}
-
-async function addSshfsConfig(): Promise<void> {
-  const title = 'Add SSHFS Config';
-  const config = await editableConfig();
-  if (config.hosts.length === 0) {
-    const selected = await vscode.window.showWarningMessage('请先添加 SSH 配置。', 'Add SSH Config');
-    if (selected === 'Add SSH Config') await vscode.commands.executeCommand(`${commandPrefix}.addSshConfig`);
-    return;
-  }
-  const name = await input({
-    title, prompt: 'SSHFS 配置名称', value: 'project', validateInput: required('配置名称')
-  });
-  if (name === undefined) return;
-  const host = await vscode.window.showQuickPick(
-    config.hosts.map((item) => ({
-      label: item.name, description: `${item.user}@${item.ip}:${item.port ?? 22}`, host: item.name
-    })),
-    { title, placeHolder: '选择引用的 SSH 配置', ignoreFocusOut: true }
-  );
-  if (!host) return;
-  const remotePath = await input({
-    title, prompt: '服务器上的远程目录', value: `/home/${config.hosts.find((item) => item.name === host.host)?.user ?? 'user'}`,
-    validateInput: required('远程目录')
-  });
-  if (remotePath === undefined) return;
-  const mode = await vscode.window.showQuickPick([
-    { label: 'open', description: '进入挂载目录时打开远程终端（默认）', value: 'open' as const },
-    { label: 'now', description: '挂载时临时选择本地目录并打开终端', value: 'now' as const },
-    { label: 'never', description: '不自动打开远程终端', value: 'never' as const }
-  ], { title, placeHolder: '选择远程终端方式', ignoreFocusOut: true });
-  if (!mode) return;
-
-  let localPath: string | undefined;
-  if (mode.value !== 'now') {
-    const basePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
-    localPath = await input({
-      title, prompt: '本地 SSHFS 挂载目录', value: path.join(basePath, name.trim()),
-      validateInput: required('本地挂载目录')
-    });
-    if (localPath === undefined) return;
-  }
-
-  const normalizedName = name.trim();
-  const existingIndex = config.mounts.findIndex((mount) => mount.name === normalizedName);
-  if (!await confirmReplacement('SSHFS', normalizedName, existingIndex >= 0)) return;
+  const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  const localPath = platformAdapter.kind === 'windows'
+    ? 'R:'
+    : path.basename(current) === normalizedName ? current : path.join(current, normalizedName);
   const mount: MountConfig = {
     name: normalizedName,
-    host: host.host,
-    remote_path: remotePath.trim(),
-    remote_terminal: mode.value as RemoteTerminalMode
+    host: normalizedName,
+    remote_path: '.',
+    local_path: localPath,
+    remote_terminal: 'open'
   };
-  if (localPath) mount.local_path = localPath.trim();
-  if (existingIndex >= 0) config.mounts[existingIndex] = mount;
+  const mountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
+  if (mountIndex >= 0) config.mounts[mountIndex] = mount;
   else config.mounts.push(mount);
+  if (password) config.encrypt_passwords = false;
   await saveConfig(configPath(), config);
-  if (localPath) await mkdir(expandHome(localPath), { recursive: true });
-  void vscode.window.showInformationMessage(`已保存 SSHFS 配置“${normalizedName}”`);
+  if (platformAdapter.kind !== 'windows') await mkdir(localPath, { recursive: true });
+  void vscode.window.showInformationMessage(
+    `已保存“${normalizedName}”；SSH 登录目录将挂载到 ${localPath}`
+  );
 }
 
 async function guard(action: () => Promise<unknown>): Promise<void> {
@@ -798,8 +738,6 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
         await vscode.commands.executeCommand(`${commandPrefix}.openConfig`);
       } else if (selected === addSshConfigAction) {
         await vscode.commands.executeCommand(`${commandPrefix}.addSshConfig`);
-      } else if (selected === addSshfsConfigAction) {
-        await vscode.commands.executeCommand(`${commandPrefix}.addSshfsConfig`);
       }
       return;
     }
@@ -807,93 +745,48 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
   }
 }
 
-async function offerWindowsDependencyInstall(
-  context: vscode.ExtensionContext, force = false
-): Promise<void> {
-  if (platformAdapter.kind !== 'windows') return;
-  const missing: WindowsInstaller[] = [];
-  const missingCommands: string[] = [];
+async function missingDependencies(): Promise<string[]> {
+  const missing: string[] = [];
+  for (const command of platformAdapter.dependencies()) {
+    if (platformAdapter.kind === 'windows' && command === 'sshfs-win.exe') continue;
+    if (!await commandExists(command)) missing.push(command);
+  }
+  if (platformAdapter.kind !== 'windows') return missing;
   const hasWinFsp = await commandExists('fsptool-x64.exe') || await hasWindowsInstallDirectory('WinFsp');
-  if (!hasWinFsp) {
-    missing.push(winFspInstaller);
-    missingCommands.push('fsptool-x64.exe');
-  }
+  if (!hasWinFsp) missing.push('WinFsp');
   const hasSshfsWin = await commandExists('sshfs-win.exe') || await hasWindowsInstallDirectory('SSHFS-Win');
-  if (!hasSshfsWin) {
-    missing.push(sshfsWinInstaller);
-    missingCommands.push('sshfs-win.exe');
-  }
+  if (!hasSshfsWin) missing.push('SSHFS-Win');
+  return missing;
+}
+
+async function showDependencyTips(force = true): Promise<void> {
+  const missing = await missingDependencies();
   if (missing.length === 0) {
-    if (force) void vscode.window.showInformationMessage('WinFsp 和 SSHFS-Win 均已安装。');
+    if (force) void vscode.window.showInformationMessage('当前平台所需依赖均已安装。');
     return;
   }
-  const fingerprint = missingCommands.join('|');
-  if (!force && context.globalState.get<string>(dismissedWindowsInstallKey) === fingerprint) return;
-
-  const installAction = '下载并安装';
-  const selected = await vscode.window.showWarningMessage(
-    `Serverless Remote SSH 缺少：${missing.map((item) => item.name).join('、')}。是否从官方 GitHub 下载并安装？`,
-    { modal: true, detail: '安装程序将校验 SHA-256，并请求 Windows 管理员权限。' },
-    installAction
-  );
-  if (selected !== installAction) {
-    await context.globalState.update(dismissedWindowsInstallKey, fingerprint);
+  if (platformAdapter.kind === 'windows') {
+    await vscode.window.showWarningMessage(
+      `Serverless Remote SSH 缺少：${missing.join('、')}。Windows 必须安装 OpenSSH Client、WinFsp 和 SSHFS-Win。`
+    );
     return;
   }
-
-  const paths = await vscode.window.withProgress({
-    location: vscode.ProgressLocation.Notification,
-    title: '正在下载 Serverless Remote SSH 的 Windows 依赖',
-    cancellable: false
-  }, async (progress) => {
-    const downloaded: string[] = [];
-    for (let index = 0; index < missing.length; index++) {
-      const installer = missing[index];
-      progress.report({
-        message: installer.name,
-        increment: index === 0 ? 0 : 100 / missing.length
-      });
-      downloaded.push(await downloadInstaller(installer, context.globalStorageUri.fsPath));
-    }
-    return downloaded;
-  });
-  await installMsiPackages(paths);
-  await context.globalState.update(dismissedWindowsInstallKey, undefined);
-  const reload = await vscode.window.showInformationMessage(
-    'Windows 依赖安装完成。请重载 VS Code 后继续。',
-    '重载窗口'
-  );
-  if (reload === '重载窗口') await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  const guide = await createDependencyGuide(platformAdapter.kind, missing);
+  if (!guide) return;
+  const copyAction = guide.command ? '复制安装命令' : undefined;
+  const docsAction = guide.url ? '查看安装说明' : undefined;
+  const actions = [copyAction, docsAction].filter((item): item is string => item !== undefined);
+  const selected = await vscode.window.showWarningMessage(guide.message, ...actions);
+  if (selected === copyAction && guide.command) {
+    await vscode.env.clipboard.writeText(guide.command);
+    void vscode.window.showInformationMessage('安装命令已复制到剪贴板，请在终端中运行。');
+  } else if (selected === docsAction && guide.url) {
+    await vscode.env.openExternal(vscode.Uri.parse(guide.url));
+  }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const missing = [];
-  for (const command of platformAdapter.dependencies()) {
-    if (platformAdapter.kind === 'windows' && command === 'sshfs-win.exe') continue;
-    if (!await commandExists(command)) {
-      missing.push(command);
-    }
-  }
-  if (missing.length) {
-    if (platformAdapter.kind === 'windows') {
-      void vscode.window.showWarningMessage(`Serverless Remote SSH requires: ${missing.join(', ')}`);
-    } else {
-      const guide = await createDependencyGuide(platformAdapter.kind, missing);
-      if (guide) {
-        const copyAction = guide.command ? '复制安装命令' : undefined;
-        const docsAction = guide.url ? '查看安装说明' : undefined;
-        const actions = [copyAction, docsAction].filter((item): item is string => item !== undefined);
-        const selected = await vscode.window.showWarningMessage(guide.message, ...actions);
-        if (selected === copyAction && guide.command) {
-          await vscode.env.clipboard.writeText(guide.command);
-          void vscode.window.showInformationMessage('安装命令已复制到剪贴板，请在终端中运行。');
-        } else if (selected === docsAction && guide.url) {
-          await vscode.env.openExternal(vscode.Uri.parse(guide.url));
-        }
-      }
-    }
-  }
-  await guard(() => offerWindowsDependencyInstall(context));
+  await guard(() => showDependencyTips(false));
 
   const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
   bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
@@ -901,13 +794,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const registrations: Array<[string, () => Promise<void>]> = [
     ['openFolder', () => guard(() => openRemoteFolder(context))],
     ['openTerminal', () => guard(() => openTerminal(context))],
-    ['mount', () => guard(() => mount(context))],
-    ['unmount', () => guard(() => unmount(context))],
+    ['close', () => guard(() => closeRemote(context))],
     ['status', () => guard(() => showStatus(statusOutput))],
     ['openConfig', () => guard(openConfig)],
-    ['addSshConfig', () => guard(() => addSshConfig(context))],
-    ['addSshfsConfig', () => guard(addSshfsConfig)],
-    ['installWindowsDependencies', () => guard(() => offerWindowsDependencyInstall(context, true))]
+    ['addSshConfig', () => guard(addSshConfig)],
+    ['installDependenciesTips', () => guard(() => showDependencyTips())]
   ];
   for (const [name, handler] of registrations) {
     context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));

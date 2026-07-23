@@ -3,7 +3,9 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { ensureConfigFile, expandHome, parseConfig, resolveMount, saveConfig } from '../src/config';
+import {
+  ensureConfigFile, expandHome, parseConfig, parseSshLogin, resolveMount, saveConfig
+} from '../src/config';
 
 test('parses and resolves a mount through its host reference', () => {
   const config = parseConfig({
@@ -36,16 +38,24 @@ test('rejects a missing host reference', () => {
   }), /references missing host/);
 });
 
-test('rejects an unknown remote terminal mode', () => {
-  assert.throws(() => parseConfig({
+test('normalizes legacy remote terminal modes to open', () => {
+  const config = parseConfig({
     hosts: [{ name: 'dev', ip: 'host', user: 'alice' }],
     mounts: [{ name: 'project', host: 'dev', remote_path: '/srv/project', remote_terminal: 'sometimes' }]
-  }), /must be now, open, or never/);
+  });
+  assert.equal(config.mounts[0].remote_terminal, 'open');
 });
 
 test('preserves a Windows drive-letter mount path', () => {
   assert.equal(expandHome('x:'), 'X:\\');
   assert.equal(expandHome('x:\\'), 'X:\\');
+});
+
+test('parses compact SSH login input', () => {
+  assert.deepEqual(parseSshLogin('alice@10.0.0.1'), { user: 'alice', host: '10.0.0.1' });
+  assert.deepEqual(parseSshLogin('alice@[2001:db8::1]'), { user: 'alice', host: '2001:db8::1' });
+  assert.equal(parseSshLogin('alice'), undefined);
+  assert.equal(parseSshLogin('@host'), undefined);
 });
 
 test('creates a minimal config template without overwriting an existing config', async () => {

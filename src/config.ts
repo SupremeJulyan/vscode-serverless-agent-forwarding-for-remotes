@@ -2,8 +2,6 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-export type RemoteTerminalMode = 'now' | 'open' | 'never';
-
 export interface HostConfig {
   name: string;
   ip: string;
@@ -20,7 +18,7 @@ export interface MountConfig {
   remote_path: string;
   local_path?: string;
   local_paths?: Partial<Record<'windows' | 'macos' | 'linux' | 'wsl', string>>;
-  remote_terminal?: RemoteTerminalMode;
+  remote_terminal?: 'open';
 }
 
 export interface BridgeConfig {
@@ -31,6 +29,11 @@ export interface BridgeConfig {
 
 export interface ResolvedMount extends MountConfig {
   hostConfig: HostConfig;
+}
+
+export interface SshLogin {
+  user: string;
+  host: string;
 }
 
 const configTemplate = {
@@ -61,6 +64,12 @@ function requireString(value: unknown, label: string): string {
   return value;
 }
 
+export function parseSshLogin(value: string): SshLogin | undefined {
+  const match = /^([^@\s]+)@(?:\[([^\]]+)\]|([^@\s]+))$/.exec(value.trim());
+  if (!match) return undefined;
+  return { user: match[1], host: match[2] ?? match[3] };
+}
+
 export function parseConfig(value: unknown): BridgeConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Config root must be an object');
@@ -88,16 +97,12 @@ export function parseConfig(value: unknown): BridgeConfig {
       throw new Error(`mounts[${index}] must be an object`);
     }
     const mount = item as Record<string, unknown>;
-    const mode = mount.remote_terminal ?? 'open';
-    if (mode !== 'now' && mode !== 'open' && mode !== 'never') {
-      throw new Error(`mounts[${index}].remote_terminal must be now, open, or never`);
-    }
     return {
       ...mount,
       name: requireString(mount.name, `mounts[${index}].name`),
       host: requireString(mount.host, `mounts[${index}].host`),
       remote_path: requireString(mount.remote_path, `mounts[${index}].remote_path`),
-      remote_terminal: mode
+      remote_terminal: 'open'
     } as MountConfig;
   });
 

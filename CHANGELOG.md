@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.8.1
+
+- Replace the separate SSHFS setup wizard with an automatically generated mount for each SSH configuration.
+- Mount the SSH login directory by default and always open its SSH terminal.
+- Default local mounts to `[name]` below the current workspace on WSL, Linux, and macOS, and to `R:` on Windows.
+- Reduce Add SSH Config to name, `user@host`, and one password-or-key authentication choice.
+- On WSL, add an optional VPN relay step defaulting to `false`; external VPN clients such as aTrust require `true`.
+- Remove Mount, rename Unmount to Close, and replace the Windows installer command with cross-platform dependency tips.
+
 ## 0.7.15
 
 - Dispose a mount's existing WSL bridge terminal before switching folders so

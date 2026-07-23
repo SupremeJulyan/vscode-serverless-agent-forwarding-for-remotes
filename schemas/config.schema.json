@@ -30,7 +30,7 @@
     },
     "mounts": {
       "type": "array",
-      "description": "需要挂载或打开的远程目录。",
+      "description": "由 Add SSH Config 自动生成的挂载信息。",
       "items": { "$ref": "#/definitions/mount" },
       "defaultSnippets": [
         {
@@ -38,7 +38,7 @@
           "body": [{
             "name": "${1:project}",
             "host": "${2:dev}",
-            "remote_path": "${3:/home/alice/project}",
+            "remote_path": ".",
             "local_paths": {
               "windows": "${4:X:}",
               "macos": "${5:/Users/alice/mnt/project}",
@@ -73,7 +73,7 @@
       "properties": {
         "name": { "type": "string", "minLength": 1, "description": "远程目录的显示名称。" },
         "host": { "type": "string", "minLength": 1, "description": "对应 hosts 中的 name。" },
-        "remote_path": { "type": "string", "minLength": 1, "description": "服务器上的绝对目录路径。" },
+        "remote_path": { "type": "string", "minLength": 1, "default": ".", "description": "服务器目录；`.` 表示 SSH 登录目录。" },
         "local_path": { "type": "string", "description": "没有平台专用路径时使用的通用本地挂载路径。" },
         "local_paths": {
           "type": "object",
@@ -88,8 +88,8 @@
         },
         "remote_terminal": {
           "type": "string",
-          "enum": ["open", "now", "never"],
-          "enumDescriptions": ["打开目录后连接终端。", "每次临时选择挂载目录。", "不打开终端。"],
+          "enum": ["open"],
+          "enumDescriptions": ["打开目录后连接终端。"],
           "default": "open",
           "description": "远程终端的打开方式。"
         }

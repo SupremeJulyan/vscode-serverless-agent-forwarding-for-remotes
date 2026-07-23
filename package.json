@@ -2,7 +2,7 @@
   "name": "vscode-serverless-remote-ssh",
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
-  "version": "0.7.15",
+  "version": "0.8.1",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -20,37 +20,31 @@
     "onStartupFinished",
     "onCommand:serverlessRemote.openFolder",
     "onCommand:serverlessRemote.openTerminal",
-    "onCommand:serverlessRemote.mount",
-    "onCommand:serverlessRemote.unmount",
+    "onCommand:serverlessRemote.close",
     "onCommand:serverlessRemote.status",
     "onCommand:serverlessRemote.openConfig",
     "onCommand:serverlessRemote.addSshConfig",
-    "onCommand:serverlessRemote.addSshfsConfig",
-    "onCommand:serverlessRemote.installWindowsDependencies"
+    "onCommand:serverlessRemote.installDependenciesTips"
   ],
   "contributes": {
     "commands": [
       { "command": "serverlessRemote.openFolder", "title": "Serverless Remote SSH: Open Remote Folder", "icon": "$(remote-explorer)" },
       { "command": "serverlessRemote.openTerminal", "title": "Serverless Remote SSH: Open Remote Terminal", "icon": "$(terminal)" },
-      { "command": "serverlessRemote.mount", "title": "Serverless Remote SSH: Mount" },
-      { "command": "serverlessRemote.unmount", "title": "Serverless Remote SSH: Unmount" },
+      { "command": "serverlessRemote.close", "title": "Serverless Remote SSH: Close" },
       { "command": "serverlessRemote.status", "title": "Serverless Remote SSH: Show Status" },
       { "command": "serverlessRemote.openConfig", "title": "Serverless Remote SSH: Open Config" },
       { "command": "serverlessRemote.addSshConfig", "title": "Serverless Remote SSH: Add SSH Config" },
-      { "command": "serverlessRemote.addSshfsConfig", "title": "Serverless Remote SSH: Add SSHFS Config" },
-      { "command": "serverlessRemote.installWindowsDependencies", "title": "Serverless Remote SSH: Install Windows Dependencies", "enablement": "isWindows" }
+      { "command": "serverlessRemote.installDependenciesTips", "title": "Serverless Remote SSH: Install Dependencies Tips" }
     ],
     "menus": {
       "commandPalette": [
         { "command": "serverlessRemote.openFolder" },
         { "command": "serverlessRemote.openTerminal" },
-        { "command": "serverlessRemote.mount" },
-        { "command": "serverlessRemote.unmount" },
+        { "command": "serverlessRemote.close" },
         { "command": "serverlessRemote.status" },
         { "command": "serverlessRemote.openConfig" },
         { "command": "serverlessRemote.addSshConfig" },
-        { "command": "serverlessRemote.addSshfsConfig" },
-        { "command": "serverlessRemote.installWindowsDependencies", "when": "isWindows" }
+        { "command": "serverlessRemote.installDependenciesTips" }
       ]
     },
     "jsonValidation": [

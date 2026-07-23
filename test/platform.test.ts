@@ -41,6 +41,17 @@ test('Linux builds a native SSHFS command', () => {
   assert.deepEqual(plan.args.slice(0, 4), ['alice@10.0.0.2:/srv/project', '/mnt/project', '-p', '2222']);
 });
 
+test('native SSHFS mounts the SSH login directory for a dot remote path', () => {
+  const loginDirectory = { ...remote, remote_path: '.' };
+  const linuxPlan = createPlatformAdapter('linux').mount(loginDirectory, '/work/dev');
+  assert.equal(linuxPlan.args[0], 'alice@10.0.0.2:.');
+
+  const windowsPlan = createPlatformAdapter('windows').mount(loginDirectory, 'R:');
+  assert.deepEqual(windowsPlan.args, [
+    'use', 'R:', '\\\\sshfs.r\\alice@10.0.0.2!2222\\', '/persistent:no'
+  ]);
+});
+
 test('macOS checks the exact mount table entry instead of using df', () => {
   assert.deepEqual(createPlatformAdapter('macos').status(remote, '/Users/alice/project'), {
     command: '/bin/sh',
