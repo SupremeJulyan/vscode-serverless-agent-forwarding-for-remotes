@@ -20,6 +20,7 @@ import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } fro
 import {
   isAuthenticationFailure, isNetworkFailure, passwordValueOffset
 } from './authentication';
+import { isEmptyDirectory } from './directory';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -558,6 +559,21 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
   const candidates = activePath ? [activePath, ...workspacePaths] : workspacePaths;
   const match = findMountForPaths(config.mounts, candidates, platformAdapter.kind, expandHome);
   if (!match) return;
+  const openedMountRoot = workspacePaths.find((workspacePath) =>
+    sameLocalPath(workspacePath, match.localPath)
+  );
+  if (openedMountRoot) {
+    const resolved = resolveMount(config, match.mount);
+    const mounted = await commandSucceeds(platformAdapter.status(resolved, match.localPath));
+    // An unmounted Windows drive has no directory entry to read, so its
+    // missing drive root is the platform equivalent of an empty mount point.
+    const empty = !mounted && await isEmptyDirectory(
+      openedMountRoot, platformAdapter.kind === 'windows'
+    );
+    if (empty) {
+      await ensureMounted(context, match.mount, match.localPath);
+    }
+  }
   await openTerminal(context, match.mount, match.cwd);
 }
 

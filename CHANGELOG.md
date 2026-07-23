@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.8.6
+
+- Automatically mount an opened configured mount directory when it is empty
+  and not mounted, then open its matching remote terminal on every platform.
+
 ## 0.8.5
 
 - Prompt to run `Serverless Remote SSH: Open Remote Terminal` when a managed
