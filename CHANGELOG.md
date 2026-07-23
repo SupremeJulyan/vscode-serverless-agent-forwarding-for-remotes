@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.8.7
+
+- Install the WSL VPN bridge from a temporary clone, retaining only its
+  uninstall script after setup.
+- Run the retained bridge cleanup script when the VS Code extension is
+  uninstalled.
+
 ## 0.8.6
 
 - Automatically mount an opened configured mount directory when it is empty

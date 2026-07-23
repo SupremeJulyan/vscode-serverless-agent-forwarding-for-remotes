@@ -116,7 +116,14 @@ export async function createDependencyGuide(
   }
 
   const needsBridge = missing.some((item) => item === 'ssh-bridge' || item === 'sshfs-bridge');
-  const bridgeCommand = `git clone ${bridgeRepository}.git && cd wsl-vpn-ssh-bridge && ./install.sh`;
+  const bridgeCommand = `(${[
+    'bridge_install_dir="$(mktemp -d)"',
+    'trap \'rm -rf "$bridge_install_dir"\' EXIT',
+    `git clone ${bridgeRepository}.git "$bridge_install_dir/wsl-vpn-ssh-bridge"`,
+    'cd "$bridge_install_dir/wsl-vpn-ssh-bridge"',
+    './install.sh',
+    'install -m 700 uninstall.sh "$HOME/.wsl-vpn-bridge-uninstall.sh"'
+  ].join(' && ')})`;
   return {
     message: `Serverless Remote SSH 缺少 ${missing.join('、')}。可在 ${distribution.name} 的 WSL 终端运行安装命令。`,
     command: needsBridge ? `${systemCommand} && ${bridgeCommand}` : systemCommand,

@@ -25,6 +25,11 @@ test('WSL guide includes distro packages and bridge installer', async () => {
   );
   assert.match(guide?.command ?? '', /wsl-vpn-ssh-bridge\.git/);
   assert.match(guide?.command ?? '', /\.\/install\.sh/);
+  assert.match(
+    guide?.command ?? '',
+    /install -m 700 uninstall\.sh "\$HOME\/\.wsl-vpn-bridge-uninstall\.sh"/
+  );
+  assert.match(guide?.command ?? '', /trap 'rm -rf "\$bridge_install_dir"' EXIT/);
   assert.equal(guide?.url, 'https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge');
 });
 
