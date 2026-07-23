@@ -1,5 +1,7 @@
 # Serverless Remote SSH
 
+[English](README.md) | [简体中文](README_CN.md)
+
 Edit remote files in VS Code through SSHFS and use a real SSH terminal without installing VS Code Server on the target host.
 
 The extension selects a platform adapter and exposes every remote folder as a real operating-system mount. WSL delegates VPN relay lifecycle to `sshfs-bridge` and `ssh-bridge`; native Windows, macOS, and Linux connect through the VPN/network stack of that operating system.
@@ -71,8 +73,22 @@ The macOS and Linux configuration wizard hides the relay option, and their statu
 
 ## Install
 
+### Install manually in VS Code
+
+1. Download the `.vsix` package to your computer.
+2. Open VS Code and select the **Extensions** icon in the Activity Bar, or press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
+3. Select the **Views and More Actions...** (`...`) menu in the upper-right corner of the Extensions view.
+4. Select **Install from VSIX...**.
+5. Choose `vscode-serverless-remote-ssh-0.7.4.vsix` and confirm the installation.
+6. Select **Reload Now** if VS Code asks you to reload the window.
+7. Use the `$(remote) Serverless SSH` status bar item or open the Command Palette and run a `Serverless Remote SSH` command.
+
+To upgrade an existing installation, repeat these steps with the newer VSIX package. VS Code replaces the installed version.
+
+### Install from the command line
+
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.7.3.vsix
+code --install-extension vscode-serverless-remote-ssh-0.7.4.vsix
 ```
 
 After installation, use the `$(remote) Serverless SSH` status bar item or open the Command Palette.

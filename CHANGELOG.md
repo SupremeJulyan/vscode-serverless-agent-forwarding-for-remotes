@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add manual VSIX installation instructions and a Simplified Chinese README.
+
+## 0.7.4
+
+- Add encrypted-password decryption and automatic password authentication for native macOS SSHFS mounts and SSH terminals.
+- Migrate existing plaintext macOS passwords to the bridge-compatible `enc:v1:` format when first used.
+- Pass macOS passwords through a short-lived `SSH_ASKPASS` helper without exposing them in command arguments or task output.
 - Open the matching SSH terminal directly with `R` from Explorer when the current directory is a configured mount or one of its children, preserving the corresponding remote subdirectory.
 - Reuse the matching SSH terminal when it is already open instead of starting a duplicate connection.
 
