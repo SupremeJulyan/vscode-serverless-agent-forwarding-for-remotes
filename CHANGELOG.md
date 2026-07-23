@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.9
+
+- Automatically open the matching remote terminal when VS Code opens a configured mount directory or one of its subdirectories.
+
 ## 0.7.8
 
 - Add encrypted-password authentication and plaintext-password migration for native Linux SSHFS mounts and SSH terminals.

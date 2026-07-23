@@ -62,6 +62,8 @@
 - `Serverless Remote SSH: Add SSH Config`：通过交互式输入添加 SSH 主机配置。
 - `Serverless Remote SSH: Add SSHFS Config`：通过交互式输入添加挂载配置，包括引用的 SSH 主机和终端模式。
 
+当 VS Code 启动时已经打开某个配置的挂载目录或其子目录，或者窗口运行期间工作区目录发生变化，插件会自动匹配 `remote_terminal: "open"` 的配置并打开对应的远程终端。`never` 和 `now` 模式不会由工作区检测自动触发，已有同名终端会直接复用。
+
 通过 `Add SSH Config` 输入的密码会先加密为与桥接程序兼容的 `enc:v1:` 格式，再写入配置文件。加密主口令保存在 VS Code SecretStorage 中。Windows、macOS 和 Linux 会在首次使用已有明文密码时自动完成加密迁移。macOS 和 Linux 通过短生命周期的 `SSH_ASKPASS` 辅助程序将解密后的密码提供给 OpenSSH 和 SSHFS；密码不会出现在命令参数或任务输出中。
 
 当 `remote_terminal` 为 `now` 时，插件会在挂载时要求选择本地目录。其他模式优先使用当前平台对应的 `local_paths`，没有配置时回退到 `local_path`。Windows 应配置盘符，而不是 POSIX 路径。
@@ -78,7 +80,7 @@
 2. 打开 VS Code，选择活动栏中的**扩展**图标，或者按 `Ctrl+Shift+X`；macOS 使用 `Cmd+Shift+X`。
 3. 选择扩展视图右上角的**视图和更多操作...**（`...`）菜单。
 4. 选择**从 VSIX 安装...**。
-5. 选择 `vscode-serverless-remote-ssh-0.7.8.vsix` 并确认安装。
+5. 选择 `vscode-serverless-remote-ssh-0.7.9.vsix` 并确认安装。
 6. 如果 VS Code 提示重新加载窗口，选择**立即重新加载**。
 7. 安装完成后，使用状态栏中的 `$(remote) Serverless SSH`，或者打开命令面板并运行 `Serverless Remote SSH` 命令。
 
@@ -87,7 +89,7 @@
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.7.8.vsix
+code --install-extension vscode-serverless-remote-ssh-0.7.9.vsix
 ```
 
 ## 开发

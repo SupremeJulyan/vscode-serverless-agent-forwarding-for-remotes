@@ -48,3 +48,14 @@ export function findMountForPath(
     })
     .sort((left, right) => right.localPath.length - left.localPath.length)[0];
 }
+
+export function findMountForPaths(
+  mounts: MountConfig[], candidatePaths: string[], platform: PlatformKind,
+  expand: (value: string) => string
+): MountPathMatch | undefined {
+  for (const candidatePath of candidatePaths) {
+    const match = findMountForPath(mounts, candidatePath, platform, expand);
+    if (match) return match;
+  }
+  return undefined;
+}

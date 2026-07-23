@@ -10,7 +10,7 @@ import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
-import { findMountForPath, remotePathForLocalPath } from './mount-path';
+import { findMountForPath, findMountForPaths, remotePathForLocalPath } from './mount-path';
 import {
   downloadInstaller, hasWindowsInstallDirectory, installMsiPackages, sshfsWinInstaller,
   winFspInstaller, WindowsInstaller
@@ -392,6 +392,24 @@ async function openTerminal(
     }, pendingOpenTtlMs);
   }
   terminal.show();
+}
+
+async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Promise<void> {
+  const workspacePaths = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
+  if (workspacePaths.length === 0) return;
+  let config: BridgeConfig;
+  try {
+    config = await loadConfig(configPath());
+  } catch {
+    return;
+  }
+  const activePath = vscode.window.activeTextEditor?.document.uri.scheme === 'file'
+    ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+    : undefined;
+  const candidates = activePath ? [activePath, ...workspacePaths] : workspacePaths;
+  const match = findMountForPaths(config.mounts, candidates, platformAdapter.kind, expandHome);
+  if (!match || (match.mount.remote_terminal ?? 'open') !== 'open') return;
+  await openTerminal(context, match.mount, match.cwd);
 }
 
 function workspaceUsesPath(localPath: string): boolean {
@@ -778,6 +796,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   for (const [name, handler] of registrations) {
     context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));
   }
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    void guard(() => autoOpenWorkspaceTerminal(context));
+  }));
 
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.name = 'Serverless Remote SSH';
@@ -788,6 +809,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(statusBar);
   await guard(() => resumePendingUnmount(context));
   await guard(() => resumePendingOpen(context));
+  await guard(() => autoOpenWorkspaceTerminal(context));
 }
 
 export async function deactivate(): Promise<void> {
