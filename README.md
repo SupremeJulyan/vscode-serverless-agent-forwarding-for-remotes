@@ -14,6 +14,10 @@ The extension selects a platform adapter and exposes every remote folder as a re
 
 On Windows, if WinFsp or SSHFS-Win is missing, the extension asks for confirmation before downloading the pinned official MSI installers, verifies their SHA-256 checksums, and starts the administrator installation.
 Declining the prompt is remembered for that installer version; use `Serverless Remote SSH: Install Windows Dependencies` to retry manually.
+On macOS, a missing dependency prompt links to the official macFUSE SSHFS installation instructions.
+On Linux and WSL, the extension reads `/etc/os-release` and offers a copyable install command for Debian/Ubuntu,
+Fedora/RHEL, Arch/Manjaro, openSUSE, or Alpine. When the WSL bridge commands are missing, the command also
+installs the bridge from its official GitHub repository.
 
 Example:
 

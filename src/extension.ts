@@ -14,6 +14,7 @@ import {
   downloadInstaller, hasWindowsInstallDirectory, installMsiPackages, sshfsWinInstaller,
   winFspInstaller, WindowsInstaller
 } from './windows-installer';
+import { createDependencyGuide } from './dependency-guide';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -38,6 +39,7 @@ const addSshConfigAction = 'Add SSH Config';
 const addSshfsConfigAction = 'Add SSHFS Config';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const dismissedWindowsInstallKey = 'serverlessRemote.dismissedWindowsInstall';
+let bridgeOutput: vscode.OutputChannel | undefined;
 
 class ConfigActionRequiredError extends Error {
   constructor(message: string, readonly actions = [openConfigAction]) {
@@ -136,6 +138,21 @@ async function executeTask(plan: CommandPlan): Promise<void> {
 
 async function executePlan(plan: CommandPlan): Promise<void> {
   if (plan.stdin !== undefined) {
+    if (plan.command === 'sshfs-bridge' && bridgeOutput) {
+      bridgeOutput.show(true);
+      bridgeOutput.appendLine(`[${new Date().toLocaleString()}] $ ${plan.command} ${plan.args.join(' ')}`);
+      try {
+        await executeWithStdin(plan, {
+          stdout: (chunk) => bridgeOutput?.append(chunk),
+          stderr: (chunk) => bridgeOutput?.append(chunk)
+        });
+        bridgeOutput.appendLine(`[完成] ${plan.command} ${plan.args.join(' ')}`);
+      } catch (error) {
+        bridgeOutput.appendLine(`[失败] ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
+      return;
+    }
     await executeWithStdin(plan);
     return;
   }
@@ -679,12 +696,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   }
   if (missing.length) {
-    void vscode.window.showWarningMessage(`Serverless Remote SSH requires: ${missing.join(', ')}`);
+    if (platformAdapter.kind === 'windows') {
+      void vscode.window.showWarningMessage(`Serverless Remote SSH requires: ${missing.join(', ')}`);
+    } else {
+      const guide = await createDependencyGuide(platformAdapter.kind, missing);
+      if (guide) {
+        const copyAction = guide.command ? '复制安装命令' : undefined;
+        const docsAction = guide.url ? '查看安装说明' : undefined;
+        const actions = [copyAction, docsAction].filter((item): item is string => item !== undefined);
+        const selected = await vscode.window.showWarningMessage(guide.message, ...actions);
+        if (selected === copyAction && guide.command) {
+          await vscode.env.clipboard.writeText(guide.command);
+          void vscode.window.showInformationMessage('安装命令已复制到剪贴板，请在终端中运行。');
+        } else if (selected === docsAction && guide.url) {
+          await vscode.env.openExternal(vscode.Uri.parse(guide.url));
+        }
+      }
+    }
   }
   await guard(() => offerWindowsDependencyInstall(context));
 
   const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
-  context.subscriptions.push(statusOutput);
+  bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
+  context.subscriptions.push(statusOutput, bridgeOutput);
   const registrations: Array<[string, () => Promise<void>]> = [
     ['openFolder', () => guard(() => openRemoteFolder(context))],
     ['openTerminal', () => guard(() => openTerminal(context))],

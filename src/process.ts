@@ -37,7 +37,14 @@ export async function commandSucceeds(plan: CommandPlan): Promise<boolean> {
   }
 }
 
-export async function executeWithStdin(plan: CommandPlan): Promise<void> {
+export interface ProcessOutputHandlers {
+  stdout?: (chunk: string) => void;
+  stderr?: (chunk: string) => void;
+}
+
+export async function executeWithStdin(
+  plan: CommandPlan, handlers: ProcessOutputHandlers = {}
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(plan.command, plan.args, {
       cwd: plan.cwd,
@@ -47,8 +54,14 @@ export async function executeWithStdin(plan: CommandPlan): Promise<void> {
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout.push(chunk);
+      handlers.stdout?.(chunk.toString());
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr.push(chunk);
+      handlers.stderr?.(chunk.toString());
+    });
     child.once('error', reject);
     child.once('close', (code) => {
       if (code === 0) {
