@@ -25,6 +25,7 @@ interface PendingOpen {
   mountName: string;
   localPath: string;
   createdAt: number;
+  ownsMount?: boolean;
 }
 
 interface PendingUnmount {
@@ -45,6 +46,7 @@ const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
+let workspaceSwitchMountPath: string | undefined;
 
 class ConfigActionRequiredError extends Error {
   constructor(message: string, readonly actions = [openConfigAction]) {
@@ -238,7 +240,7 @@ async function resolveStoredHostPassword(
 
 async function ensureMounted(
   context: vscode.ExtensionContext, mount: MountConfig, localPath: string
-): Promise<void> {
+): Promise<boolean> {
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
   const statusPlan = platformAdapter.status(resolved, localPath);
@@ -265,10 +267,12 @@ async function ensureMounted(
       if (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux') {
         nativeSessionMounts.set(path.resolve(localPath), { remote: resolved, localPath });
       }
+      return true;
     } finally {
       await credentials?.cleanup();
     }
   }
+  return false;
 }
 
 async function mount(context: vscode.ExtensionContext, mountConfig?: MountConfig): Promise<string | undefined> {
@@ -296,18 +300,21 @@ async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void>
     await openTerminal(context, mount, localPath);
     return;
   }
-  await ensureMounted(context, mount, localPath);
+  const ownsMount = await ensureMounted(context, mount, localPath);
   await context.globalState.update(pendingOpenKey, {
-    mountName: mount.name, localPath, createdAt: Date.now()
+    mountName: mount.name, localPath, createdAt: Date.now(), ownsMount
   });
+  workspaceSwitchMountPath = path.resolve(localPath);
   try {
-    const opened = await vscode.commands.executeCommand<boolean>(
+    const opened = await vscode.commands.executeCommand<boolean | undefined>(
       'vscode.openFolder', vscode.Uri.file(localPath), false
     );
     if (opened === false) {
+      workspaceSwitchMountPath = undefined;
       await context.globalState.update(pendingOpenKey, undefined);
     }
   } catch (error) {
+    workspaceSwitchMountPath = undefined;
     await context.globalState.update(pendingOpenKey, undefined);
     throw error;
   }
@@ -334,6 +341,12 @@ async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void
   const config = await readConfig();
   const mount = config.mounts.find((item) => item.name === pending.mountName);
   if (!mount) throw new Error(`Pending mount no longer exists: ${pending.mountName}`);
+  if (pending.ownsMount && (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux')) {
+    nativeSessionMounts.set(path.resolve(pending.localPath), {
+      remote: resolveMount(config, mount),
+      localPath: pending.localPath
+    });
+  }
   await openTerminal(context, mount, pending.localPath);
 }
 
@@ -821,7 +834,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export async function deactivate(): Promise<void> {
   if (platformAdapter.kind !== 'macos' && platformAdapter.kind !== 'linux') return;
-  const mounts = [...nativeSessionMounts.values()];
+  const mounts = [...nativeSessionMounts.entries()]
+    .filter(([mountPath]) => mountPath !== workspaceSwitchMountPath)
+    .map(([, mount]) => mount);
   nativeSessionMounts.clear();
   await Promise.allSettled(mounts.map(async ({ remote, localPath }) => {
     const statusPlan = platformAdapter.status(remote, localPath);

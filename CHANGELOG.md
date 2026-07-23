@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.11
+
+- Keep newly created native SSHFS mounts alive while replacing the current VS Code workspace with the mounted directory.
+
 ## 0.7.10
 
 - Change the native Windows, macOS, and Linux default configuration path to `~/serverless-remote-ssh/config.json`; WSL keeps `~/.wsl-vpn-ssh/config.json` for bridge compatibility.
