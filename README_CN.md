@@ -79,7 +79,7 @@
 2. 打开 VS Code，选择活动栏中的**扩展**图标，或者按 `Ctrl+Shift+X`；macOS 使用 `Cmd+Shift+X`。
 3. 选择扩展视图右上角的**视图和更多操作...**（`...`）菜单。
 4. 选择**从 VSIX 安装...**。
-5. 选择 `vscode-serverless-remote-ssh-0.7.4.vsix` 并确认安装。
+5. 选择 `vscode-serverless-remote-ssh-0.7.5.vsix` 并确认安装。
 6. 如果 VS Code 提示重新加载窗口，选择**立即重新加载**。
 7. 安装完成后，使用状态栏中的 `$(remote) Serverless SSH`，或者打开命令面板并运行 `Serverless Remote SSH` 命令。
 
@@ -88,7 +88,7 @@
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.7.4.vsix
+code --install-extension vscode-serverless-remote-ssh-0.7.5.vsix
 ```
 
 ## 开发

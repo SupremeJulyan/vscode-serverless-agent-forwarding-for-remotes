@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.5
+
 - Add manual VSIX installation instructions and a Simplified Chinese README.
 - Automatically unmount Linux and macOS SSHFS mounts created by the current extension session when the VS Code window closes.
 
