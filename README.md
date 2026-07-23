@@ -71,6 +71,8 @@ For a `now` mount, the extension asks which local directory should receive the m
 `vpn: true` means “use the VPN-visible network path.” On WSL the bridge starts and shares the Windows TCP relay. On native Windows, macOS, and Linux no extra relay is needed because SSHFS runs in the same network namespace as that platform's VPN client.
 The macOS and Linux configuration wizard hides the relay option, and their status output does not include a relay section.
 
+On Linux and macOS, mounts created by the current VS Code extension session are automatically unmounted when that VS Code window closes. Mounts that already existed before the session are left untouched.
+
 ## Install
 
 ### Install manually in VS Code

@@ -69,6 +69,8 @@
 
 `vpn: true` 表示使用 VPN 可访问的网络路径。在 WSL 上，桥接程序会启动并共享 Windows TCP 中继。在原生 Windows、macOS 和 Linux 上不需要额外中继，因为 SSHFS 与该平台的 VPN 客户端位于同一个网络环境中。macOS 和 Linux 的配置向导不会显示中继选项，状态输出中也不会包含中继部分。
 
+在 Linux 和 macOS 上，由当前 VS Code 插件会话创建的挂载会在该 VS Code 窗口关闭时自动卸载。插件不会卸载本次会话开始前已经存在的挂载。
+
 ## 安装
 
 ### 在 VS Code 中手动安装

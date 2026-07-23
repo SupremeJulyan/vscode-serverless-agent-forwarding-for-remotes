@@ -8,6 +8,7 @@ import {
 } from './config';
 import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
+import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import { findMountForPath } from './mount-path';
 import {
@@ -41,6 +42,7 @@ const addSshfsConfigAction = 'Add SSHFS Config';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const dismissedWindowsInstallKey = 'serverlessRemote.dismissedWindowsInstall';
 let bridgeOutput: vscode.OutputChannel | undefined;
+const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 
 class ConfigActionRequiredError extends Error {
   constructor(message: string, readonly actions = [openConfigAction]) {
@@ -249,6 +251,9 @@ async function ensureMounted(
       if (!await waitForPlan(statusPlan, timeout)) {
         throw new Error(`Timed out waiting for mount: ${localPath}. Check the task terminal for details.`);
       }
+      if (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux') {
+        nativeSessionMounts.set(path.resolve(localPath), { remote: resolved, localPath });
+      }
     } finally {
       await credentials?.cleanup();
     }
@@ -400,6 +405,7 @@ async function executeUnmount(mount: MountConfig, localPath: string): Promise<vo
   if (disposedTaskTerminal) await new Promise((resolve) => setTimeout(resolve, 300));
   const config = await readConfig();
   await executePlan(platformAdapter.unmount(resolveMount(config, mount), localPath));
+  nativeSessionMounts.delete(path.resolve(localPath));
 }
 
 async function unmount(context: vscode.ExtensionContext): Promise<void> {
@@ -775,4 +781,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await guard(() => resumePendingOpen(context));
 }
 
-export function deactivate(): void {}
+export async function deactivate(): Promise<void> {
+  if (platformAdapter.kind !== 'macos' && platformAdapter.kind !== 'linux') return;
+  const mounts = [...nativeSessionMounts.values()];
+  nativeSessionMounts.clear();
+  await Promise.allSettled(mounts.map(async ({ remote, localPath }) => {
+    const statusPlan = platformAdapter.status(remote, localPath);
+    if (!await commandSucceeds(statusPlan)) return;
+    await commandSucceeds(platformAdapter.unmount(remote, localPath));
+  }));
+}

@@ -44,6 +44,15 @@ test('macOS checks the exact mount table entry instead of using df', () => {
   });
 });
 
+test('native Unix platforms provide non-interactive shutdown unmount commands', () => {
+  assert.deepEqual(createPlatformAdapter('macos').unmount(remote, '/Users/alice/project'), {
+    command: 'umount', args: ['/Users/alice/project']
+  });
+  assert.deepEqual(createPlatformAdapter('linux').unmount(remote, '/mnt/project'), {
+    command: 'fusermount3', args: ['-u', '--', '/mnt/project']
+  });
+});
+
 test('macOS SSH terminal accepts a new host key without routing the prompt through ASKPASS', () => {
   const plan = createPlatformAdapter('macos').terminal(remote.hostConfig);
   assert.deepEqual(plan.args.slice(0, 4), ['-p', '2222', '-o', 'StrictHostKeyChecking=accept-new']);
