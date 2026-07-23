@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.14
+
+- Prevent duplicate WSL SSH terminals when pending-folder recovery and
+  workspace auto-connect run at the same time.
+- Track remote terminals with a stable identity even when VS Code changes the
+  displayed terminal title to the active `sshpass` process.
+
 ## 0.7.13
 
 - Open WSL remote terminals in the subdirectory corresponding to the active

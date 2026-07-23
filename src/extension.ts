@@ -44,8 +44,10 @@ const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const dismissedWindowsInstallKey = 'serverlessRemote.dismissedWindowsInstall';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
+const terminalIdentityEnv = 'SERVERLESS_REMOTE_TERMINAL_ID';
 let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
+const openingTerminalIds = new Set<string>();
 let workspaceSwitchMountPath: string | undefined;
 
 class ConfigActionRequiredError extends Error {
@@ -409,46 +411,62 @@ async function openTerminal(
   const terminalName = remoteRelative
     ? `SSH: ${mount.name} — ${remoteRelative}`
     : `SSH: ${mount.name}`;
-  const existingTerminal = vscode.window.terminals.find((terminal) => terminal.name === terminalName);
+  const terminalId = `${mount.name}\0${remoteRelative}`;
+  const existingTerminal = vscode.window.terminals.find((terminal) => {
+    const options = terminal.creationOptions;
+    const identity = 'env' in options ? options.env?.[terminalIdentityEnv] : undefined;
+    return identity === terminalId || terminal.name === terminalName;
+  });
   if (existingTerminal) {
     existingTerminal.show();
     return;
   }
-  let credentials: AskpassCredentials | undefined;
-  if (platformUsesAskpass(platformAdapter.kind)) {
-    resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
-    if (resolved.hostConfig.password) {
-      credentials = await createAskpassCredentials(resolved.hostConfig.password);
+  if (openingTerminalIds.has(terminalId)) return;
+  openingTerminalIds.add(terminalId);
+  try {
+    let credentials: AskpassCredentials | undefined;
+    if (platformUsesAskpass(platformAdapter.kind)) {
+      resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
+      if (resolved.hostConfig.password) {
+        credentials = await createAskpassCredentials(resolved.hostConfig.password);
+      }
     }
-  }
-  const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd);
-  const bridgeEnv = await bridgeMasterPasswordEnv(context, config, resolved.hostConfig);
-  const terminal = vscode.window.createTerminal({
-    name: terminalName,
-    shellPath: plan.command,
-    shellArgs: plan.args,
-    env: { SSH_BRIDGE_MOUNT_NAME: mount.name, ...bridgeEnv, ...credentials?.env },
-    // The local mount path is only used to calculate remoteCwd above. During
-    // an open-folder window reload VS Code briefly has an empty workspace and
-    // rejects terminal cwd values outside the user home. SSH changes to the
-    // mapped directory remotely, so starting the local client at home is both
-    // sufficient and safe in that transient state.
-    cwd: os.homedir(),
-    isTransient: true
-  });
-  if (credentials) {
-    const disposable = vscode.window.onDidCloseTerminal((closed) => {
-      if (closed === terminal) {
+    const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd);
+    const bridgeEnv = await bridgeMasterPasswordEnv(context, config, resolved.hostConfig);
+    const terminal = vscode.window.createTerminal({
+      name: terminalName,
+      shellPath: plan.command,
+      shellArgs: plan.args,
+      env: {
+        SSH_BRIDGE_MOUNT_NAME: mount.name,
+        [terminalIdentityEnv]: terminalId,
+        ...bridgeEnv,
+        ...credentials?.env
+      },
+      // The local mount path is only used to calculate remoteCwd above. During
+      // an open-folder window reload VS Code briefly has an empty workspace and
+      // rejects terminal cwd values outside the user home. SSH changes to the
+      // mapped directory remotely, so starting the local client at home is both
+      // sufficient and safe in that transient state.
+      cwd: os.homedir(),
+      isTransient: true
+    });
+    if (credentials) {
+      const disposable = vscode.window.onDidCloseTerminal((closed) => {
+        if (closed === terminal) {
+          disposable.dispose();
+          void credentials?.cleanup();
+        }
+      });
+      setTimeout(() => {
         disposable.dispose();
         void credentials?.cleanup();
-      }
-    });
-    setTimeout(() => {
-      disposable.dispose();
-      void credentials?.cleanup();
-    }, pendingOpenTtlMs);
+      }, pendingOpenTtlMs);
+    }
+    terminal.show();
+  } finally {
+    openingTerminalIds.delete(terminalId);
   }
-  terminal.show();
 }
 
 async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Promise<void> {
