@@ -86,7 +86,7 @@
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.8.1.vsix
+code --install-extension vscode-serverless-remote-ssh-0.8.2.vsix
 ```
 
 ## 开发
