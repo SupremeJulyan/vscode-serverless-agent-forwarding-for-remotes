@@ -32,4 +32,11 @@ test('macOS guide links to macFUSE SSHFS instructions', async () => {
   const guide = await createDependencyGuide('macos', ['sshfs']);
   assert.match(guide?.message ?? '', /macFUSE SSHFS/);
   assert.match(guide?.url ?? '', /macfuse\/macfuse\/wiki/);
+  assert.deepEqual(guide?.links?.map((link) => link.label), ['下载 macFUSE', '下载 SSHFS']);
+});
+
+test('Windows guide links to each missing filesystem dependency', async () => {
+  const guide = await createDependencyGuide('windows', ['WinFsp', 'SSHFS-Win']);
+  assert.deepEqual(guide?.links?.map((link) => link.label), ['下载 WinFsp', '下载 SSHFS-Win']);
+  assert.ok(guide?.links?.every((link) => link.url.endsWith('/releases/latest')));
 });

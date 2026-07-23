@@ -11,7 +11,8 @@ import { CommandPlan, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import {
-  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath
+  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
+  usesWorkspaceRelativeDefault
 } from './mount-path';
 import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
@@ -104,7 +105,9 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
 async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
   const configuredPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  if (configuredPath) return expandHome(configuredPath);
+  if (configuredPath && !usesWorkspaceRelativeDefault(mount, platformAdapter.kind)) {
+    return expandHome(configuredPath);
+  }
   return defaultMountDirectory(mount, current, platformAdapter.kind);
 }
 
@@ -592,7 +595,10 @@ async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<v
   const config = await readConfig();
   const mount = config.mounts.find((item) => item.name === pending.mountName);
   await context.globalState.update(pendingUnmountKey, undefined);
-  if (!mount) throw new Error(`Pending unmount no longer exists: ${pending.mountName}`);
+  // The close-folder operation reloads the extension host. The user may edit
+  // or replace the configuration before that reload finishes; in that case
+  // this is merely stale cleanup state, not a failure of the next connection.
+  if (!mount) return;
   await executeUnmount(mount, pending.localPath);
 }
 
@@ -778,23 +784,19 @@ async function showDependencyTips(force = true): Promise<void> {
     if (force) void vscode.window.showInformationMessage('当前平台所需依赖均已安装。');
     return;
   }
-  if (platformAdapter.kind === 'windows') {
-    await vscode.window.showWarningMessage(
-      `Serverless Remote SSH 缺少：${missing.join('、')}。Windows 必须安装 OpenSSH Client、WinFsp 和 SSHFS-Win。`
-    );
-    return;
-  }
   const guide = await createDependencyGuide(platformAdapter.kind, missing);
   if (!guide) return;
   const copyAction = guide.command ? '复制安装命令' : undefined;
-  const docsAction = guide.url ? '查看安装说明' : undefined;
-  const actions = [copyAction, docsAction].filter((item): item is string => item !== undefined);
+  const linkActions = guide.links ?? (guide.url ? [{ label: '查看安装说明', url: guide.url }] : []);
+  const actions = [copyAction, ...linkActions.map((link) => link.label)]
+    .filter((item): item is string => item !== undefined);
   const selected = await vscode.window.showWarningMessage(guide.message, ...actions);
   if (selected === copyAction && guide.command) {
     await vscode.env.clipboard.writeText(guide.command);
     void vscode.window.showInformationMessage('安装命令已复制到剪贴板，请在终端中运行。');
-  } else if (selected === docsAction && guide.url) {
-    await vscode.env.openExternal(vscode.Uri.parse(guide.url));
+  } else {
+    const link = linkActions.find((item) => item.label === selected);
+    if (link) await vscode.env.openExternal(vscode.Uri.parse(link.url));
   }
 }
 

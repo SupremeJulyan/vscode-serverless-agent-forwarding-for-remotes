@@ -8,16 +8,16 @@
 
 ## 环境要求
 
-- Windows：WinFsp 和 SSHFS-Win；默认挂载到 `R:` 盘
-- macOS：macFUSE SSHFS 和 OpenSSH
+- Windows：[WinFsp](https://github.com/winfsp/winfsp/releases/latest) 和 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest)；默认挂载到 `R:` 盘
+- macOS：[macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS)，以及 OpenSSH
 - Linux：SSHFS、FUSE 3 和 OpenSSH
 - WSL：`ssh-bridge`、`sshfs-bridge` 和 `mountpoint`
 - 原生 Windows、macOS 和 Linux 默认配置文件：`~/serverless-remote-ssh/config.json`
 - WSL 默认配置文件：`~/.wsl-vpn-ssh/config.json`，继续与 `ssh-bridge` 和 `sshfs-bridge` 共用
 
-在 Windows 上必须安装 OpenSSH Client、WinFsp 和 SSHFS-Win。运行 `Serverless Remote SSH: Install Dependencies Tips` 可以检查缺失项并显示安装提示。
+在 Windows 上必须安装 OpenSSH Client、[WinFsp](https://github.com/winfsp/winfsp/releases/latest) 和 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest)。运行 `Serverless Remote SSH: Install Dependencies Tips` 可以检查缺失项并显示对应的下载入口。
 
-在 macOS 上，如果缺少依赖，插件会提供 macFUSE SSHFS 官方安装说明的入口。
+在 macOS 上，如果缺少依赖，插件会提供 [macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS) 的官方下载入口。
 
 在 Linux 和 WSL 上，插件会读取 `/etc/os-release`，并针对 Debian/Ubuntu、Fedora/RHEL、Arch/Manjaro、openSUSE 或 Alpine 提供可复制的安装命令。WSL 缺少桥接命令时，该命令也会从官方 GitHub 仓库安装桥接程序。
 
@@ -77,7 +77,9 @@
 4. 选择**从 VSIX 安装...**。
 5. 选择 `vscode-serverless-remote-ssh-0.8.1.vsix` 并确认安装。
 6. 如果 VS Code 提示重新加载窗口，选择**立即重新加载**。
-7. 安装完成后，使用状态栏中的 `$(remote) Serverless SSH`，或者打开命令面板并运行 `Serverless Remote SSH` 命令。
+7. 安装完成后，会提示安装必要软件包：1）WSL、Linux 环境复制安装指令；2）macOS 需要安装 [macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS)，提示中提供对应下载按钮；3）Windows 系统需要安装 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest) 和 [WinFsp](https://github.com/winfsp/winfsp/releases/latest)，提示中提供对应下载按钮。
+8. `Ctrl+Shift+P`打开命令面板输入 `Serverless Remote SSH: Add SSH Config` 命令，开始添加配置，配置完毕后点击状态栏左下角中的 `Serverless SSH`，或者打开命令面板输入 `Serverless Remote SSH: Open Remote Folder`。
+9. 关闭挂载连接使用 `Serverless Remote SSH: Close`。
 
 升级已有版本时，使用新的 VSIX 安装包重复上述步骤即可，VS Code 会替换已经安装的版本。
 

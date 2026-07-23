@@ -5,6 +5,7 @@ export interface DependencyGuide {
   message: string;
   command?: string;
   url?: string;
+  links?: Array<{ label: string; url: string }>;
 }
 
 interface Distribution {
@@ -15,6 +16,9 @@ interface Distribution {
 
 const bridgeRepository = 'https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge';
 const macFuseInstructions = 'https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS';
+const macFuseDownload = 'https://macfuse.github.io/';
+const winFspDownload = 'https://github.com/winfsp/winfsp/releases/latest';
+const sshfsWinDownload = 'https://github.com/winfsp/sshfs-win/releases/latest';
 
 export function parseOsRelease(contents: string): Distribution {
   const values = new Map<string, string>();
@@ -70,11 +74,24 @@ function distributionCommand(distribution: Distribution, wsl: boolean): string |
 export async function createDependencyGuide(
   platform: PlatformKind, missing: string[], osReleasePath = '/etc/os-release'
 ): Promise<DependencyGuide | undefined> {
-  if (platform === 'windows' || missing.length === 0) return undefined;
+  if (missing.length === 0) return undefined;
+  if (platform === 'windows') {
+    const links: Array<{ label: string; url: string }> = [];
+    if (missing.includes('WinFsp')) links.push({ label: '下载 WinFsp', url: winFspDownload });
+    if (missing.includes('SSHFS-Win')) links.push({ label: '下载 SSHFS-Win', url: sshfsWinDownload });
+    return {
+      message: `Serverless Remote SSH 缺少：${missing.join('、')}。Windows 必须安装 OpenSSH Client、WinFsp 和 SSHFS-Win。`,
+      links
+    };
+  }
   if (platform === 'macos') {
     return {
       message: `Serverless Remote SSH 缺少 ${missing.join('、')}。请安装 macFUSE SSHFS。`,
-      url: macFuseInstructions
+      url: macFuseInstructions,
+      links: [
+        { label: '下载 macFUSE', url: macFuseDownload },
+        { label: '下载 SSHFS', url: macFuseInstructions }
+      ]
     };
   }
 
