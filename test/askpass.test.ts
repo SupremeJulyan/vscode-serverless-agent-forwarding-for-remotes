@@ -3,9 +3,16 @@ import { access, readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { createAskpassCredentials } from '../src/askpass';
+import { createAskpassCredentials, platformUsesAskpass } from '../src/askpass';
 
 const execFileAsync = promisify(execFile);
+
+test('native macOS and Linux use ASKPASS, while Windows and WSL keep their own flows', () => {
+  assert.equal(platformUsesAskpass('macos'), true);
+  assert.equal(platformUsesAskpass('linux'), true);
+  assert.equal(platformUsesAskpass('windows'), false);
+  assert.equal(platformUsesAskpass('wsl'), false);
+});
 
 test('ASKPASS returns the password without placing it in command arguments', async () => {
   const credentials = await createAskpassCredentials('secret value');

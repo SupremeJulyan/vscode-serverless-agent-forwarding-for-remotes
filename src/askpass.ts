@@ -1,6 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import type { PlatformKind } from './platform';
 
 export interface AskpassCredentials {
   env: Record<string, string>;
@@ -20,6 +21,10 @@ esac
 /bin/rm -f "$secret_file" "$0"
 /bin/rmdir "$(dirname "$secret_file")" 2>/dev/null || true
 `;
+
+export function platformUsesAskpass(platform: PlatformKind): boolean {
+  return platform === 'macos' || platform === 'linux';
+}
 
 export async function createAskpassCredentials(password: string): Promise<AskpassCredentials> {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-askpass-'));

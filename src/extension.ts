@@ -16,7 +16,7 @@ import {
   winFspInstaller, WindowsInstaller
 } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
-import { AskpassCredentials, createAskpassCredentials } from './askpass';
+import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -238,11 +238,15 @@ async function ensureMounted(
   if (!await commandSucceeds(statusPlan)) {
     let credentials: AskpassCredentials | undefined;
     try {
-      if (platformAdapter.kind === 'windows' || platformAdapter.kind === 'macos') {
+      if (
+        platformAdapter.kind === 'windows' || platformUsesAskpass(platformAdapter.kind)
+      ) {
         resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
       }
       let mountPlan = platformAdapter.mount(resolved, localPath);
-      if (platformAdapter.kind === 'macos' && resolved.hostConfig.password) {
+      if (
+        platformUsesAskpass(platformAdapter.kind) && resolved.hostConfig.password
+      ) {
         credentials = await createAskpassCredentials(resolved.hostConfig.password);
         mountPlan = { ...mountPlan, env: { ...mountPlan.env, ...credentials.env } };
       }
@@ -360,7 +364,7 @@ async function openTerminal(
     ? remotePathForLocalPath(mount.remote_path, localRoot, localCwd, platformAdapter.kind)
     : undefined;
   let credentials: AskpassCredentials | undefined;
-  if (platformAdapter.kind === 'macos') {
+  if (platformUsesAskpass(platformAdapter.kind)) {
     resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
     if (resolved.hostConfig.password) {
       credentials = await createAskpassCredentials(resolved.hostConfig.password);

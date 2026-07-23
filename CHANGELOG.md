@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.8
+
+- Add encrypted-password authentication and plaintext-password migration for native Linux SSHFS mounts and SSH terminals.
+
 ## 0.7.7
 
 - Remove the Explorer `R` shortcut; remote terminals are opened explicitly through `Open Remote Terminal`.
