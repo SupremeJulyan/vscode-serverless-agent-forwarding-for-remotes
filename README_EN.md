@@ -56,8 +56,7 @@ Example:
 ## Commands
 
 - `Serverless Remote SSH: Open Remote Folder` mounts the selected entry, opens its local SSHFS directory, and opens a remote terminal in that folder.
-- `Serverless Remote SSH: Open Remote Terminal` starts `ssh-bridge` in an integrated terminal.
-- Press `R` while the Explorer has focus to open the matching SSH terminal. When the workspace or active file is inside a configured mount, the extension connects immediately and enters the corresponding remote subdirectory.
+- `Serverless Remote SSH: Open Remote Terminal` opens an SSH connection in an integrated terminal and uses `ssh-bridge` on WSL. When the workspace or active file is inside a configured mount, the extension selects the matching configuration and enters the corresponding remote subdirectory on WSL and native Windows, macOS, or Linux.
 - `Serverless Remote SSH: Mount` and `Unmount` manage a selected SSHFS entry.
 - `Serverless Remote SSH: Show Status` opens an output panel summarizing every mount and, on WSL, the SSHFS/SSH relay state.
 - `Serverless Remote SSH: Open Config` opens the shared JSON configuration.
@@ -81,7 +80,7 @@ On Linux and macOS, mounts created by the current VS Code extension session are 
 2. Open VS Code and select the **Extensions** icon in the Activity Bar, or press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
 3. Select the **Views and More Actions...** (`...`) menu in the upper-right corner of the Extensions view.
 4. Select **Install from VSIX...**.
-5. Choose `vscode-serverless-remote-ssh-0.7.5.vsix` and confirm the installation.
+5. Choose `vscode-serverless-remote-ssh-0.7.6.vsix` and confirm the installation.
 6. Select **Reload Now** if VS Code asks you to reload the window.
 7. Use the `$(remote) Serverless SSH` status bar item or open the Command Palette and run a `Serverless Remote SSH` command.
 
@@ -90,7 +89,7 @@ To upgrade an existing installation, repeat these steps with the newer VSIX pack
 ### Install from the command line
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.7.5.vsix
+code --install-extension vscode-serverless-remote-ssh-0.7.6.vsix
 ```
 
 After installation, use the `$(remote) Serverless SSH` status bar item or open the Command Palette.

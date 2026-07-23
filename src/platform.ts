@@ -17,15 +17,23 @@ export interface PlatformAdapter {
   mount(remote: ResolvedMount, localPath: string): CommandPlan;
   unmount(remote: ResolvedMount, localPath: string): CommandPlan;
   status(remote: ResolvedMount, localPath: string): CommandPlan;
-  terminal(host: HostConfig): CommandPlan;
+  terminal(host: HostConfig, remoteCwd?: string): CommandPlan;
 }
 
-function sshArgs(host: HostConfig): string[] {
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function sshArgs(host: HostConfig, remoteCwd?: string): string[] {
   const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
   if (host.private_key_path) {
     args.push('-i', host.private_key_path);
   }
+  if (remoteCwd) args.push('-t');
   args.push(`${host.user}@${host.ip}`);
+  if (remoteCwd) {
+    args.push(`cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`);
+  }
   return args;
 }
 
@@ -67,7 +75,9 @@ class UnixAdapter implements PlatformAdapter {
         }
       : { command: 'mountpoint', args: ['-q', '--', localPath] };
   }
-  terminal(host: HostConfig): CommandPlan { return { command: 'ssh', args: sshArgs(host) }; }
+  terminal(host: HostConfig, remoteCwd?: string): CommandPlan {
+    return { command: 'ssh', args: sshArgs(host, remoteCwd) };
+  }
 }
 
 class WslAdapter implements PlatformAdapter {
@@ -85,7 +95,9 @@ class WslAdapter implements PlatformAdapter {
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return { command: 'mountpoint', args: ['-q', '--', localPath] };
   }
-  terminal(host: HostConfig): CommandPlan { return { command: 'ssh-bridge', args: [host.name] }; }
+  terminal(host: HostConfig, _remoteCwd?: string): CommandPlan {
+    return { command: 'ssh-bridge', args: [host.name] };
+  }
 }
 
 function windowsUnc(remote: ResolvedMount): string {
@@ -170,7 +182,9 @@ class WindowsAdapter implements PlatformAdapter {
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return { command: 'net', args: ['use', this.drive(localPath)] };
   }
-  terminal(host: HostConfig): CommandPlan { return { command: 'ssh', args: sshArgs(host) }; }
+  terminal(host: HostConfig, remoteCwd?: string): CommandPlan {
+    return { command: 'ssh', args: sshArgs(host, remoteCwd) };
+  }
 }
 
 export function detectPlatform(platform = process.platform, release = os.release()): PlatformKind {

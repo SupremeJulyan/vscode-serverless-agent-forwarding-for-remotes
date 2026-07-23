@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MountConfig } from '../src/config';
-import { findMountForPath } from '../src/mount-path';
+import { findMountForPath, remotePathForLocalPath } from '../src/mount-path';
 
 const mounts: MountConfig[] = [
   { name: 'root', host: 'dev', remote_path: '/srv', local_path: '/mnt/project' },
@@ -21,4 +21,25 @@ test('chooses the most specific mount for nested mount paths', () => {
 
 test('does not match a path that merely shares the mount prefix', () => {
   assert.equal(findMountForPath(mounts, '/mnt/project-old', 'wsl', (value) => value), undefined);
+});
+
+test('maps a Windows mount child to its corresponding remote directory', () => {
+  assert.equal(
+    remotePathForLocalPath('/srv/project', 'X:\\', 'X:\\packages\\api', 'windows'),
+    '/srv/project/packages/api'
+  );
+});
+
+test('maps a native mount root to the configured remote root', () => {
+  assert.equal(
+    remotePathForLocalPath('/srv/project/', '/mnt/project', '/mnt/project', 'linux'),
+    '/srv/project/'
+  );
+});
+
+test('refuses to map a local path outside the mount', () => {
+  assert.equal(
+    remotePathForLocalPath('/srv/project', 'X:\\', 'Y:\\other', 'windows'),
+    undefined
+  );
 });

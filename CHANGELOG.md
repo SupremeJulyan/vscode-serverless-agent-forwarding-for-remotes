@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Remove the Explorer `R` shortcut; remote terminals are opened explicitly through `Open Remote Terminal`.
+
+## 0.7.6
+
+- Start native Windows, macOS, and Linux SSH terminals in the remote subdirectory corresponding to the current folder inside an SSHFS mount.
+
 ## 0.7.5
 
 - Add manual VSIX installation instructions, use Simplified Chinese as the default README, and provide English in `README_EN.md`.

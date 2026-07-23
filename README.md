@@ -55,8 +55,7 @@
 ## 命令
 
 - `Serverless Remote SSH: Open Remote Folder`：挂载选中的远程目录，使用 VS Code 打开对应的本地 SSHFS 目录，并在该目录中打开远程终端。
-- `Serverless Remote SSH: Open Remote Terminal`：在 VS Code 集成终端中建立 SSH 连接；WSL 平台使用 `ssh-bridge`。
-- 资源管理器获得焦点时按 `R`，可打开与当前目录匹配的 SSH 终端。如果工作区或活动文件位于已配置的挂载目录中，插件会直接连接并进入对应的远程子目录。
+- `Serverless Remote SSH: Open Remote Terminal`：在 VS Code 集成终端中建立 SSH 连接；WSL 平台使用 `ssh-bridge`。如果工作区或活动文件位于已配置的挂载目录中，插件会直接匹配对应配置并进入远程子目录；该路径映射同时支持 WSL 和原生 Windows、macOS、Linux。
 - `Serverless Remote SSH: Mount` 和 `Unmount`：挂载或卸载选中的 SSHFS 配置。
 - `Serverless Remote SSH: Show Status`：在输出面板中显示所有挂载状态；WSL 还会显示 SSHFS/SSH 中继状态。
 - `Serverless Remote SSH: Open Config`：打开共用的 JSON 配置文件。
@@ -79,7 +78,7 @@
 2. 打开 VS Code，选择活动栏中的**扩展**图标，或者按 `Ctrl+Shift+X`；macOS 使用 `Cmd+Shift+X`。
 3. 选择扩展视图右上角的**视图和更多操作...**（`...`）菜单。
 4. 选择**从 VSIX 安装...**。
-5. 选择 `vscode-serverless-remote-ssh-0.7.5.vsix` 并确认安装。
+5. 选择 `vscode-serverless-remote-ssh-0.7.6.vsix` 并确认安装。
 6. 如果 VS Code 提示重新加载窗口，选择**立即重新加载**。
 7. 安装完成后，使用状态栏中的 `$(remote) Serverless SSH`，或者打开命令面板并运行 `Serverless Remote SSH` 命令。
 
@@ -88,7 +87,7 @@
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.7.5.vsix
+code --install-extension vscode-serverless-remote-ssh-0.7.6.vsix
 ```
 
 ## 开发

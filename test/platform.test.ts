@@ -58,6 +58,12 @@ test('macOS SSH terminal accepts a new host key without routing the prompt throu
   assert.deepEqual(plan.args.slice(0, 4), ['-p', '2222', '-o', 'StrictHostKeyChecking=accept-new']);
 });
 
+test('native SSH starts an interactive login shell in the mapped remote directory', () => {
+  const plan = createPlatformAdapter('windows').terminal(remote.hostConfig, "/srv/project/it's here");
+  assert.equal(plan.args.includes('-t'), true);
+  assert.equal(plan.args.at(-1), `cd -- '/srv/project/it'\"'\"'s here' && exec "\${SHELL:-/bin/sh}" -l`);
+});
+
 test('Windows builds an SSHFS-Win root-relative UNC mapping', () => {
   const plan = createPlatformAdapter('windows').mount(remote, 'X:');
   assert.equal(plan.command, 'net');

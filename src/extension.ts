@@ -10,7 +10,7 @@ import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
-import { findMountForPath } from './mount-path';
+import { findMountForPath, remotePathForLocalPath } from './mount-path';
 import {
   downloadInstaller, hasWindowsInstallDirectory, installMsiPackages, sshfsWinInstaller,
   winFspInstaller, WindowsInstaller
@@ -353,6 +353,12 @@ async function openTerminal(
   }
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
+  const configuredLocalPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
+  const localRoot = configuredLocalPath ? expandHome(configuredLocalPath) : undefined;
+  const localCwd = cwd ?? localRoot;
+  const remoteCwd = platformAdapter.kind !== 'wsl' && localRoot && localCwd
+    ? remotePathForLocalPath(mount.remote_path, localRoot, localCwd, platformAdapter.kind)
+    : undefined;
   let credentials: AskpassCredentials | undefined;
   if (platformAdapter.kind === 'macos') {
     resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
@@ -360,14 +366,13 @@ async function openTerminal(
       credentials = await createAskpassCredentials(resolved.hostConfig.password);
     }
   }
-  const plan = platformAdapter.terminal(resolved.hostConfig);
+  const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd);
   const terminal = vscode.window.createTerminal({
     name: terminalName,
     shellPath: plan.command,
     shellArgs: plan.args,
     env: { SSH_BRIDGE_MOUNT_NAME: mount.name, ...credentials?.env },
-    cwd: cwd ?? ((mount.local_paths?.[platformAdapter.kind] ?? mount.local_path)
-      ? expandHome(mount.local_paths?.[platformAdapter.kind] ?? mount.local_path!) : undefined),
+    cwd: localCwd,
     isTransient: true
   });
   if (credentials) {
