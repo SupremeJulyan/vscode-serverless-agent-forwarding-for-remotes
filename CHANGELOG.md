@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Encrypt passwords while creating SSH configurations and migrate legacy plaintext passwords on use.
+- Resolve wizard-created WSL, Linux, and macOS mount directories below the workspace from which Open Remote Folder is invoked.
+
 ## 0.8.1
 
 - Replace the separate SSHFS setup wizard with an automatically generated mount for each SSH configuration.

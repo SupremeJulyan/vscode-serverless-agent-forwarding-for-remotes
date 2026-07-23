@@ -54,12 +54,12 @@
 - `Serverless Remote SSH: Close`：关闭正在使用的远程目录并卸载对应 SSHFS。
 - `Serverless Remote SSH: Show Status`：在输出面板中显示所有挂载状态；WSL 还会显示 SSHFS/SSH 中继状态。
 - `Serverless Remote SSH: Open Config`：打开共用的 JSON 配置文件。
-- `Serverless Remote SSH: Add SSH Config`：依次输入配置名、`user@IP` 和密码；密码留空时再输入私钥路径。密码与私钥只保存一种，并自动生成同名挂载配置。WSL 会额外询问是否使用 VPN 中继，默认为 `false`；使用 aTrust 等外部 VPN 时选择 `true`。
+- `Serverless Remote SSH: Add SSH Config`：依次输入配置名、`user@IP` 和密码；输入密码后还需设置并确认配置加密主口令，密码留空时则改为输入私钥路径。密码与私钥只保存一种，并自动生成同名挂载配置。WSL 会额外询问是否使用 VPN 中继，默认为 `false`；使用 aTrust 等外部 VPN 时选择 `true`。
 - `Serverless Remote SSH: Install Dependencies Tips`：检查当前平台所需软件，提示缺少的软件包或可复制的安装命令。
 
 新配置固定挂载 SSH 登录目录，并固定使用 `open` 终端方式。WSL、Linux 和 macOS 默认在当前工作区下创建 `[配置名]` 目录，Windows 默认使用 `R:` 盘。执行 `Open Remote Folder` 后，插件会依次完成挂载、切换到挂载目录，并在新窗口恢复后只创建一个 SSH 终端。已有同名终端会直接复用。
 
-为了保证三步即可完成，新向导输入的密码按 bridge 支持的明文模式写入本地配置文件，请勿将配置文件提交到版本库。已有 `enc:v1:` 加密密码仍然兼容。macOS 和 Linux 通过短生命周期的 `SSH_ASKPASS` 辅助程序将密码提供给 OpenSSH 和 SSHFS；密码不会出现在命令参数或任务输出中。
+新向导输入的 SSH 密码会使用加密主口令保存为 `enc:v1:` 密文。旧配置中的明文密码会在下次连接时要求设置主口令并自动迁移为密文。macOS 和 Linux 通过短生命周期的 `SSH_ASKPASS` 辅助程序将解密后的密码提供给 OpenSSH 和 SSHFS；密码不会出现在命令参数或任务输出中。
 
 旧配置中的自定义 `remote_path`、`local_path` 和 `local_paths` 仍然兼容；`now`、`never` 等旧终端方式会统一按 `open` 处理。
 

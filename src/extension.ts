@@ -10,7 +10,10 @@ import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
-import { findMountForPath, findMountForPaths, remotePathForLocalPath } from './mount-path';
+import {
+  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
+  usesWorkspaceRelativeDefault
+} from './mount-path';
 import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
 import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
@@ -101,10 +104,11 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
 
 async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
   const configuredPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
-  if (configuredPath) return expandHome(configuredPath);
-  if (platformAdapter.kind === 'windows') return 'R:\\';
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  return path.basename(current) === mount.name ? current : path.join(current, mount.name);
+  if (configuredPath && !usesWorkspaceRelativeDefault(mount, platformAdapter.kind)) {
+    return expandHome(configuredPath);
+  }
+  return defaultMountDirectory(mount, current, platformAdapter.kind);
 }
 
 async function executeTask(plan: CommandPlan): Promise<void> {
@@ -209,7 +213,7 @@ async function decryptHostPassword(context: vscode.ExtensionContext, encrypted: 
 }
 
 async function bridgeMasterPasswordEnv(
-  context: vscode.ExtensionContext, config: BridgeConfig, host: HostConfig
+  context: vscode.ExtensionContext, host: HostConfig
 ): Promise<Record<string, string>> {
   if (platformAdapter.kind !== 'wsl' || !host.password) return {};
   const encrypted = isEncryptedPassword(host.password);
@@ -221,7 +225,6 @@ async function bridgeMasterPasswordEnv(
     if (!masterPassword) throw new Error('无法读取配置加密主口令');
     return { WSL_VPN_MASTER_PASSWORD: masterPassword };
   }
-  if (!config.encrypt_passwords) return {};
   const masterPassword = await promptMasterPassword(context, true);
   return { WSL_VPN_MASTER_PASSWORD: masterPassword };
 }
@@ -233,7 +236,6 @@ async function resolveStoredHostPassword(
   if (isEncryptedPassword(host.password)) {
     return { ...host, password: await decryptHostPassword(context, host.password) };
   }
-  if (!config.encrypt_passwords) return host;
   const plainPassword = host.password;
   const masterPassword = await promptMasterPassword(context, true);
   const encrypted = await encryptPassword(plainPassword, masterPassword);
@@ -253,9 +255,7 @@ async function ensureMounted(
   if (!await commandSucceeds(statusPlan)) {
     let credentials: AskpassCredentials | undefined;
     try {
-      if (
-        platformAdapter.kind === 'windows' || platformUsesAskpass(platformAdapter.kind)
-      ) {
+      if (resolved.hostConfig.password) {
         resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
       }
       let mountPlan = platformAdapter.mount(resolved, localPath);
@@ -264,14 +264,14 @@ async function ensureMounted(
           ...mountPlan,
           env: {
             ...mountPlan.env,
-            ...await bridgeMasterPasswordEnv(context, config, resolved.hostConfig)
+            ...await bridgeMasterPasswordEnv(context, resolved.hostConfig)
           }
         };
       }
       if (
         platformUsesAskpass(platformAdapter.kind) && resolved.hostConfig.password
       ) {
-        credentials = await createAskpassCredentials(resolved.hostConfig.password);
+        credentials = await createAskpassCredentials(resolved.hostConfig.password!);
         mountPlan = { ...mountPlan, env: { ...mountPlan.env, ...credentials.env } };
       }
       const timeout = settings().get<number>('mountTimeout', 30);
@@ -424,14 +424,14 @@ async function openTerminal(
   openingTerminalIds.add(terminalId);
   try {
     let credentials: AskpassCredentials | undefined;
-    if (platformUsesAskpass(platformAdapter.kind)) {
+    if (resolved.hostConfig.password) {
       resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
-      if (resolved.hostConfig.password) {
-        credentials = await createAskpassCredentials(resolved.hostConfig.password);
+      if (platformUsesAskpass(platformAdapter.kind)) {
+        credentials = await createAskpassCredentials(resolved.hostConfig.password!);
       }
     }
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd);
-    const bridgeEnv = await bridgeMasterPasswordEnv(context, config, resolved.hostConfig);
+    const bridgeEnv = await bridgeMasterPasswordEnv(context, resolved.hostConfig);
     const terminal = vscode.window.createTerminal({
       name: terminalName,
       shellPath: plan.command,
@@ -631,7 +631,7 @@ async function confirmReplacement(kind: string, name: string, exists: boolean): 
   ) === '覆盖';
 }
 
-async function addSshConfig(): Promise<void> {
+async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
   const title = 'Add SSH Config';
   const name = await input({
     title, prompt: '配置名称', value: 'dev', validateInput: required('配置名称')
@@ -654,6 +654,9 @@ async function addSshConfig(): Promise<void> {
     password: true
   });
   if (password === undefined) return;
+  const encryptedPassword = password
+    ? await encryptPassword(password, await promptMasterPassword(context, true))
+    : undefined;
   let privateKeyPath: string | undefined;
   if (!password) {
     privateKeyPath = await input({
@@ -699,24 +702,26 @@ async function addSshConfig(): Promise<void> {
   };
   if (platformAdapter.kind === 'wsl') host.vpn = vpn;
   if (privateKeyPath) host.private_key_path = privateKeyPath.trim();
-  if (password) host.password = password;
+  if (encryptedPassword) host.password = encryptedPassword;
   if (existingIndex >= 0) config.hosts[existingIndex] = host;
   else config.hosts.push(host);
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  const localPath = platformAdapter.kind === 'windows'
-    ? 'R:'
-    : path.basename(current) === normalizedName ? current : path.join(current, normalizedName);
+  const localPath = defaultMountDirectory(
+    { name: normalizedName, host: normalizedName, remote_path: '.' },
+    current,
+    platformAdapter.kind
+  );
   const mount: MountConfig = {
     name: normalizedName,
     host: normalizedName,
     remote_path: '.',
-    local_path: localPath,
     remote_terminal: 'open'
   };
+  if (platformAdapter.kind === 'windows') mount.local_path = 'R:';
   const mountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
   if (mountIndex >= 0) config.mounts[mountIndex] = mount;
   else config.mounts.push(mount);
-  if (password) config.encrypt_passwords = false;
+  config.encrypt_passwords = true;
   await saveConfig(configPath(), config);
   if (platformAdapter.kind !== 'windows') await mkdir(localPath, { recursive: true });
   void vscode.window.showInformationMessage(
@@ -797,7 +802,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ['close', () => guard(() => closeRemote(context))],
     ['status', () => guard(() => showStatus(statusOutput))],
     ['openConfig', () => guard(openConfig)],
-    ['addSshConfig', () => guard(addSshConfig)],
+    ['addSshConfig', () => guard(() => addSshConfig(context))],
     ['installDependenciesTips', () => guard(() => showDependencyTips())]
   ];
   for (const [name, handler] of registrations) {

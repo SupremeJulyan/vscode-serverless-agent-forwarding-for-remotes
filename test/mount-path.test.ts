@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MountConfig } from '../src/config';
-import { findMountForPath, findMountForPaths, remotePathForLocalPath } from '../src/mount-path';
+import {
+  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
+  usesWorkspaceRelativeDefault
+} from '../src/mount-path';
 
 const mounts: MountConfig[] = [
   { name: 'root', host: 'dev', remote_path: '/srv', local_path: '/mnt/project' },
@@ -57,4 +60,25 @@ test('refuses to map a local path outside the mount', () => {
     remotePathForLocalPath('/srv/project', 'X:\\', 'Y:\\other', 'windows'),
     undefined
   );
+});
+
+test('default mount directories follow the current folder on Unix-like platforms', () => {
+  const mount: MountConfig = { name: 'testgkn', host: 'dev', remote_path: '.' };
+  for (const platform of ['wsl', 'linux', 'macos'] as const) {
+    assert.equal(defaultMountDirectory(mount, '/home/julyan', platform), '/home/julyan/testgkn');
+    assert.equal(defaultMountDirectory(mount, '/home/julyan/testgkn', platform), '/home/julyan/testgkn');
+  }
+});
+
+test('Windows keeps the default drive-letter mount', () => {
+  const mount: MountConfig = { name: 'testgkn', host: 'dev', remote_path: '.' };
+  assert.equal(defaultMountDirectory(mount, 'C:\\Users\\julyan', 'windows'), 'R:\\');
+});
+
+test('recognizes legacy wizard paths as workspace-relative defaults', () => {
+  const mount: MountConfig = {
+    name: 'testgkn', host: 'dev', remote_path: '.', local_path: '/old/workspace/testgkn'
+  };
+  assert.equal(usesWorkspaceRelativeDefault(mount, 'wsl'), true);
+  assert.equal(usesWorkspaceRelativeDefault({ ...mount, remote_path: '/srv' }, 'wsl'), false);
 });

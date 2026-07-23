@@ -2,6 +2,20 @@ import * as path from 'node:path';
 import { MountConfig } from './config';
 import { PlatformKind } from './platform';
 
+export function defaultMountDirectory(
+  mount: MountConfig, currentDirectory: string, platform: PlatformKind
+): string {
+  if (platform === 'windows') return 'R:\\';
+  const current = path.resolve(currentDirectory);
+  return path.basename(current) === mount.name ? current : path.join(current, mount.name);
+}
+
+export function usesWorkspaceRelativeDefault(mount: MountConfig, platform: PlatformKind): boolean {
+  if (platform === 'windows' || !mount.local_path || mount.local_paths?.[platform]) return false;
+  if (mount.remote_path !== '.') return false;
+  return path.basename(path.resolve(mount.local_path)) === mount.name;
+}
+
 export interface MountPathMatch {
   mount: MountConfig;
   localPath: string;

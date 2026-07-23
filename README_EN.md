@@ -54,12 +54,12 @@ Example:
 - `Serverless Remote SSH: Close` closes the remote folder and unmounts its SSHFS entry.
 - `Serverless Remote SSH: Show Status` opens an output panel summarizing every mount and, on WSL, the SSHFS/SSH relay state.
 - `Serverless Remote SSH: Open Config` opens the shared JSON configuration.
-- `Serverless Remote SSH: Add SSH Config` asks for a name, `user@host`, and a password. Leaving the password empty asks for a private-key path instead, so only one authentication method is saved. WSL adds a VPN relay prompt which defaults to `false`; select `true` when using an external VPN such as aTrust.
+- `Serverless Remote SSH: Add SSH Config` asks for a name, `user@host`, and a password. After a password is entered, it also asks you to set and confirm a configuration encryption passphrase. Leaving the password empty asks for a private-key path instead, so only one authentication method is saved. WSL adds a VPN relay prompt which defaults to `false`; select `true` when using an external VPN such as aTrust.
 - `Serverless Remote SSH: Install Dependencies Tips` checks required software and shows missing packages or a copyable installation command.
 
 New configurations always mount the SSH login directory and use the `open` terminal behavior. WSL, Linux, and macOS create `[configuration name]` below the current workspace by default; Windows uses `R:`. `Open Remote Folder` mounts first, switches to the mounted directory, then creates exactly one SSH terminal after the new window resumes. An existing matching terminal is reused.
 
-To keep setup to three steps, passwords entered by the new wizard use the bridge-compatible plaintext configuration mode; do not commit the local configuration file. Existing `enc:v1:` passwords remain supported. macOS and Linux pass passwords to OpenSSH and SSHFS through a short-lived `SSH_ASKPASS` helper, never through command arguments or task output.
+SSH passwords entered by the wizard are stored as `enc:v1:` ciphertext using the configuration encryption passphrase. Plaintext passwords in older configurations are migrated the next time they are used. macOS and Linux pass the decrypted password to OpenSSH and SSHFS through a short-lived `SSH_ASKPASS` helper, never through command arguments or task output.
 
 Custom `remote_path`, `local_path`, and `local_paths` values in existing configurations remain supported. Legacy `now` and `never` terminal modes are normalized to `open`.
 
