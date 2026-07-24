@@ -1,15 +1,27 @@
 import { execFile, spawn } from 'node:child_process';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { promisify } from 'node:util';
 import { CommandPlan } from './platform';
 
 const execFileAsync = promisify(execFile);
+
+export function commandSearchPath(
+  home = os.homedir(), inheritedPath = process.env.PATH
+): string {
+  const localBin = path.join(home, '.local', 'bin');
+  return inheritedPath ? `${localBin}${path.delimiter}${inheritedPath}` : localBin;
+}
 
 export async function commandExists(command: string): Promise<boolean> {
   try {
     if (process.platform === 'win32') {
       await execFileAsync('where.exe', [command], { windowsHide: true });
     } else {
-      await execFileAsync('sh', ['-lc', `command -v "$1" >/dev/null 2>&1`, 'sh', command]);
+      await execFileAsync(
+        'sh', ['-lc', `command -v "$1" >/dev/null 2>&1`, 'sh', command],
+        { env: { ...process.env, PATH: commandSearchPath() } }
+      );
     }
     return true;
   } catch {
@@ -47,7 +59,15 @@ async function resolveExecutable(command: string, env?: NodeJS.ProcessEnv): Prom
   try {
     const { stdout } = await execFileAsync(
       'sh', ['-lc', 'command -v "$1"', 'sh', command],
-      { env: { ...process.env, ...env } }
+      {
+        env: {
+          ...process.env,
+          ...env,
+          PATH: commandSearchPath(
+            os.homedir(), env?.PATH ?? process.env.PATH
+          )
+        }
+      }
     );
     const resolved = stdout.trim().split(/\r?\n/, 1)[0];
     return resolved.startsWith('/') ? resolved : command;

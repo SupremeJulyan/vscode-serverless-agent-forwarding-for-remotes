@@ -969,27 +969,22 @@ async function missingDependencies(): Promise<string[]> {
 }
 
 interface DependencyCache {
-  extensionVersion: string;
-  platform: string;
   missing: string[];
 }
 
 async function showDependencyTips(
   context: vscode.ExtensionContext, force = true
 ): Promise<void> {
-  const cached = context.globalState.get<DependencyCache>(dependencyCacheKey);
-  const validCache = !force
-    && cached?.extensionVersion === context.extension.packageJSON.version
-    && cached?.platform === platformAdapter.kind;
+  const platformCacheKey = `${dependencyCacheKey}.${platformAdapter.kind}`;
+  const cached = context.globalState.get<DependencyCache>(platformCacheKey);
+  const validCache = !force && cached?.missing.length === 0;
   const missing = validCache && cached
     ? cached.missing
     : await timedPhase('依赖检查', missingDependencies);
   if (!validCache) {
-    await context.globalState.update(dependencyCacheKey, {
-      extensionVersion: context.extension.packageJSON.version,
-      platform: platformAdapter.kind,
-      missing
-    } satisfies DependencyCache);
+    await context.globalState.update(
+      platformCacheKey, { missing } satisfies DependencyCache
+    );
   }
   if (missing.length === 0) {
     if (force) void vscode.window.showInformationMessage('当前平台所需依赖均已安装。');

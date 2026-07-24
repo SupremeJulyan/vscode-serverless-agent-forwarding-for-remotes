@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { executeWithStdin } from '../src/process';
+import { commandSearchPath, executeWithStdin } from '../src/process';
+
+test('searches ~/.local/bin before the inherited extension-host PATH', () => {
+  assert.equal(
+    commandSearchPath('/home/alice', '/usr/bin:/bin'),
+    '/home/alice/.local/bin:/usr/bin:/bin'
+  );
+});
 
 test('passes stdin and waits for the command to finish', async () => {
   let stdout = '';

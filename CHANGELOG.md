@@ -9,6 +9,11 @@
   and report connection-phase timings in the output channel.
 - Reuse Linux/macOS and WSL bridge SSH connections, overlap independent
   Windows startup work, and add configurable SSHFS cache profiles.
+- Recheck cached missing dependencies after bridge installation and always
+  search `~/.local/bin` even when the VS Code extension host has an older PATH.
+- Remember a successful dependency check permanently per platform; automatic
+  startup checks resume only until the platform first passes, while the manual
+  dependency command always performs a fresh check.
 
 ## 0.8.8
 
