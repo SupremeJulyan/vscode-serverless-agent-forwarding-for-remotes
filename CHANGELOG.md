@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.8.9
+
+- Restore VS Code workspaces opened below a configured mount root by mounting
+  the missing ancestor first, then opening the SSH terminal in the matching
+  remote subdirectory.
+
 ## 0.8.8
 
 - Remove extension-level mount and SSH connection deadlines and forced process

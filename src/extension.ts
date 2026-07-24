@@ -563,16 +563,18 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
   const candidates = activePath ? [activePath, ...workspacePaths] : workspacePaths;
   const match = findMountForPaths(config.mounts, candidates, platformAdapter.kind, expandHome);
   if (!match) return;
-  const openedMountRoot = workspacePaths.find((workspacePath) =>
-    sameLocalPath(workspacePath, match.localPath)
+  const openedWorkspacePath = workspacePaths.find((workspacePath) =>
+    findMountForPath(
+      [match.mount], workspacePath, platformAdapter.kind, expandHome
+    )?.localPath === match.localPath
   );
-  if (openedMountRoot) {
+  if (openedWorkspacePath) {
     const resolved = resolveMount(config, match.mount);
     const mounted = await commandSucceeds(platformAdapter.status(resolved, match.localPath));
     // An unmounted Windows drive has no directory entry to read, so its
     // missing drive root is the platform equivalent of an empty mount point.
     const empty = !mounted && await isEmptyDirectory(
-      openedMountRoot, platformAdapter.kind === 'windows'
+      match.localPath, platformAdapter.kind === 'windows'
     );
     if (empty) {
       await ensureMounted(context, match.mount, match.localPath);
