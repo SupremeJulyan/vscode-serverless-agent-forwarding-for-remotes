@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.8.8
+
+- Remove extension-level mount and SSH connection deadlines and forced process
+  termination on every platform, preserving each native command's own timeout
+  behavior and error output.
+- Wait for VS Code mount tasks to finish naturally and use their exit codes
+  before checking mount status.
+
 ## 0.8.7
 
 - Install the WSL VPN bridge from a temporary clone, retaining only its

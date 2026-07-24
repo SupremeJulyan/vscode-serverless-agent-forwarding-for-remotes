@@ -41,7 +41,6 @@ interface PendingUnmount {
 const pendingOpenKey = 'serverlessRemote.pendingOpen';
 const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
 const pendingOpenTtlMs = 5 * 60 * 1000;
-const connectionTimeoutMs = 20_000;
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const openRemoteTerminalAction = 'Open Remote Terminal';
@@ -146,10 +145,28 @@ async function executeTask(plan: CommandPlan): Promise<void> {
     close: true,
     showReuseMessage: false
   };
-  await vscode.tasks.executeTask(task);
+  let endListener: vscode.Disposable | undefined;
+  const ended = new Promise<number | undefined>((resolve) => {
+    endListener = vscode.tasks.onDidEndTaskProcess((event) => {
+      if (event.execution.task === task) {
+        endListener?.dispose();
+        resolve(event.exitCode);
+      }
+    });
+  });
+  try {
+    await vscode.tasks.executeTask(task);
+  } catch (error) {
+    endListener?.dispose();
+    throw error;
+  }
+  const exitCode = await ended;
+  if (exitCode !== 0) {
+    throw new Error(`${plan.command} exited with code ${exitCode ?? 'unknown'}`);
+  }
 }
 
-async function executePlan(plan: CommandPlan, timeoutMs?: number): Promise<void> {
+async function executePlan(plan: CommandPlan): Promise<void> {
   if (plan.stdin !== undefined) {
     if (plan.command === 'sshfs-bridge' && bridgeOutput) {
       bridgeOutput.show(true);
@@ -165,7 +182,7 @@ async function executePlan(plan: CommandPlan, timeoutMs?: number): Promise<void>
             emittedOutput = true;
             bridgeOutput?.append(chunk);
           }
-        }, timeoutMs);
+        });
         bridgeOutput.appendLine(`[完成] ${plan.command} ${plan.args.join(' ')}`);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -174,21 +191,10 @@ async function executePlan(plan: CommandPlan, timeoutMs?: number): Promise<void>
       }
       return;
     }
-    await executeWithStdin(plan, {}, timeoutMs);
+    await executeWithStdin(plan);
     return;
   }
   await executeTask(plan);
-}
-
-async function waitForPlan(plan: CommandPlan, deadline: number): Promise<boolean> {
-  while (Date.now() < deadline) {
-    if (await commandSucceeds(plan, Math.max(1, Math.min(3000, deadline - Date.now())))) return true;
-    const remaining = deadline - Date.now();
-    if (remaining > 0) {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(500, remaining)));
-    }
-  }
-  return false;
 }
 
 async function promptMasterPassword(context: vscode.ExtensionContext, confirm: boolean): Promise<string> {
@@ -314,23 +320,21 @@ async function ensureMounted(
         mountPlan = {
           ...mountPlan,
           env: { ...mountPlan.env, ...credentials.env },
-          // Waiting for sshfs lets authentication failures reach the extension
-          // instead of degrading into a generic mount timeout.
+          // Waiting for sshfs lets its own authentication/network errors reach
+          // the extension.
           stdin: ''
         };
       }
-      const connectionDeadline = Date.now() + connectionTimeoutMs;
       try {
-        await executePlan(mountPlan, connectionTimeoutMs);
+        await executePlan(mountPlan);
       } catch (error) {
-        const timedOut = error instanceof Error && error.message.startsWith('Timed out after ');
         const authenticationFailed = Boolean(
           resolved.hostConfig.password && isAuthenticationFailure(error)
         );
-        if (!timedOut && !authenticationFailed && !isNetworkFailure(error)) throw error;
+        if (!authenticationFailed && !isNetworkFailure(error)) throw error;
         throw await connectionFailure(authenticationFailed);
       }
-      if (!await waitForPlan(statusPlan, connectionDeadline)) {
+      if (!await commandSucceeds(statusPlan)) {
         throw await connectionFailure(false);
       }
       if (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux') {
