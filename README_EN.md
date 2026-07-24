@@ -69,6 +69,19 @@ The macOS and Linux configuration wizard hides the relay option, and their statu
 
 On Linux and macOS, mounts created by the current VS Code extension session are automatically unmounted when that VS Code window closes. Mounts that already existed before the session are left untouched.
 
+## Performance settings
+
+- `serverlessRemote.reuseSshConnection` defaults to `true` on Linux, macOS,
+  and WSL and lets SSHFS and remote terminals share an OpenSSH ControlMaster
+  connection. WSL requires a current `wsl-vpn-ssh-bridge` with pooling support.
+- `serverlessRemote.sshfsCacheProfile` defaults to `balanced` on Linux/macOS.
+  `fresh` minimizes caching, `balanced` caches metadata for a few seconds, and
+  `fast` uses longer metadata and kernel caches. With `fast`, changes made by
+  other remote processes can take longer to appear locally.
+- The `Serverless Remote SSH` Output channel reports configuration, status,
+  credentials, mount, verification, terminal creation, and total connection
+  timings with a `[性能]` prefix.
+
 ## Install
 
 ### Install manually in VS Code
@@ -77,7 +90,7 @@ On Linux and macOS, mounts created by the current VS Code extension session are 
 2. Open VS Code and select the **Extensions** icon in the Activity Bar, or press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
 3. Select the **Views and More Actions...** (`...`) menu in the upper-right corner of the Extensions view.
 4. Select **Install from VSIX...**.
-5. Choose `vscode-serverless-remote-ssh-0.8.6.vsix` and confirm the installation.
+5. Choose `vscode-serverless-remote-ssh-0.8.9.vsix` and confirm the installation.
 6. Select **Reload Now** if VS Code asks you to reload the window.
 7. After installation, the extension prompts you to install the required software. On WSL and Linux, copy and run the provided installation command. On macOS, install [macFUSE](https://macfuse.github.io/) and [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS) using the corresponding download buttons in the prompt. On Windows, install [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest) and [WinFsp](https://github.com/winfsp/winfsp/releases/latest) using the corresponding download buttons.
 8. Press `Ctrl+Shift+P` to open the Command Palette and run `Serverless Remote SSH: Add SSH Config`. After completing the configuration, select `Serverless SSH` in the lower-left corner of the status bar, or run `Serverless Remote SSH: Open Remote Folder` from the Command Palette.
@@ -88,7 +101,7 @@ To upgrade an existing installation, repeat these steps with the newer VSIX pack
 ### Install from the command line
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.8.6.vsix
+code --install-extension vscode-serverless-remote-ssh-0.8.9.vsix
 ```
 
 After installation, use the `$(remote) Serverless SSH` status bar item or open the Command Palette.

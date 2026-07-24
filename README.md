@@ -68,6 +68,18 @@
 
 在 Linux 和 macOS 上，由当前 VS Code 插件会话创建的挂载会在该 VS Code 窗口关闭时自动卸载。插件不会卸载本次会话开始前已经存在的挂载。
 
+## 性能设置
+
+- `serverlessRemote.reuseSshConnection`：Linux、macOS 和 WSL 默认为
+  `true`，SSHFS 与远程终端通过 OpenSSH ControlMaster 复用连接。WSL
+  需要安装包含连接池支持的新版 `wsl-vpn-ssh-bridge`。
+- `serverlessRemote.sshfsCacheProfile`：Linux/macOS 默认为 `balanced`。
+  `fresh` 尽量关闭缓存，`balanced` 缓存元数据数秒，`fast` 使用更长的
+  元数据和内核缓存；使用 `fast` 时，服务器上由其他进程完成的修改可能
+  延迟显示。
+- “输出”面板中的 `Serverless Remote SSH` 通道会使用 `[性能]` 前缀输出
+  配置读取、状态检查、凭据准备、挂载、挂载验证、终端创建和自动连接总耗时。
+
 ## 安装
 
 ### 在 VS Code 中手动安装
@@ -76,7 +88,7 @@
 2. 打开 VS Code，选择活动栏中的**扩展**图标，或者按 `Ctrl+Shift+X`；macOS 使用 `Cmd+Shift+X`。
 3. 选择扩展视图右上角的**视图和更多操作...**（`...`）菜单。
 4. 选择**从 VSIX 安装...**。
-5. 选择 `vscode-serverless-remote-ssh-0.8.6.vsix` 并确认安装。
+5. 选择 `vscode-serverless-remote-ssh-0.8.9.vsix` 并确认安装。
 6. 如果 VS Code 提示重新加载窗口，选择**立即重新加载**。
 7. 安装完成后，会提示安装必要软件包：1）WSL、Linux 环境复制安装指令；2）macOS 需要安装 [macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS)，提示中提供对应下载按钮；3）Windows 系统需要安装 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest) 和 [WinFsp](https://github.com/winfsp/winfsp/releases/latest)，提示中提供对应下载按钮。
 8. `Ctrl+Shift+P`打开命令面板输入 `Serverless Remote SSH: Add SSH Config` 命令，开始添加配置，配置完毕后点击状态栏左下角中的 `Serverless SSH`，或者打开命令面板输入 `Serverless Remote SSH: Open Remote Folder`。
@@ -87,7 +99,7 @@
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.8.6.vsix
+code --install-extension vscode-serverless-remote-ssh-0.8.9.vsix
 ```
 
 ## 开发

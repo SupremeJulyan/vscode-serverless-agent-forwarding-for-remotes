@@ -7,7 +7,7 @@ import {
   parseSshLogin, resolveMount, saveConfig
 } from './config';
 import { commandExists, commandSucceeds, executeWithStdin } from './process';
-import { CommandPlan, createPlatformAdapter } from './platform';
+import { CommandPlan, ConnectionOptions, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import {
@@ -48,10 +48,24 @@ const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const terminalIdentityEnv = 'SERVERLESS_REMOTE_TERMINAL_ID';
+const dependencyCacheKey = 'serverlessRemote.dependencyCache';
 let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 const openingTerminalIds = new Set<string>();
 let workspaceSwitchMountPath: string | undefined;
+
+function performanceLine(label: string, startedAt: number): void {
+  bridgeOutput?.appendLine(`[性能] ${label}: ${(performance.now() - startedAt).toFixed(1)} ms`);
+}
+
+async function timedPhase<T>(label: string, action: () => Promise<T>): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await action();
+  } finally {
+    performanceLine(label, startedAt);
+  }
+}
 
 class ConfigActionRequiredError extends Error {
   constructor(
@@ -65,6 +79,16 @@ class ConfigActionRequiredError extends Error {
 
 function settings(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('serverlessRemote');
+}
+
+function connectionOptions(): ConnectionOptions {
+  return {
+    reuseSshConnection: settings().get<boolean>('reuseSshConnection', true)
+      && platformAdapter.kind !== 'windows',
+    sshfsCacheProfile: settings().get<'fresh' | 'balanced' | 'fast'>(
+      'sshfsCacheProfile', 'balanced'
+    )
+  };
 }
 
 function configPath(): string {
@@ -272,10 +296,16 @@ async function resolveStoredHostPassword(
   return { ...host, password: plainPassword };
 }
 
+interface EnsureMountedOptions {
+  config?: BridgeConfig;
+  knownUnmounted?: boolean;
+}
+
 async function ensureMounted(
-  context: vscode.ExtensionContext, mount: MountConfig, localPath: string
+  context: vscode.ExtensionContext, mount: MountConfig, localPath: string,
+  options: EnsureMountedOptions = {}
 ): Promise<boolean> {
-  const config = await readConfig();
+  const config = options.config ?? await readConfig();
   if (platformAdapter.kind === 'wsl') {
     const configuredMount = config.mounts.find((item) => item.name === mount.name);
     if (configuredMount && configuredMount.local_path !== localPath) {
@@ -285,7 +315,13 @@ async function ensureMounted(
   }
   const resolved = resolveMount(config, mount);
   const statusPlan = platformAdapter.status(resolved, localPath);
-  if (!await commandSucceeds(statusPlan)) {
+  const mounted = options.knownUnmounted === true
+    ? false
+    : await timedPhase(
+      `${mount.name} 挂载状态检查`,
+      () => commandSucceeds(statusPlan)
+    );
+  if (!mounted) {
     let credentials: AskpassCredentials | undefined;
     const connectionFailure = async (clearPassword: boolean): Promise<ConfigActionRequiredError> => {
       const hostIndex = config.hosts.findIndex((host) => host.name === resolved.hostConfig.name);
@@ -301,9 +337,12 @@ async function ensureMounted(
     };
     try {
       if (resolved.hostConfig.password) {
-        resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
+        resolved.hostConfig = await timedPhase(
+          `${mount.name} 凭据准备`,
+          () => resolveStoredHostPassword(context, config, resolved.hostConfig)
+        );
       }
-      let mountPlan = platformAdapter.mount(resolved, localPath);
+      let mountPlan = platformAdapter.mount(resolved, localPath, connectionOptions());
       if (platformAdapter.kind === 'wsl') {
         mountPlan = {
           ...mountPlan,
@@ -326,7 +365,7 @@ async function ensureMounted(
         };
       }
       try {
-        await executePlan(mountPlan);
+        await timedPhase(`${mount.name} SSHFS 挂载`, () => executePlan(mountPlan));
       } catch (error) {
         const authenticationFailed = Boolean(
           resolved.hostConfig.password && isAuthenticationFailure(error)
@@ -334,7 +373,10 @@ async function ensureMounted(
         if (!authenticationFailed && !isNetworkFailure(error)) throw error;
         throw await connectionFailure(authenticationFailed);
       }
-      if (!await commandSucceeds(statusPlan)) {
+      if (!await timedPhase(
+        `${mount.name} 挂载结果验证`,
+        () => commandSucceeds(statusPlan)
+      )) {
         throw await connectionFailure(false);
       }
       if (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux') {
@@ -455,15 +497,17 @@ async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void
       localPath: pending.localPath
     });
   }
-  await openTerminal(context, mount, pending.localPath);
+  await openTerminal(context, mount, pending.localPath, config);
 }
 
 async function openTerminal(
-  context: vscode.ExtensionContext, mountConfig?: MountConfig, cwd?: string
-): Promise<void> {
+  context: vscode.ExtensionContext, mountConfig?: MountConfig, cwd?: string,
+  loadedConfig?: BridgeConfig
+): Promise<{ terminal: vscode.Terminal; created: boolean } | undefined> {
   let mount = mountConfig;
+  let config = loadedConfig;
   if (!mount) {
-    const config = await readConfig();
+    config ??= await readConfig();
     const currentPath = vscode.window.activeTextEditor?.document.uri.scheme === 'file'
       ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
       : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -475,9 +519,9 @@ async function openTerminal(
   }
   mount ??= await selectMount('Select a remote terminal');
   if (!mount) {
-    return;
+    return undefined;
   }
-  const config = await readConfig();
+  config ??= await readConfig();
   const resolved = resolveMount(config, mount);
   const configuredLocalPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
   const localRoot = configuredLocalPath ? expandHome(configuredLocalPath) : undefined;
@@ -498,20 +542,26 @@ async function openTerminal(
   });
   if (existingTerminal) {
     existingTerminal.show();
-    return;
+    return { terminal: existingTerminal, created: false };
   }
-  if (openingTerminalIds.has(terminalId)) return;
+  if (openingTerminalIds.has(terminalId)) return undefined;
   openingTerminalIds.add(terminalId);
   try {
     let credentials: AskpassCredentials | undefined;
     if (resolved.hostConfig.password) {
-      resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
+      resolved.hostConfig = await timedPhase(
+        `${mount.name} 终端凭据准备`,
+        () => resolveStoredHostPassword(context, config, resolved.hostConfig)
+      );
       if (platformUsesAskpass(platformAdapter.kind)) {
         credentials = await createAskpassCredentials(resolved.hostConfig.password!);
       }
     }
-    const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd);
+    const plan = platformAdapter.terminal(
+      resolved.hostConfig, remoteCwd, connectionOptions()
+    );
     const bridgeEnv = await bridgeMasterPasswordEnv(context, resolved.hostConfig);
+    const terminalStartedAt = performance.now();
     const terminal = vscode.window.createTerminal({
       name: terminalName,
       shellPath: plan.command,
@@ -519,6 +569,7 @@ async function openTerminal(
       env: {
         SSH_BRIDGE_MOUNT_NAME: mount.name,
         [terminalIdentityEnv]: terminalId,
+        ...plan.env,
         ...bridgeEnv,
         ...credentials?.env
       },
@@ -530,6 +581,7 @@ async function openTerminal(
       cwd: os.homedir(),
       isTransient: true
     });
+    performanceLine(`${mount.name} SSH 终端创建（不含远端握手）`, terminalStartedAt);
     if (credentials) {
       const disposable = vscode.window.onDidCloseTerminal((closed) => {
         if (closed === terminal) {
@@ -543,9 +595,39 @@ async function openTerminal(
       }, pendingOpenTtlMs);
     }
     terminal.show();
+    return { terminal, created: true };
   } finally {
     openingTerminalIds.delete(terminalId);
   }
+}
+
+async function mountAndOpenTerminal(
+  context: vscode.ExtensionContext, config: BridgeConfig,
+  match: { mount: MountConfig; localPath: string; cwd: string }
+): Promise<void> {
+  const host = resolveMount(config, match.mount).hostConfig;
+  const canConnectConcurrently = !connectionOptions().reuseSshConnection
+    && (!host.password || isEncryptedPassword(host.password));
+  if (!canConnectConcurrently) {
+    await ensureMounted(context, match.mount, match.localPath, {
+      config, knownUnmounted: true
+    });
+    await openTerminal(context, match.mount, match.cwd, config);
+    return;
+  }
+  const [mountResult, terminalResult] = await Promise.allSettled([
+    ensureMounted(context, match.mount, match.localPath, {
+      config, knownUnmounted: true
+    }),
+    openTerminal(context, match.mount, match.cwd, config)
+  ]);
+  if (mountResult.status === 'rejected') {
+    if (terminalResult.status === 'fulfilled' && terminalResult.value?.created) {
+      terminalResult.value.terminal.dispose();
+    }
+    throw mountResult.reason;
+  }
+  if (terminalResult.status === 'rejected') throw terminalResult.reason;
 }
 
 async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Promise<void> {
@@ -553,7 +635,7 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
   if (workspacePaths.length === 0) return;
   let config: BridgeConfig;
   try {
-    config = await loadConfig(configPath());
+    config = await timedPhase('自动连接配置读取', () => loadConfig(configPath()));
   } catch {
     return;
   }
@@ -570,17 +652,21 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
   );
   if (openedWorkspacePath) {
     const resolved = resolveMount(config, match.mount);
-    const mounted = await commandSucceeds(platformAdapter.status(resolved, match.localPath));
+    const mounted = await timedPhase(
+      `${match.mount.name} 启动挂载状态检查`,
+      () => commandSucceeds(platformAdapter.status(resolved, match.localPath))
+    );
     // An unmounted Windows drive has no directory entry to read, so its
     // missing drive root is the platform equivalent of an empty mount point.
     const empty = !mounted && await isEmptyDirectory(
       match.localPath, platformAdapter.kind === 'windows'
     );
     if (empty) {
-      await ensureMounted(context, match.mount, match.localPath);
+      await mountAndOpenTerminal(context, config, match);
+      return;
     }
   }
-  await openTerminal(context, match.mount, match.cwd);
+  await openTerminal(context, match.mount, match.cwd, config);
 }
 
 function workspaceUsesPath(localPath: string): boolean {
@@ -861,21 +947,50 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
 }
 
 async function missingDependencies(): Promise<string[]> {
-  const missing: string[] = [];
-  for (const command of platformAdapter.dependencies()) {
-    if (platformAdapter.kind === 'windows' && command === 'sshfs-win.exe') continue;
-    if (!await commandExists(command)) missing.push(command);
-  }
+  const commands = platformAdapter.dependencies().filter(
+    (command) => platformAdapter.kind !== 'windows' || command !== 'sshfs-win.exe'
+  );
+  const results = await Promise.all(commands.map(async (command) => ({
+    command, exists: await commandExists(command)
+  })));
+  const missing = results.filter(({ exists }) => !exists).map(({ command }) => command);
   if (platformAdapter.kind !== 'windows') return missing;
-  const hasWinFsp = await commandExists('fsptool-x64.exe') || await hasWindowsInstallDirectory('WinFsp');
-  if (!hasWinFsp) missing.push('WinFsp');
-  const hasSshfsWin = await commandExists('sshfs-win.exe') || await hasWindowsInstallDirectory('SSHFS-Win');
+  const [hasWinFspCommand, hasWinFspDirectory, hasSshfsWinCommand, hasSshfsWinDirectory] =
+    await Promise.all([
+      commandExists('fsptool-x64.exe'),
+      hasWindowsInstallDirectory('WinFsp'),
+      commandExists('sshfs-win.exe'),
+      hasWindowsInstallDirectory('SSHFS-Win')
+    ]);
+  if (!hasWinFspCommand && !hasWinFspDirectory) missing.push('WinFsp');
+  const hasSshfsWin = hasSshfsWinCommand || hasSshfsWinDirectory;
   if (!hasSshfsWin) missing.push('SSHFS-Win');
   return missing;
 }
 
-async function showDependencyTips(force = true): Promise<void> {
-  const missing = await missingDependencies();
+interface DependencyCache {
+  extensionVersion: string;
+  platform: string;
+  missing: string[];
+}
+
+async function showDependencyTips(
+  context: vscode.ExtensionContext, force = true
+): Promise<void> {
+  const cached = context.globalState.get<DependencyCache>(dependencyCacheKey);
+  const validCache = !force
+    && cached?.extensionVersion === context.extension.packageJSON.version
+    && cached?.platform === platformAdapter.kind;
+  const missing = validCache && cached
+    ? cached.missing
+    : await timedPhase('依赖检查', missingDependencies);
+  if (!validCache) {
+    await context.globalState.update(dependencyCacheKey, {
+      extensionVersion: context.extension.packageJSON.version,
+      platform: platformAdapter.kind,
+      missing
+    } satisfies DependencyCache);
+  }
   if (missing.length === 0) {
     if (force) void vscode.window.showInformationMessage('当前平台所需依赖均已安装。');
     return;
@@ -897,8 +1012,6 @@ async function showDependencyTips(force = true): Promise<void> {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  await guard(() => showDependencyTips(false));
-
   const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
   bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
   context.subscriptions.push(statusOutput, bridgeOutput);
@@ -909,7 +1022,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ['status', () => guard(() => showStatus(statusOutput))],
     ['openConfig', () => guard(() => openConfig())],
     ['addSshConfig', () => guard(() => addSshConfig(context))],
-    ['installDependenciesTips', () => guard(() => showDependencyTips())]
+    ['installDependenciesTips', () => guard(() => showDependencyTips(context))]
   ];
   for (const [name, handler] of registrations) {
     context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));
@@ -918,7 +1031,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void suggestReopeningClosedTerminal(terminal);
   }));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
-    void guard(() => autoOpenWorkspaceTerminal(context));
+    void guard(() => timedPhase(
+      '工作区变化自动连接总计',
+      () => autoOpenWorkspaceTerminal(context)
+    ));
   }));
 
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -930,7 +1046,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(statusBar);
   await guard(() => resumePendingUnmount(context));
   await guard(() => resumePendingOpen(context));
-  await guard(() => autoOpenWorkspaceTerminal(context));
+  await guard(() => timedPhase(
+    '启动自动连接总计',
+    () => autoOpenWorkspaceTerminal(context)
+  ));
+  void guard(() => showDependencyTips(context, false));
 }
 
 export async function deactivate(): Promise<void> {

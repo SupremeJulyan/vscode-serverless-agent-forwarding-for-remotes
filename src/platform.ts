@@ -11,22 +11,71 @@ export interface CommandPlan {
   stdin?: string;
 }
 
+export interface ConnectionOptions {
+  reuseSshConnection?: boolean;
+  sshfsCacheProfile?: 'fresh' | 'balanced' | 'fast';
+}
+
 export interface PlatformAdapter {
   readonly kind: PlatformKind;
   dependencies(): string[];
-  mount(remote: ResolvedMount, localPath: string): CommandPlan;
+  mount(remote: ResolvedMount, localPath: string, options?: ConnectionOptions): CommandPlan;
   unmount(remote: ResolvedMount, localPath: string): CommandPlan;
   lazyUnmount?(remote: ResolvedMount, localPath: string): CommandPlan;
   status(remote: ResolvedMount, localPath: string): CommandPlan;
-  terminal(host: HostConfig, remoteCwd?: string): CommandPlan;
+  terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan;
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
-function sshArgs(host: HostConfig, remoteCwd?: string): string[] {
+function connectionReuseArgs(options?: ConnectionOptions): string[] {
+  return options?.reuseSshConnection
+    ? [
+        '-o', 'ControlMaster=auto',
+        '-o', 'ControlPersist=10m',
+        '-o', 'ControlPath=~/.ssh/serverless-remote-%C'
+      ]
+    : [];
+}
+
+function sshfsCacheArgs(options?: ConnectionOptions): string[] {
+  switch (options?.sshfsCacheProfile) {
+    case 'fresh':
+      return [
+        '-o', 'cache=no',
+        '-o', 'attr_timeout=0',
+        '-o', 'entry_timeout=0',
+        '-o', 'negative_timeout=0'
+      ];
+    case 'fast':
+      return [
+        '-o', 'cache=yes',
+        '-o', 'kernel_cache',
+        '-o', 'cache_timeout=30',
+        '-o', 'attr_timeout=30',
+        '-o', 'entry_timeout=30',
+        '-o', 'negative_timeout=5'
+      ];
+    case 'balanced':
+      return [
+        '-o', 'cache=yes',
+        '-o', 'cache_timeout=5',
+        '-o', 'attr_timeout=5',
+        '-o', 'entry_timeout=5',
+        '-o', 'negative_timeout=2'
+      ];
+    default:
+      return [];
+  }
+}
+
+function sshArgs(
+  host: HostConfig, remoteCwd?: string, options?: ConnectionOptions
+): string[] {
   const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
+  args.push(...connectionReuseArgs(options));
   if (host.private_key_path) {
     args.push('-i', host.private_key_path);
   }
@@ -42,7 +91,9 @@ function remoteLoginCommand(remoteCwd: string): string {
   return `cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`;
 }
 
-function sshfsArgs(remote: ResolvedMount, localPath: string): string[] {
+function sshfsArgs(
+  remote: ResolvedMount, localPath: string, options?: ConnectionOptions
+): string[] {
   const host = remote.hostConfig;
   const args = [
     `${host.user}@${host.ip}:${remote.remote_path}`,
@@ -53,6 +104,8 @@ function sshfsArgs(remote: ResolvedMount, localPath: string): string[] {
     '-o', 'ServerAliveCountMax=3',
     '-o', 'StrictHostKeyChecking=accept-new'
   ];
+  args.push(...connectionReuseArgs(options));
+  args.push(...sshfsCacheArgs(options));
   if (host.private_key_path) {
     args.push('-o', `IdentityFile=${host.private_key_path}`);
   }
@@ -64,8 +117,8 @@ class UnixAdapter implements PlatformAdapter {
   dependencies(): string[] {
     return this.kind === 'macos' ? ['ssh', 'sshfs', 'umount'] : ['ssh', 'sshfs', 'mountpoint', 'fusermount3'];
   }
-  mount(remote: ResolvedMount, localPath: string): CommandPlan {
-    return { command: 'sshfs', args: sshfsArgs(remote, localPath), cwd: localPath };
+  mount(remote: ResolvedMount, localPath: string, options?: ConnectionOptions): CommandPlan {
+    return { command: 'sshfs', args: sshfsArgs(remote, localPath, options), cwd: localPath };
   }
   unmount(_remote: ResolvedMount, localPath: string): CommandPlan {
     return this.kind === 'macos'
@@ -83,20 +136,28 @@ class UnixAdapter implements PlatformAdapter {
         }
       : { command: 'mountpoint', args: ['-q', '--', localPath] };
   }
-  terminal(host: HostConfig, remoteCwd?: string): CommandPlan {
-    return { command: 'ssh', args: sshArgs(host, remoteCwd) };
+  terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan {
+    return { command: 'ssh', args: sshArgs(host, remoteCwd, options) };
   }
 }
 
 class WslAdapter implements PlatformAdapter {
   readonly kind = 'wsl' as const;
   dependencies(): string[] { return ['ssh-bridge', 'sshfs-bridge', 'mountpoint']; }
-  mount(remote: ResolvedMount, _localPath: string): CommandPlan {
+  mount(
+    remote: ResolvedMount, _localPath: string, options?: ConnectionOptions
+  ): CommandPlan {
     return {
       // A disconnected FUSE mount cannot be used as a process cwd: Node reports
       // that failure as a misleading `spawn <command> ENOENT`.
       command: 'sshfs-bridge', args: ['mount', remote.name],
-      env: { SSHFS_BRIDGE_NO_TERMINAL: '1' }, stdin: ''
+      env: {
+        SSHFS_BRIDGE_NO_TERMINAL: '1',
+        ...(options?.reuseSshConnection === undefined ? {} : {
+          WSL_VPN_SSH_CONNECTION_REUSE: options.reuseSshConnection ? '1' : '0'
+        })
+      },
+      stdin: ''
     };
   }
   unmount(remote: ResolvedMount): CommandPlan {
@@ -105,11 +166,19 @@ class WslAdapter implements PlatformAdapter {
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return { command: 'mountpoint', args: ['-q', '--', localPath] };
   }
-  terminal(host: HostConfig, _remoteCwd?: string): CommandPlan {
+  terminal(host: HostConfig, _remoteCwd?: string, options?: ConnectionOptions): CommandPlan {
     const args = [host.name];
     if (_remoteCwd) args.unshift('--tty');
     if (_remoteCwd) args.push(remoteLoginCommand(_remoteCwd));
-    return { command: 'ssh-bridge', args };
+    return {
+      command: 'ssh-bridge',
+      args,
+      ...(options?.reuseSshConnection === undefined ? {} : {
+        env: {
+          WSL_VPN_SSH_CONNECTION_REUSE: options.reuseSshConnection ? '1' : '0'
+        }
+      })
+    };
   }
 }
 
@@ -200,7 +269,7 @@ class WindowsAdapter implements PlatformAdapter {
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return { command: 'net', args: ['use', this.drive(localPath)] };
   }
-  terminal(host: HostConfig, remoteCwd?: string): CommandPlan {
+  terminal(host: HostConfig, remoteCwd?: string, _options?: ConnectionOptions): CommandPlan {
     return { command: 'ssh', args: sshArgs(host, remoteCwd) };
   }
 }

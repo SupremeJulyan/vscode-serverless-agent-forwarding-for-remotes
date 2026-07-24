@@ -5,6 +5,10 @@
 - Restore VS Code workspaces opened below a configured mount root by mounting
   the missing ancestor first, then opening the SSH terminal in the matching
   remote subdirectory.
+- Cache and parallelize dependency checks, reuse configuration and mount state,
+  and report connection-phase timings in the output channel.
+- Reuse Linux/macOS and WSL bridge SSH connections, overlap independent
+  Windows startup work, and add configurable SSHFS cache profiles.
 
 ## 0.8.8
 

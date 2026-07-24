@@ -63,6 +63,22 @@
           "type": "string",
           "default": "~/serverless-remote-ssh/config.json",
           "description": "Native default: ~/serverless-remote-ssh/config.json. WSL default: ~/.wsl-vpn-ssh/config.json. An explicit value overrides the platform default."
+        },
+        "serverlessRemote.reuseSshConnection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reuse one OpenSSH connection between SSHFS and terminals on Linux, macOS, and WSL."
+        },
+        "serverlessRemote.sshfsCacheProfile": {
+          "type": "string",
+          "enum": ["fresh", "balanced", "fast"],
+          "enumDescriptions": [
+            "Disable SSHFS caches where possible so remote changes appear immediately.",
+            "Cache file and directory metadata for a few seconds.",
+            "Use longer metadata and kernel caches for speed; external remote changes may appear later."
+          ],
+          "default": "balanced",
+          "description": "Native Linux/macOS SSHFS cache policy."
         }
       }
     }

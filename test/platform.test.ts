@@ -35,10 +35,54 @@ test('WSL delegates mount and relay handling to bridge commands', () => {
   });
 });
 
+test('WSL forwards the SSH connection-pool preference to both bridge commands', () => {
+  const adapter = createPlatformAdapter('wsl');
+  assert.equal(
+    adapter.mount(remote, '/mnt/project', { reuseSshConnection: true })
+      .env?.WSL_VPN_SSH_CONNECTION_REUSE,
+    '1'
+  );
+  assert.equal(
+    adapter.terminal(remote.hostConfig, undefined, { reuseSshConnection: false })
+      .env?.WSL_VPN_SSH_CONNECTION_REUSE,
+    '0'
+  );
+});
+
 test('Linux builds a native SSHFS command', () => {
   const plan = createPlatformAdapter('linux').mount(remote, '/mnt/project');
   assert.equal(plan.command, 'sshfs');
   assert.deepEqual(plan.args.slice(0, 4), ['alice@10.0.0.2:/srv/project', '/mnt/project', '-p', '2222']);
+});
+
+test('native Unix can reuse one OpenSSH control connection for SSHFS and terminals', () => {
+  const adapter = createPlatformAdapter('linux');
+  const mountPlan = adapter.mount(remote, '/mnt/project', { reuseSshConnection: true });
+  const terminalPlan = adapter.terminal(remote.hostConfig, undefined, {
+    reuseSshConnection: true
+  });
+  for (const plan of [mountPlan, terminalPlan]) {
+    assert.equal(plan.args.includes('ControlMaster=auto'), true);
+    assert.equal(plan.args.includes('ControlPersist=10m'), true);
+    assert.equal(plan.args.includes('ControlPath=~/.ssh/serverless-remote-%C'), true);
+  }
+});
+
+test('native SSHFS exposes explicit cache freshness profiles', () => {
+  const adapter = createPlatformAdapter('linux');
+  const balanced = adapter.mount(remote, '/mnt/project', {
+    sshfsCacheProfile: 'balanced'
+  });
+  assert.equal(balanced.args.includes('cache_timeout=5'), true);
+  assert.equal(balanced.args.includes('entry_timeout=5'), true);
+
+  const fast = adapter.mount(remote, '/mnt/project', { sshfsCacheProfile: 'fast' });
+  assert.equal(fast.args.includes('kernel_cache'), true);
+  assert.equal(fast.args.includes('cache_timeout=30'), true);
+
+  const fresh = adapter.mount(remote, '/mnt/project', { sshfsCacheProfile: 'fresh' });
+  assert.equal(fresh.args.includes('cache=no'), true);
+  assert.equal(fresh.args.includes('attr_timeout=0'), true);
 });
 
 test('native SSHFS mounts the SSH login directory for a dot remote path', () => {
