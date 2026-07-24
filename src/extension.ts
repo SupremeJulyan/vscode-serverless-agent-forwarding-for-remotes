@@ -41,7 +41,7 @@ interface PendingUnmount {
 const pendingOpenKey = 'serverlessRemote.pendingOpen';
 const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
 const pendingOpenTtlMs = 5 * 60 * 1000;
-const connectionTimeoutMs = 8_000;
+const connectionTimeoutMs = 20_000;
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const openRemoteTerminalAction = 'Open Remote Terminal';
