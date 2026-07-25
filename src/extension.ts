@@ -53,6 +53,9 @@ let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 const openingTerminalIds = new Set<string>();
 let workspaceSwitchMountPath: string | undefined;
+const cachedEnv = Object.fromEntries(
+  Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+);
 
 function performanceLine(label: string, startedAt: number): void {
   bridgeOutput?.appendLine(`[性能] ${label}: ${(performance.now() - startedAt).toFixed(1)} ms`);
@@ -115,7 +118,7 @@ async function readConfig(): Promise<BridgeConfig> {
   }
 }
 
-async function selectMount(placeHolder: string): Promise<MountConfig | undefined> {
+async function selectMount(placeHolder: string): Promise<{ mount: MountConfig; config: BridgeConfig } | undefined> {
   const config = await readConfig();
   if (config.mounts.length === 0) {
     throw new ConfigActionRequiredError(
@@ -132,7 +135,7 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
     })),
     { placeHolder, matchOnDescription: true, matchOnDetail: true }
   );
-  return picked?.mount;
+  return picked ? { mount: picked.mount, config } : undefined;
 }
 
 async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
@@ -145,9 +148,7 @@ async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
 }
 
 async function executeTask(plan: CommandPlan): Promise<void> {
-  const inheritedEnv = Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
-  );
+  const inheritedEnv = cachedEnv;
   // A ProcessExecution without an explicit cwd can fall back to a user's
   // terminal.integrated.cwd setting. If that contains ${workspaceFolder}, VS
   // Code cannot resolve it while this extension is opening the first folder.
@@ -391,23 +392,23 @@ async function ensureMounted(
 }
 
 async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void> {
-  const mount = await selectMount('Select a remote folder to open');
-  if (!mount) return;
+  const selected = await selectMount('Select a remote folder to open');
+  if (!selected) return;
+  const { mount, config } = selected;
   const localPath = await mountDirectory(mount);
   if (!localPath) return;
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (current && sameLocalPath(current, localPath)) {
-    await ensureMounted(context, mount, localPath);
-    await openTerminal(context, mount, localPath);
+    await ensureMounted(context, mount, localPath, { config });
+    await openTerminal(context, mount, localPath, config);
     return;
   }
-  const ownsMount = await ensureMounted(context, mount, localPath);
+  const ownsMount = await ensureMounted(context, mount, localPath, { config });
   // VS Code can reconnect a terminal across vscode.openFolder even when it was
   // created as transient. Once ssh-bridge execs sshpass, the revived terminal's
   // title no longer matches "SSH: <mount>", so startup auto-connect would open
   // a second terminal. Close this mount's bridge terminal before switching;
   // resumePendingOpen creates exactly one terminal in the destination window.
-  const config = await readConfig();
   const host = resolveMount(config, mount).hostConfig;
   for (const terminal of vscode.window.terminals) {
     if (isBridgeTerminalForMount(terminal, mount.name, host.name)) {
@@ -517,9 +518,14 @@ async function openTerminal(
     mount = match?.mount;
     cwd = match?.cwd;
   }
-  mount ??= await selectMount('Select a remote terminal');
+  let selected;
   if (!mount) {
-    return undefined;
+    selected = await selectMount('Select a remote terminal');
+    if (!selected) {
+      return undefined;
+    }
+    mount = selected.mount;
+    config = selected.config;
   }
   config ??= await readConfig();
   const resolved = resolveMount(config, mount);
@@ -712,8 +718,9 @@ async function executePlatformUnmount(remote: ResolvedMount, localPath: string):
 }
 
 async function closeRemote(context: vscode.ExtensionContext): Promise<void> {
-  const mount = await selectMount('Select a remote folder to close');
-  if (mount) {
+  const selected = await selectMount('Select a remote folder to close');
+  if (selected) {
+    const { mount } = selected;
     const expandedPath = await mountDirectory(mount);
     if (!expandedPath) return;
     if (workspaceUsesPath(expandedPath)) {
@@ -748,12 +755,13 @@ async function showStatus(output: vscode.OutputChannel): Promise<void> {
   const config = await readConfig();
   output.clear();
   output.appendLine('Mounts');
-  for (const mount of config.mounts) {
+  const lines = await Promise.all(config.mounts.map(async (mount) => {
     const expandedPath = await mountDirectory(mount);
-    if (!expandedPath) continue;
+    if (!expandedPath) return undefined;
     const mounted = await commandSucceeds(platformAdapter.status(resolveMount(config, mount), expandedPath));
-    output.appendLine(`  ${mount.name}: ${mounted ? 'mounted' : 'not mounted'} (${expandedPath})`);
-  }
+    return `  ${mount.name}: ${mounted ? 'mounted' : 'not mounted'} (${expandedPath})`;
+  }));
+  for (const line of lines) if (line !== undefined) output.appendLine(line);
   if (platformAdapter.kind === 'wsl') {
     output.appendLine('');
     output.appendLine('Relay');

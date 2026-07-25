@@ -29,6 +29,36 @@ export async function commandExists(command: string): Promise<boolean> {
   }
 }
 
+const resolvedCache = new Map<string, string>();
+
+async function resolveExecutable(command: string, env?: NodeJS.ProcessEnv): Promise<string> {
+  if (process.platform === 'win32' || command.includes('/')) return command;
+  const cacheKey = JSON.stringify({ command, path: env?.PATH });
+  const cached = resolvedCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  try {
+    const { stdout } = await execFileAsync(
+      'sh', ['-lc', 'command -v "$1"', 'sh', command],
+      {
+        env: {
+          ...process.env,
+          ...env,
+          PATH: commandSearchPath(
+            os.homedir(), env?.PATH ?? process.env.PATH
+          )
+        }
+      }
+    );
+    const resolved = stdout.trim().split(/\r?\n/, 1)[0];
+    const result = resolved.startsWith('/') ? resolved : command;
+    resolvedCache.set(cacheKey, result);
+    return result;
+  } catch {
+    resolvedCache.set(cacheKey, command);
+    return command;
+  }
+}
+
 export async function isMountpoint(target: string): Promise<boolean> {
   try {
     await execFileAsync('mountpoint', ['-q', '--', target]);
@@ -52,28 +82,6 @@ export async function commandSucceeds(plan: CommandPlan): Promise<boolean> {
 export interface ProcessOutputHandlers {
   stdout?: (chunk: string) => void;
   stderr?: (chunk: string) => void;
-}
-
-async function resolveExecutable(command: string, env?: NodeJS.ProcessEnv): Promise<string> {
-  if (process.platform === 'win32' || command.includes('/')) return command;
-  try {
-    const { stdout } = await execFileAsync(
-      'sh', ['-lc', 'command -v "$1"', 'sh', command],
-      {
-        env: {
-          ...process.env,
-          ...env,
-          PATH: commandSearchPath(
-            os.homedir(), env?.PATH ?? process.env.PATH
-          )
-        }
-      }
-    );
-    const resolved = stdout.trim().split(/\r?\n/, 1)[0];
-    return resolved.startsWith('/') ? resolved : command;
-  } catch {
-    return command;
-  }
 }
 
 export async function executeWithStdin(
