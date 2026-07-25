@@ -14,6 +14,7 @@ import {
   defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
   usesWorkspaceRelativeDefault
 } from './mount-path';
+import { MountOperationLock, normalizeMountLockKey } from './mount-lock';
 import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
 import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
@@ -53,25 +54,14 @@ let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 const openingTerminalIds = new Set<string>();
 let workspaceSwitchMountPath: string | undefined;
-const mountLocks = new Map<string, Promise<void>>();
+const mountOperations = new MountOperationLock();
 const cachedEnv = Object.fromEntries(
   Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
 );
 
 function withMountLock<T>(key: string, action: () => Promise<T>): Promise<T> {
-  const previous = mountLocks.get(key);
-  const token = {} as { next: Promise<void> };
-  const result = (async () => {
-    await previous;
-    try {
-      return await action();
-    } finally {
-      if (mountLocks.get(key) === token.next) mountLocks.delete(key);
-    }
-  })();
-  token.next = result.catch(() => {}).then(() => {});
-  mountLocks.set(key, token.next);
-  return result;
+  const caseInsensitive = platformAdapter.kind === 'windows' || platformAdapter.kind === 'macos';
+  return mountOperations.run(normalizeMountLockKey(key, caseInsensitive), action);
 }
 
 function performanceLine(label: string, startedAt: number): void {
@@ -319,19 +309,11 @@ interface EnsureMountedOptions {
   knownUnmounted?: boolean;
 }
 
-async function ensureMounted(
+async function ensureMountedUnlocked(
   context: vscode.ExtensionContext, mount: MountConfig, localPath: string,
   options: EnsureMountedOptions = {}
 ): Promise<boolean> {
-  return withMountLock(localPath, async () => {
   const config = options.config ?? await readConfig();
-  if (platformAdapter.kind === 'wsl') {
-    const configuredMount = config.mounts.find((item) => item.name === mount.name);
-    if (configuredMount && configuredMount.local_path !== localPath) {
-      configuredMount.local_path = localPath;
-      await saveConfig(configPath(), config);
-    }
-  }
   const resolved = resolveMount(config, mount);
   const statusPlan = platformAdapter.status(resolved, localPath);
   const mounted = options.knownUnmounted === true
@@ -407,7 +389,6 @@ async function ensureMounted(
     }
   }
   return false;
-  });
 }
 
 async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void> {
@@ -417,43 +398,56 @@ async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void>
   const localPath = await mountDirectory(mount);
   if (!localPath) return;
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (current && sameLocalPath(current, localPath)) {
-    await ensureMounted(context, mount, localPath, { config });
-    await openTerminal(context, mount, localPath, config);
-    return;
-  }
-  const ownsMount = await ensureMounted(context, mount, localPath, { config });
-  // VS Code can reconnect a terminal across vscode.openFolder even when it was
-  // created as transient. Once ssh-bridge execs sshpass, the revived terminal's
-  // title no longer matches "SSH: <mount>", so startup auto-connect would open
-  // a second terminal. Close this mount's bridge terminal before switching;
-  // resumePendingOpen creates exactly one terminal in the destination window.
-  const host = resolveMount(config, mount).hostConfig;
-  for (const terminal of vscode.window.terminals) {
-    if (isBridgeTerminalForMount(terminal, mount.name, host.name)) {
-      terminal.dispose();
+  await withMountLock(localPath, async () => {
+    if (current && sameLocalPath(current, localPath)) {
+      await ensureMountedUnlocked(context, mount, localPath, { config });
+      await openTerminal(context, mount, localPath, config);
+      return;
     }
-  }
-  await context.globalState.update(pendingOpenKey, {
-    mountName: mount.name, localPath, createdAt: Date.now(), ownsMount
-  });
-  const absoluteLocalPath = path.resolve(localPath);
-  workspaceSwitchMountPath = absoluteLocalPath;
-  try {
-    const opened = await vscode.commands.executeCommand<boolean | undefined>(
-      'vscode.openFolder',
-      vscode.Uri.file(absoluteLocalPath),
-      { forceReuseWindow: true }
-    );
-    if (opened === false) {
+    const ownsMount = await ensureMountedUnlocked(context, mount, localPath, { config });
+    // When the mount's local_path is still a workspace-relative default (path ends
+    // with the mount name), persist the resolved directory so that subsequent Open
+    // Remote Folder operations always use this location. Windows is excluded: its
+    // mount path is always a drive letter.
+    if (platformAdapter.kind !== 'windows' && usesWorkspaceRelativeDefault(mount, platformAdapter.kind)) {
+      const mountIndex = config.mounts.findIndex((item) => item.name === mount.name);
+      if (mountIndex >= 0) {
+        config.mounts[mountIndex] = { ...mount, local_path: localPath };
+        await saveConfig(configPath(), config);
+      }
+    }
+    // VS Code can reconnect a terminal across vscode.openFolder even when it was
+    // created as transient. Once ssh-bridge execs sshpass, the revived terminal's
+    // title no longer matches "SSH: <mount>", so startup auto-connect would open
+    // a second terminal. Close this mount's bridge terminal before switching;
+    // resumePendingOpen creates exactly one terminal in the destination window.
+    const host = resolveMount(config, mount).hostConfig;
+    for (const terminal of vscode.window.terminals) {
+      if (isBridgeTerminalForMount(terminal, mount.name, host.name)) {
+        terminal.dispose();
+      }
+    }
+    await context.globalState.update(pendingOpenKey, {
+      mountName: mount.name, localPath, createdAt: Date.now(), ownsMount
+    });
+    const absoluteLocalPath = path.resolve(localPath);
+    workspaceSwitchMountPath = absoluteLocalPath;
+    try {
+      const opened = await vscode.commands.executeCommand<boolean | undefined>(
+        'vscode.openFolder',
+        vscode.Uri.file(absoluteLocalPath),
+        { forceReuseWindow: true }
+      );
+      if (opened === false) {
+        workspaceSwitchMountPath = undefined;
+        await context.globalState.update(pendingOpenKey, undefined);
+      }
+    } catch (error) {
       workspaceSwitchMountPath = undefined;
       await context.globalState.update(pendingOpenKey, undefined);
+      throw error;
     }
-  } catch (error) {
-    workspaceSwitchMountPath = undefined;
-    await context.globalState.update(pendingOpenKey, undefined);
-    throw error;
-  }
+  });
 }
 
 function sameLocalPath(left: string, right: string): boolean {
@@ -506,18 +500,46 @@ async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void
     return;
   }
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!current || !sameLocalPath(current, pending.localPath)) return;
-  await context.globalState.update(pendingOpenKey, undefined);
-  const config = await readConfig();
-  const mount = config.mounts.find((item) => item.name === pending.mountName);
-  if (!mount) throw new Error(`Pending mount no longer exists: ${pending.mountName}`);
-  if (pending.ownsMount && (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux')) {
-    nativeSessionMounts.set(path.resolve(pending.localPath), {
-      remote: resolveMount(config, mount),
-      localPath: pending.localPath
-    });
+  if (current && sameLocalPath(current, pending.localPath)) {
+    await context.globalState.update(pendingOpenKey, undefined);
+    const config = await readConfig();
+    const mount = config.mounts.find((item) => item.name === pending.mountName);
+    if (!mount) throw new Error(`Pending mount no longer exists: ${pending.mountName}`);
+    if (pending.ownsMount && (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux')) {
+      nativeSessionMounts.set(path.resolve(pending.localPath), {
+        remote: resolveMount(config, mount),
+        localPath: pending.localPath
+      });
+    }
+    await openTerminal(context, mount, pending.localPath, config);
+    return;
   }
-  await openTerminal(context, mount, pending.localPath, config);
+  // No current workspace matches the pending open — the local directory may
+  // have disappeared (e.g. WSL was shut down). Re-mount and re-open it so
+  // the user does not see "Cannot open a non-existent workspace folder".
+  if (!current || workspaceCount() === 0) {
+    await context.globalState.update(pendingOpenKey, undefined);
+    const config = await readConfig();
+    const mount = config.mounts.find((item) => item.name === pending.mountName);
+    if (!mount) return;
+    await withMountLock(pending.localPath, async () => {
+      await ensureMountedUnlocked(context, mount, pending.localPath, { config });
+    });
+    await context.globalState.update(pendingOpenKey, {
+      mountName: pending.mountName, localPath: pending.localPath, createdAt: Date.now(), ownsMount: true
+    });
+    workspaceSwitchMountPath = path.resolve(pending.localPath);
+    try {
+      await vscode.commands.executeCommand(
+        'vscode.openFolder',
+        vscode.Uri.file(path.resolve(pending.localPath)),
+        { forceReuseWindow: true }
+      );
+    } finally {
+      workspaceSwitchMountPath = undefined;
+    }
+    return;
+  }
 }
 
 async function openTerminal(
@@ -634,14 +656,14 @@ async function mountAndOpenTerminal(
   const canConnectConcurrently = !connectionOptions().reuseSshConnection
     && (!host.password || isEncryptedPassword(host.password));
   if (!canConnectConcurrently) {
-    await ensureMounted(context, match.mount, match.localPath, {
+    await ensureMountedUnlocked(context, match.mount, match.localPath, {
       config, knownUnmounted: true
     });
     await openTerminal(context, match.mount, match.cwd, config);
     return;
   }
   const [mountResult, terminalResult] = await Promise.allSettled([
-    ensureMounted(context, match.mount, match.localPath, {
+    ensureMountedUnlocked(context, match.mount, match.localPath, {
       config, knownUnmounted: true
     }),
     openTerminal(context, match.mount, match.cwd, config)
@@ -699,6 +721,10 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
   }
   await openTerminal(context, match.mount, match.cwd, config);
   });
+}
+
+function workspaceCount(): number {
+  return vscode.workspace.workspaceFolders?.length ?? 0;
 }
 
 function workspaceUsesPath(localPath: string): boolean {
@@ -936,12 +962,20 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
   if (encryptedPassword) host.password = encryptedPassword;
   if (existingIndex >= 0) config.hosts[existingIndex] = host;
   else config.hosts.push(host);
+
+  const existingMountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
+  // When the mount already has a local_path that is not a workspace-relative default,
+  // preserve it — the user has already settled on a mount directory.
+  const existingMount = existingMountIndex >= 0 ? config.mounts[existingMountIndex] : undefined;
+  const existingPath = existingMount?.local_paths?.[platformAdapter.kind] ?? existingMount?.local_path;
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  const localPath = defaultMountDirectory(
-    { name: normalizedName, host: normalizedName, remote_path: '.' },
-    current,
-    platformAdapter.kind
-  );
+  const localPath = existingPath && !usesWorkspaceRelativeDefault(existingMount!, platformAdapter.kind)
+    ? expandHome(existingPath)
+    : defaultMountDirectory(
+        { name: normalizedName, host: normalizedName, remote_path: '.' },
+        current,
+        platformAdapter.kind
+      );
   const mount: MountConfig = {
     name: normalizedName,
     host: normalizedName,
@@ -950,8 +984,7 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
     remote_terminal: 'open'
   };
   if (platformAdapter.kind === 'windows') mount.local_path = 'R:';
-  const mountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
-  if (mountIndex >= 0) config.mounts[mountIndex] = mount;
+  if (existingMountIndex >= 0) config.mounts[existingMountIndex] = mount;
   else config.mounts.push(mount);
   config.encrypt_passwords = true;
   await saveConfig(configPath(), config);

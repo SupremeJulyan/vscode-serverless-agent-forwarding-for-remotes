@@ -82,7 +82,7 @@ test('recognizes wizard-created Unix paths as workspace-relative defaults', () =
   assert.equal(usesWorkspaceRelativeDefault(mount, 'wsl'), true);
   assert.equal(usesWorkspaceRelativeDefault(mount, 'linux'), true);
   assert.equal(usesWorkspaceRelativeDefault(mount, 'macos'), true);
-  assert.equal(usesWorkspaceRelativeDefault(mount, 'windows'), false);
+  assert.equal(usesWorkspaceRelativeDefault(mount, 'windows'), true);
 });
 
 test('preserves explicitly configured Unix mount paths', () => {

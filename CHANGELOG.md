@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.8.13
+
+- Serialize mount, open-folder, and unmount orchestration using normalized
+  per-mount paths.
+- Prevent automatic workspace remounting from deadlocking by avoiding nested
+  acquisition of the same mount lock.
+
 ## 0.8.10
 
 - Preserve empty workspace subdirectories after session-owned mounts are

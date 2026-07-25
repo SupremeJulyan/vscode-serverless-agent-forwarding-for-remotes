@@ -11,7 +11,7 @@ export function defaultMountDirectory(
 }
 
 export function usesWorkspaceRelativeDefault(mount: MountConfig, platform: PlatformKind): boolean {
-  if (platform === 'windows' || !mount.local_path || mount.local_paths?.[platform]) return false;
+  if (!mount.local_path || mount.local_paths?.[platform]) return false;
   if (mount.remote_path !== '.') return false;
   return path.basename(path.resolve(mount.local_path)) === mount.name;
 }
@@ -39,7 +39,7 @@ export function remotePathForLocalPath(
   const root = localPath.resolve(localRoot);
   const cwd = localPath.resolve(localCwd);
   const relative = localPath.relative(root, cwd);
-  const compared = platform === 'windows' ? relative.toLowerCase() : relative;
+  const compared = platform === 'windows' || platform === 'macos' ? relative.toLowerCase() : relative;
   if (compared.startsWith('..') || localPath.isAbsolute(relative)) return undefined;
   if (!relative) return path.posix.normalize(remoteRoot);
   return path.posix.join(remoteRoot, ...relative.split(localPath.sep));
@@ -50,7 +50,7 @@ export function findMountForPath(
   expand: (value: string) => string
 ): MountPathMatch | undefined {
   const candidate = path.resolve(candidatePath);
-  const caseInsensitive = platform === 'windows';
+  const caseInsensitive = platform === 'windows' || platform === 'macos';
   return mounts
     .flatMap((mount) => {
       const configured = mount.local_paths?.[platform] ?? mount.local_path;
