@@ -19,7 +19,7 @@ export async function isEmptyDirectoryTree(
     try {
       fileStat = await stat(directory);
     } catch {
-      return false;
+      return true;
     }
     if (seen.has(fileStat.ino)) return true;
     seen.add(fileStat.ino);
