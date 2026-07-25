@@ -20,7 +20,7 @@ import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } fro
 import {
   isAuthenticationFailure, isNetworkFailure, passwordValueOffset
 } from './authentication';
-import { isEmptyDirectory } from './directory';
+import { isEmptyDirectory, isEmptyDirectoryTree } from './directory';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -658,11 +658,16 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
     );
     // An unmounted Windows drive has no directory entry to read, so its
     // missing drive root is the platform equivalent of an empty mount point.
-    const empty = !mounted && await isEmptyDirectory(
-      match.localPath, platformAdapter.kind === 'windows'
+    const empty = !mounted && (
+      await isEmptyDirectory(match.localPath, platformAdapter.kind === 'windows')
+      || await isEmptyDirectoryTree(match.localPath)
     );
     if (empty) {
-      await mountAndOpenTerminal(context, config, match);
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `检测到“${match.mount.name}”挂载已断开，正在重新挂载…`,
+        cancellable: false
+      }, () => mountAndOpenTerminal(context, config, match));
       return;
     }
   }
@@ -1052,11 +1057,20 @@ export async function deactivate(): Promise<void> {
   if (platformAdapter.kind !== 'macos' && platformAdapter.kind !== 'linux') return;
   const mounts = [...nativeSessionMounts.entries()]
     .filter(([mountPath]) => mountPath !== workspaceSwitchMountPath)
-    .map(([, mount]) => mount);
+    .map(([mountPath, mount]) => ({
+      ...mount,
+      workspacePaths: vscode.workspace.workspaceFolders
+        ?.map((folder) => folder.uri.fsPath)
+        .filter((workspacePath) => {
+          const relative = path.relative(mountPath, path.resolve(workspacePath));
+          return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+        }) ?? []
+    }));
   nativeSessionMounts.clear();
-  await Promise.allSettled(mounts.map(async ({ remote, localPath }) => {
+  await Promise.allSettled(mounts.map(async ({ remote, localPath, workspacePaths }) => {
     const statusPlan = platformAdapter.status(remote, localPath);
     if (!await commandSucceeds(statusPlan)) return;
     await executePlatformUnmount(remote, localPath);
+    await Promise.all(workspacePaths.map((workspacePath) => mkdir(workspacePath, { recursive: true })));
   }));
 }

@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.8.10
+
+- Preserve empty workspace subdirectories after session-owned mounts are
+  unmounted, preventing VS Code from reporting a missing workspace on restart.
+- Show a remounting notification while safely restoring mounts that contain
+  only empty workspace placeholder directories.
+
 ## 0.8.9
 
 - Restore VS Code workspaces opened below a configured mount root by mounting
