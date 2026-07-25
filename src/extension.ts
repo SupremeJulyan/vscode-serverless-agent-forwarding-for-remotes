@@ -53,9 +53,26 @@ let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 const openingTerminalIds = new Set<string>();
 let workspaceSwitchMountPath: string | undefined;
+const mountLocks = new Map<string, Promise<void>>();
 const cachedEnv = Object.fromEntries(
   Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
 );
+
+function withMountLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = mountLocks.get(key);
+  const token = {} as { next: Promise<void> };
+  const result = (async () => {
+    await previous;
+    try {
+      return await action();
+    } finally {
+      if (mountLocks.get(key) === token.next) mountLocks.delete(key);
+    }
+  })();
+  token.next = result.catch(() => {}).then(() => {});
+  mountLocks.set(key, token.next);
+  return result;
+}
 
 function performanceLine(label: string, startedAt: number): void {
   bridgeOutput?.appendLine(`[性能] ${label}: ${(performance.now() - startedAt).toFixed(1)} ms`);
@@ -306,6 +323,7 @@ async function ensureMounted(
   context: vscode.ExtensionContext, mount: MountConfig, localPath: string,
   options: EnsureMountedOptions = {}
 ): Promise<boolean> {
+  return withMountLock(localPath, async () => {
   const config = options.config ?? await readConfig();
   if (platformAdapter.kind === 'wsl') {
     const configuredMount = config.mounts.find((item) => item.name === mount.name);
@@ -389,6 +407,7 @@ async function ensureMounted(
     }
   }
   return false;
+  });
 }
 
 async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void> {
@@ -651,6 +670,7 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
   const candidates = activePath ? [activePath, ...workspacePaths] : workspacePaths;
   const match = findMountForPaths(config.mounts, candidates, platformAdapter.kind, expandHome);
   if (!match) return;
+  return withMountLock(match.localPath, async () => {
   const openedWorkspacePath = workspacePaths.find((workspacePath) =>
     findMountForPath(
       [match.mount], workspacePath, platformAdapter.kind, expandHome
@@ -678,6 +698,7 @@ async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Prom
     }
   }
   await openTerminal(context, match.mount, match.cwd, config);
+  });
 }
 
 function workspaceUsesPath(localPath: string): boolean {
@@ -690,6 +711,7 @@ function workspaceUsesPath(localPath: string): boolean {
 }
 
 async function executeUnmount(mount: MountConfig, localPath: string): Promise<void> {
+  return withMountLock(localPath, async () => {
   let disposedTaskTerminal = false;
   for (const terminal of vscode.window.terminals) {
     if (terminal.name.includes('sshfs-bridge mount ')) {
@@ -701,6 +723,7 @@ async function executeUnmount(mount: MountConfig, localPath: string): Promise<vo
   const config = await readConfig();
   await executePlatformUnmount(resolveMount(config, mount), localPath);
   nativeSessionMounts.delete(path.resolve(localPath));
+  });
 }
 
 async function executePlatformUnmount(remote: ResolvedMount, localPath: string): Promise<void> {
