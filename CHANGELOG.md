@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.8.14
+
+- Treat configured `local_paths` and `local_path` values as fixed mount
+  locations instead of recalculating paths that end with the mount name from
+  the current workspace.
+
 ## 0.8.13
 
 - Serialize mount, open-folder, and unmount orchestration using normalized

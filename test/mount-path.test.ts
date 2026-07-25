@@ -3,7 +3,7 @@ import test from 'node:test';
 import { MountConfig } from '../src/config';
 import {
   defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
-  usesWorkspaceRelativeDefault
+  resolveMountDirectory
 } from '../src/mount-path';
 
 const mounts: MountConfig[] = [
@@ -75,28 +75,34 @@ test('Windows keeps the default drive-letter mount', () => {
   assert.equal(defaultMountDirectory(mount, 'C:\\Users\\julyan', 'windows'), 'R:\\');
 });
 
-test('recognizes wizard-created Unix paths as workspace-relative defaults', () => {
+test('keeps a configured local_path fixed when the current workspace changes', () => {
   const mount: MountConfig = {
-    name: 'testgkn', host: 'dev', remote_path: '.', local_path: '/old/workspace/testgkn'
+    name: 'gkn', host: 'gkn', remote_path: '.', local_path: '/home/julyan/gkn'
   };
-  assert.equal(usesWorkspaceRelativeDefault(mount, 'wsl'), true);
-  assert.equal(usesWorkspaceRelativeDefault(mount, 'linux'), true);
-  assert.equal(usesWorkspaceRelativeDefault(mount, 'macos'), true);
-  assert.equal(usesWorkspaceRelativeDefault(mount, 'windows'), true);
+  for (const current of ['/home/julyan/project/one', '/home/julyan/project/two']) {
+    assert.equal(
+      resolveMountDirectory(mount, current, 'wsl', (value) => value),
+      '/home/julyan/gkn'
+    );
+  }
 });
 
-test('preserves explicitly configured Unix mount paths', () => {
+test('prefers the platform-specific local path over local_path', () => {
   const mount: MountConfig = {
-    name: 'testgkn', host: 'dev', remote_path: '/srv/project',
-    local_path: '/mnt/explicit/testgkn'
+    name: 'gkn', host: 'gkn', remote_path: '.',
+    local_path: '/mnt/shared/gkn',
+    local_paths: { wsl: '/mnt/wsl/gkn' }
   };
-  assert.equal(usesWorkspaceRelativeDefault(mount, 'wsl'), false);
   assert.equal(
-    usesWorkspaceRelativeDefault({
-      ...mount,
-      remote_path: '.',
-      local_paths: { wsl: '/mnt/explicit/testgkn' }
-    }, 'wsl'),
-    false
+    resolveMountDirectory(mount, '/workspace', 'wsl', (value) => value),
+    '/mnt/wsl/gkn'
+  );
+});
+
+test('uses a workspace-based default only when no local path is configured', () => {
+  const mount: MountConfig = { name: 'gkn', host: 'gkn', remote_path: '.' };
+  assert.equal(
+    resolveMountDirectory(mount, '/workspace', 'wsl', (value) => value),
+    '/workspace/gkn'
   );
 });

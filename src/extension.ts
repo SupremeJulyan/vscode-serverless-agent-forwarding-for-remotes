@@ -12,7 +12,7 @@ import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import {
   defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
-  usesWorkspaceRelativeDefault
+  resolveMountDirectory
 } from './mount-path';
 import { MountOperationLock, normalizeMountLockKey } from './mount-lock';
 import { hasWindowsInstallDirectory } from './windows-installer';
@@ -146,12 +146,8 @@ async function selectMount(placeHolder: string): Promise<{ mount: MountConfig; c
 }
 
 async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
-  const configuredPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  if (configuredPath && !usesWorkspaceRelativeDefault(mount, platformAdapter.kind)) {
-    return expandHome(configuredPath);
-  }
-  return defaultMountDirectory(mount, current, platformAdapter.kind);
+  return resolveMountDirectory(mount, current, platformAdapter.kind, expandHome);
 }
 
 async function executeTask(plan: CommandPlan): Promise<void> {
@@ -405,17 +401,6 @@ async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void>
       return;
     }
     const ownsMount = await ensureMountedUnlocked(context, mount, localPath, { config });
-    // When the mount's local_path is still a workspace-relative default (path ends
-    // with the mount name), persist the resolved directory so that subsequent Open
-    // Remote Folder operations always use this location. Windows is excluded: its
-    // mount path is always a drive letter.
-    if (platformAdapter.kind !== 'windows' && usesWorkspaceRelativeDefault(mount, platformAdapter.kind)) {
-      const mountIndex = config.mounts.findIndex((item) => item.name === mount.name);
-      if (mountIndex >= 0) {
-        config.mounts[mountIndex] = { ...mount, local_path: localPath };
-        await saveConfig(configPath(), config);
-      }
-    }
     // VS Code can reconnect a terminal across vscode.openFolder even when it was
     // created as transient. Once ssh-bridge execs sshpass, the revived terminal's
     // title no longer matches "SSH: <mount>", so startup auto-connect would open
@@ -964,12 +949,12 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
   else config.hosts.push(host);
 
   const existingMountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
-  // When the mount already has a local_path that is not a workspace-relative default,
-  // preserve it — the user has already settled on a mount directory.
+  // A configured local path is authoritative. Only mounts without one receive a
+  // workspace-based default.
   const existingMount = existingMountIndex >= 0 ? config.mounts[existingMountIndex] : undefined;
   const existingPath = existingMount?.local_paths?.[platformAdapter.kind] ?? existingMount?.local_path;
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  const localPath = existingPath && !usesWorkspaceRelativeDefault(existingMount!, platformAdapter.kind)
+  const localPath = existingPath
     ? expandHome(existingPath)
     : defaultMountDirectory(
         { name: normalizedName, host: normalizedName, remote_path: '.' },
