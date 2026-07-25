@@ -2,7 +2,7 @@
   "name": "vscode-serverless-remote-ssh",
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
-  "version": "0.8.10",
+  "version": "0.8.11",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -12,9 +12,19 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
-  "keywords": ["ssh", "sshfs", "remote", "wsl", "serverless"],
-  "extensionKind": ["workspace"],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ssh",
+    "sshfs",
+    "remote",
+    "wsl",
+    "serverless"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished",
@@ -28,23 +38,60 @@
   ],
   "contributes": {
     "commands": [
-      { "command": "serverlessRemote.openFolder", "title": "Serverless Remote SSH: Open Remote Folder", "icon": "$(remote-explorer)" },
-      { "command": "serverlessRemote.openTerminal", "title": "Serverless Remote SSH: Open Remote Terminal", "icon": "$(terminal)" },
-      { "command": "serverlessRemote.close", "title": "Serverless Remote SSH: Close" },
-      { "command": "serverlessRemote.status", "title": "Serverless Remote SSH: Show Status" },
-      { "command": "serverlessRemote.openConfig", "title": "Serverless Remote SSH: Open Config" },
-      { "command": "serverlessRemote.addSshConfig", "title": "Serverless Remote SSH: Add SSH Config" },
-      { "command": "serverlessRemote.installDependenciesTips", "title": "Serverless Remote SSH: Install Dependencies Tips" }
+      {
+        "command": "serverlessRemote.openFolder",
+        "title": "Serverless Remote SSH: Open Remote Folder",
+        "icon": "$(remote-explorer)"
+      },
+      {
+        "command": "serverlessRemote.openTerminal",
+        "title": "Serverless Remote SSH: Open Remote Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "serverlessRemote.close",
+        "title": "Serverless Remote SSH: Close"
+      },
+      {
+        "command": "serverlessRemote.status",
+        "title": "Serverless Remote SSH: Show Status"
+      },
+      {
+        "command": "serverlessRemote.openConfig",
+        "title": "Serverless Remote SSH: Open Config"
+      },
+      {
+        "command": "serverlessRemote.addSshConfig",
+        "title": "Serverless Remote SSH: Add SSH Config"
+      },
+      {
+        "command": "serverlessRemote.installDependenciesTips",
+        "title": "Serverless Remote SSH: Install Dependencies Tips"
+      }
     ],
     "menus": {
       "commandPalette": [
-        { "command": "serverlessRemote.openFolder" },
-        { "command": "serverlessRemote.openTerminal" },
-        { "command": "serverlessRemote.close" },
-        { "command": "serverlessRemote.status" },
-        { "command": "serverlessRemote.openConfig" },
-        { "command": "serverlessRemote.addSshConfig" },
-        { "command": "serverlessRemote.installDependenciesTips" }
+        {
+          "command": "serverlessRemote.openFolder"
+        },
+        {
+          "command": "serverlessRemote.openTerminal"
+        },
+        {
+          "command": "serverlessRemote.close"
+        },
+        {
+          "command": "serverlessRemote.status"
+        },
+        {
+          "command": "serverlessRemote.openConfig"
+        },
+        {
+          "command": "serverlessRemote.addSshConfig"
+        },
+        {
+          "command": "serverlessRemote.installDependenciesTips"
+        }
       ]
     },
     "jsonValidation": [
@@ -71,7 +118,11 @@
         },
         "serverlessRemote.sshfsCacheProfile": {
           "type": "string",
-          "enum": ["fresh", "balanced", "fast"],
+          "enum": [
+            "fresh",
+            "balanced",
+            "fast"
+          ],
           "enumDescriptions": [
             "Disable SSHFS caches where possible so remote changes appear immediately.",
             "Cache file and directory metadata for a few seconds.",

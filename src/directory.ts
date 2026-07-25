@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 
 export async function isEmptyDirectory(
@@ -11,12 +11,23 @@ export async function isEmptyDirectory(
   }
 }
 
-export async function isEmptyDirectoryTree(directory: string): Promise<boolean> {
+export async function isEmptyDirectoryTree(
+  directory: string, seen = new Set<number>()
+): Promise<boolean> {
   try {
+    let fileStat;
+    try {
+      fileStat = await stat(directory);
+    } catch {
+      return false;
+    }
+    if (seen.has(fileStat.ino)) return true;
+    seen.add(fileStat.ino);
+
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()
-        || !await isEmptyDirectoryTree(path.join(directory, entry.name))) {
+        || !await isEmptyDirectoryTree(path.join(directory, entry.name), seen)) {
         return false;
       }
     }

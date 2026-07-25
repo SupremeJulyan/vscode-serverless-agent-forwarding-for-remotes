@@ -84,13 +84,19 @@ export function parseConfig(value: unknown): BridgeConfig {
       throw new Error(`hosts[${index}] must be an object`);
     }
     const host = item as Record<string, unknown>;
-    return {
-      ...host,
-      name: requireString(host.name, `hosts[${index}].name`),
-      ip: requireString(host.ip, `hosts[${index}].ip`),
-      user: requireString(host.user, `hosts[${index}].user`)
-    } as HostConfig;
+    const name = requireString(host.name, `hosts[${index}].name`);
+    const ip = requireString(host.ip, `hosts[${index}].ip`);
+    const user = requireString(host.user, `hosts[${index}].user`);
+    return { name, ip, user, port: host.port, vpn: host.vpn, private_key_path: host.private_key_path, password: host.password } as HostConfig;
   });
+
+  const hostNames = new Set<string>();
+  for (const host of hosts) {
+    if (hostNames.has(host.name)) {
+      throw new Error(`Duplicate host name '${host.name}'`);
+    }
+    hostNames.add(host.name);
+  }
 
   const mounts = object.mounts.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
@@ -98,10 +104,11 @@ export function parseConfig(value: unknown): BridgeConfig {
     }
     const mount = item as Record<string, unknown>;
     return {
-      ...mount,
       name: requireString(mount.name, `mounts[${index}].name`),
       host: requireString(mount.host, `mounts[${index}].host`),
       remote_path: requireString(mount.remote_path, `mounts[${index}].remote_path`),
+      local_path: typeof mount.local_path === 'string' ? mount.local_path : undefined,
+      local_paths: typeof mount.local_paths === 'object' && !Array.isArray(mount.local_paths) ? mount.local_paths as Record<string, string> : undefined,
       remote_terminal: 'open'
     } as MountConfig;
   });

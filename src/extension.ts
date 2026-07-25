@@ -439,7 +439,7 @@ async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void>
 function sameLocalPath(left: string, right: string): boolean {
   const normalizedLeft = path.resolve(left);
   const normalizedRight = path.resolve(right);
-  return platformAdapter.kind === 'windows'
+  return platformAdapter.kind === 'windows' || platformAdapter.kind === 'macos'
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
 }
