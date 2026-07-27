@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.8.15
+
+- Make `Open Remote Terminal` create a new SSH terminal every time, while
+  retaining terminal reuse for automatic workspace connection and recovery.
+
 ## 0.8.14
 
 - Treat configured `local_paths` and `local_path` values as fixed mount

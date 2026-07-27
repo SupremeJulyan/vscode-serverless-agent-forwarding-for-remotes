@@ -126,6 +126,37 @@ test('native SSH starts an interactive login shell in the mapped remote director
   assert.equal(plan.args.at(-1), `cd -- '/srv/project/it'\"'\"'s here' && exec "\${SHELL:-/bin/sh}" -l`);
 });
 
+test('every platform preserves unusual path characters as single command arguments', () => {
+  const remotePath = "/srv/项目 (A)/O'Brien/[草稿]";
+  const localPath = "/Volumes/团队 (A)/O'Brien/[草稿]";
+  const unusualRemote = { ...remote, remote_path: remotePath };
+  const loginCommand =
+    `cd -- '/srv/项目 (A)/O'\"'\"'Brien/[草稿]' && exec "\${SHELL:-/bin/sh}" -l`;
+
+  for (const platform of ['linux', 'macos'] as const) {
+    const adapter = createPlatformAdapter(platform);
+    const mountPlan = adapter.mount(unusualRemote, localPath);
+    assert.equal(mountPlan.args[0], `alice@10.0.0.2:${remotePath}`, platform);
+    assert.equal(mountPlan.args[1], localPath, platform);
+    assert.equal(mountPlan.cwd, localPath, platform);
+    assert.equal(adapter.terminal(remote.hostConfig, remotePath).args.at(-1), loginCommand, platform);
+    assert.equal(adapter.unmount(unusualRemote, localPath).args.at(-1), localPath, platform);
+  }
+
+  const wsl = createPlatformAdapter('wsl');
+  assert.equal(wsl.terminal(remote.hostConfig, remotePath).args.at(-1), loginCommand);
+  assert.equal(wsl.status(unusualRemote, localPath).args.at(-1), localPath);
+
+  const windows = createPlatformAdapter('windows');
+  assert.equal(windows.terminal(remote.hostConfig, remotePath).args.at(-1), loginCommand);
+  assert.deepEqual(windows.mount(unusualRemote, 'X:').args, [
+    'use',
+    'X:',
+    "\\\\sshfs.r\\alice@10.0.0.2!2222\\srv\\项目 (A)\\O'Brien\\[草稿]",
+    '/persistent:no'
+  ]);
+});
+
 test('Windows builds an SSHFS-Win root-relative UNC mapping', () => {
   const plan = createPlatformAdapter('windows').mount(remote, 'X:');
   assert.equal(plan.command, 'net');

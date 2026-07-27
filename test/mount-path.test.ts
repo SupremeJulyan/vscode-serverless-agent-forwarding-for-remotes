@@ -55,6 +55,30 @@ test('maps a native mount root to the configured remote root', () => {
   );
 });
 
+test('preserves unusual path characters when mapping paths on every platform', () => {
+  const cases = [
+    {
+      platform: 'windows' as const,
+      root: 'X:\\',
+      cwd: "X:\\团队 (A)\\O'Brien\\[草稿]",
+      expected: "/srv/项目 (A)/O'Brien/团队 (A)/O'Brien/[草稿]"
+    },
+    ...(['wsl', 'linux', 'macos'] as const).map((platform) => ({
+      platform,
+      root: "/Volumes/团队 (A)/O'Brien",
+      cwd: "/Volumes/团队 (A)/O'Brien/[草稿]",
+      expected: "/srv/项目 (A)/O'Brien/[草稿]"
+    }))
+  ];
+  for (const { platform, root, cwd, expected } of cases) {
+    assert.equal(
+      remotePathForLocalPath("/srv/项目 (A)/O'Brien", root, cwd, platform),
+      expected,
+      platform
+    );
+  }
+});
+
 test('refuses to map a local path outside the mount', () => {
   assert.equal(
     remotePathForLocalPath('/srv/project', 'X:\\', 'Y:\\other', 'windows'),

@@ -529,7 +529,7 @@ async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void
 
 async function openTerminal(
   context: vscode.ExtensionContext, mountConfig?: MountConfig, cwd?: string,
-  loadedConfig?: BridgeConfig
+  loadedConfig?: BridgeConfig, forceNew = false
 ): Promise<{ terminal: vscode.Terminal; created: boolean } | undefined> {
   let mount = mountConfig;
   let config = loadedConfig;
@@ -567,14 +567,16 @@ async function openTerminal(
     ? `SSH: ${mount.name} — ${remoteRelative}`
     : `SSH: ${mount.name}`;
   const terminalId = `${mount.name}\0${remoteRelative}`;
-  const existingTerminal = vscode.window.terminals.find((terminal) => {
-    const options = terminal.creationOptions;
-    const identity = 'env' in options ? options.env?.[terminalIdentityEnv] : undefined;
-    return identity === terminalId || terminal.name === terminalName;
-  });
-  if (existingTerminal) {
-    existingTerminal.show();
-    return { terminal: existingTerminal, created: false };
+  if (!forceNew) {
+    const existingTerminal = vscode.window.terminals.find((terminal) => {
+      const options = terminal.creationOptions;
+      const identity = 'env' in options ? options.env?.[terminalIdentityEnv] : undefined;
+      return identity === terminalId || terminal.name === terminalName;
+    });
+    if (existingTerminal) {
+      existingTerminal.show();
+      return { terminal: existingTerminal, created: false };
+    }
   }
   if (openingTerminalIds.has(terminalId)) return undefined;
   openingTerminalIds.add(terminalId);
@@ -1066,7 +1068,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(statusOutput, bridgeOutput);
   const registrations: Array<[string, () => Promise<void>]> = [
     ['openFolder', () => guard(() => openRemoteFolder(context))],
-    ['openTerminal', () => guard(() => openTerminal(context))],
+    ['openTerminal', () =>
+      guard(() => openTerminal(context, undefined, undefined, undefined, true))],
     ['close', () => guard(() => closeRemote(context))],
     ['status', () => guard(() => showStatus(statusOutput))],
     ['openConfig', () => guard(() => openConfig())],
