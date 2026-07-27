@@ -2,26 +2,161 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-通过 SSHFS 在 VS Code 中编辑远程文件，并使用真正的 SSH 终端，无需在目标主机上安装 VS Code Server。
+通过 SSHFS 在 VS Code 中直接编辑远程文件，并在集成终端中使用真正的
+SSH 会话，无需在目标主机上安装或运行 VS Code Server。语言服务、扩展和
+界面仍在本机运行，远程主机只需要提供 SSH/SFTP。
 
-插件会根据当前系统选择相应的平台适配器，并将每个远程目录挂载为操作系统中的真实目录。WSL 使用 `sshfs-bridge` 和 `ssh-bridge` 管理 VPN 中继；原生 Windows、macOS 和 Linux 则直接使用所在操作系统的 VPN 和网络环境连接。
+## 功能特点
+
+- 支持 Windows、macOS、Linux 和 WSL，自动选择对应的平台适配器。
+- 将远程目录挂载为操作系统中的真实目录，VS Code 和本地工具可以像处理
+  普通文件一样读写远程文件。
+- 一条 `Open Remote Folder` 命令完成选择配置、创建挂载目录、检查或恢复
+  挂载、切换 VS Code 工作区，并在窗口重载后打开对应的 SSH 终端。
+- `Open Remote Terminal` 每次手动执行都会创建新的 SSH 会话，允许同时打开
+  任意数量的远程终端。
+- 根据当前工作区或活动文件自动匹配挂载配置，并把本地子目录映射到相同的
+  远程子目录。直接打开挂载根目录或其子目录时，也会自动恢复挂载和终端。
+- 自动连接、窗口恢复和挂载恢复会复用匹配的终端并进行并发去重，避免 VS Code
+  重载或多个恢复事件产生重复会话。
+- 支持密码和私钥认证。密码使用主口令加密保存，旧版明文密码会在首次使用时
+  自动迁移。
+- Linux、macOS 和 WSL 可通过 OpenSSH ControlMaster 在 SSHFS 与多个终端之间
+  复用 SSH 连接。
+- Linux 和 macOS 提供 `fresh`、`balanced`、`fast` 三档 SSHFS 缓存策略。
+- 自动检测各平台依赖，并提供安装包链接或适合当前 Linux 发行版的可复制命令。
+- 提供挂载状态、WSL 中继状态、连接阶段耗时和错误诊断。
+- 支持平台专用挂载路径，以及包含空格、中文、括号、方括号和单引号的本地或
+  远程路径。
+- 关闭工作区后安全卸载对应挂载；Linux 和 macOS 还会在扩展会话结束时清理
+  本次会话创建的挂载。
+
+## 平台支持
+
+| 平台 | 文件挂载 | 远程终端 | 默认挂载位置 | VPN |
+| --- | --- | --- | --- | --- |
+| Windows | WinFsp + SSHFS-Win | OpenSSH `ssh` | `R:` | 直接使用 Windows 网络环境 |
+| macOS | macFUSE + SSHFS | OpenSSH `ssh` | 当前工作区下的配置名目录 | 直接使用 macOS 网络环境 |
+| Linux | FUSE 3 + SSHFS | OpenSSH `ssh` | 当前工作区下的配置名目录 | 直接使用 Linux 网络环境 |
+| WSL | `sshfs-bridge` | `ssh-bridge` | 当前工作区下的配置名目录 | 可通过 Windows TCP 中继访问外部 VPN |
+
+默认配置文件：
+
+- Windows、macOS、Linux：`~/serverless-remote-ssh/config.json`
+- WSL：`~/.wsl-vpn-ssh/config.json`
+
+WSL 继续与
+[`wsl-vpn-ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
+共用配置。也可以通过 `serverlessRemote.configPath` 为当前平台指定其他文件。
 
 ## 环境要求
 
-- Windows：[WinFsp](https://github.com/winfsp/winfsp/releases/latest) 和 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest)；默认挂载到 `R:` 盘
-- macOS：[macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS)，以及 OpenSSH
-- Linux：SSHFS、FUSE 3 和 OpenSSH
-- WSL：[`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)、[`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) 和 `mountpoint`
-- 原生 Windows、macOS 和 Linux 默认配置文件：`~/serverless-remote-ssh/config.json`
-- WSL 默认配置文件：`~/.wsl-vpn-ssh/config.json`，继续与 [`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) 和 [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) 共用
+- Windows：OpenSSH Client、
+  [WinFsp](https://github.com/winfsp/winfsp/releases/latest) 和
+  [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest)
+- macOS：OpenSSH、
+  [macFUSE](https://macfuse.github.io/) 和
+  [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS)
+- Linux：OpenSSH、SSHFS、FUSE 3 和 `mountpoint`
+- WSL：`mountpoint`、[`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
+  和 [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
 
-在 Windows 上必须安装 OpenSSH Client、[WinFsp](https://github.com/winfsp/winfsp/releases/latest) 和 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest)。运行 `Serverless Remote SSH: Install Dependencies Tips` 可以检查缺失项并显示对应的下载入口。
+`Serverless Remote SSH: Install Dependencies Tips` 会检查当前平台：
 
-在 macOS 上，如果缺少依赖，插件会提供 [macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS) 的官方下载入口。
+- Windows 和 macOS 显示缺失组件的官方下载入口。
+- Linux 和 WSL 会读取 `/etc/os-release`，为 Debian/Ubuntu、Fedora/RHEL、
+  Arch/Manjaro、openSUSE 或 Alpine 生成安装命令。
+- WSL 缺少 bridge 时会提供从官方 GitHub 仓库安装的命令；安装时仅保留卸载
+  脚本，并在扩展卸载时执行清理。
+- 自动依赖检查会缓存已经通过的结果，手动执行命令始终重新检查。
 
-在 Linux 和 WSL 上，插件会读取 `/etc/os-release`，并针对 Debian/Ubuntu、Fedora/RHEL、Arch/Manjaro、openSUSE 或 Alpine 提供可复制的安装命令。WSL 缺少桥接命令时，该命令也会从官方 GitHub 仓库安装桥接程序。
+## 快速开始
 
-配置示例：
+1. 安装本页对应版本的 VSIX。
+2. 运行 `Serverless Remote SSH: Install Dependencies Tips` 并安装缺失组件。
+3. 运行 `Serverless Remote SSH: Add SSH Config`。
+4. 输入配置名称、`user@host`，然后选择密码或私钥认证。
+5. 运行 `Serverless Remote SSH: Open Remote Folder`，或点击状态栏左下角的
+   `Serverless SSH`。
+6. 使用 `Serverless Remote SSH: Close` 关闭工作区并卸载远程目录。
+
+添加配置向导会自动生成同名挂载。新配置默认挂载 SSH 登录目录（`.`）并自动
+打开终端；WSL、Linux 和 macOS 默认在当前工作区下创建 `[配置名]` 目录，
+Windows 默认使用 `R:`。WSL 还会询问是否启用 VPN 中继，使用 aTrust 等外部
+Windows VPN 客户端时可选择启用。
+
+## 命令
+
+### Open Remote Folder
+
+`Serverless Remote SSH: Open Remote Folder`
+
+- 选择一个远程配置并解析固定或默认挂载路径。
+- 创建本地目录，检查挂载状态，必要时执行 SSHFS 挂载并验证结果。
+- 使用当前 VS Code 窗口打开挂载目录。
+- 跨窗口重载保存并恢复操作状态，只在目标工作区准备好后打开终端。
+- 如果工作区位于挂载根目录的子目录，会先恢复缺失的祖先挂载，再返回原工作区。
+- 多个针对同一挂载的操作会按规范化路径串行执行，避免挂载、打开和卸载竞态。
+
+### Open Remote Terminal
+
+`Serverless Remote SSH: Open Remote Terminal`
+
+- 每次手动执行都创建一个新的集成终端，不复用已有终端。
+- 当前文件或工作区位于已配置挂载中时，自动选择最具体的匹配配置。
+- 自动进入与本地当前位置对应的远程子目录。
+- 不在挂载中时显示配置选择器。
+- 如果直接打开的是空且已经断开的挂载目录，会先重新挂载。
+- 终端名称为 `SSH: 配置名` 或 `SSH: 配置名 — 远程相对目录`。
+- 连接进程异常退出时提示重新打开。
+
+工作区启动、窗口恢复等自动流程仍会复用相同配置和远程目录的已有终端。这只
+用于防止自动重复，不影响手动创建多个 SSH 会话。
+
+### Close
+
+`Serverless Remote SSH: Close`
+
+- 选择要卸载的配置。
+- 如果当前工作区正在使用该挂载，先关闭工作区，窗口重载后继续卸载。
+- Linux 正常卸载遇到 `Device or resource busy` 时会回退到 lazy unmount。
+- Linux 和 macOS 只在窗口关闭时自动清理本次插件会话创建的挂载，不会擅自
+  卸载会话开始前已经存在的挂载。
+
+### Show Status
+
+`Serverless Remote SSH: Show Status`
+
+在 `Serverless Remote SSH Status` 输出通道列出所有配置的挂载状态及本地路径。
+WSL 还会显示已注册的 Windows TCP 中继、端口映射和进程状态。
+
+### Open Config
+
+`Serverless Remote SSH: Open Config`
+
+打开 JSON 配置文件。文件不存在时创建包含 `hosts` 和 `mounts` 的最小模板。
+插件附带 JSON Schema，可提供字段补全、校验、悬停说明和配置片段。配置缺失、
+不可读或为空时，错误提示可直接跳转到配置文件。
+
+### Add SSH Config
+
+`Serverless Remote SSH: Add SSH Config`
+
+- 输入唯一配置名和 `user@IP`、`user@域名` 或 IPv6 地址。
+- 可输入密码并设置加密主口令，或留空后选择私钥路径。
+- 密码与私钥认证只保留一种。
+- 自动生成同名主机和挂载配置；同名配置存在时先确认是否覆盖。
+- WSL 可额外设置 `vpn` 中继选项。
+
+### Install Dependencies Tips
+
+`Serverless Remote SSH: Install Dependencies Tips`
+
+重新检查当前平台依赖并显示下载入口或可复制的安装命令。
+
+## 配置
+
+完整示例：
 
 ```json
 {
@@ -32,74 +167,134 @@
       "ip": "10.0.0.2",
       "user": "alice",
       "port": 22,
-      "vpn": true
+      "vpn": true,
+      "private_key_path": "~/.ssh/id_ed25519"
     }
   ],
   "mounts": [
     {
       "name": "dev",
       "host": "dev",
-      "remote_path": ".",
-      "local_path": "/当前目录/dev",
+      "remote_path": "/srv/My Project",
+      "local_path": "/通用挂载目录/My Project",
+      "local_paths": {
+        "windows": "R:",
+        "macos": "/Users/alice/远程项目/My Project",
+        "linux": "/home/alice/远程项目/My Project",
+        "wsl": "/home/alice/远程项目/My Project"
+      },
       "remote_terminal": "open"
     }
   ]
 }
 ```
 
-## 命令
+### `hosts`
 
-- `Serverless Remote SSH: Open Remote Folder`：挂载选中的远程目录，使用 VS Code 打开对应的本地 SSHFS 目录，并在该目录中打开远程终端。
-- `Serverless Remote SSH: Open Remote Terminal`：在 VS Code 集成终端中建立 SSH 连接；WSL 平台使用 `ssh-bridge`。如果工作区或活动文件位于已配置的挂载目录中，插件会直接匹配对应配置并进入远程子目录；该路径映射同时支持 WSL 和原生 Windows、macOS、Linux。直接打开空且尚未挂载的挂载根目录时，插件会先自动挂载，再打开远程终端。
-- 插件管理的远程终端因连接进程结束而退出时，会提示使用 `Serverless Remote SSH: Open Remote Terminal` 重新打开。
-- `Serverless Remote SSH: Close`：关闭正在使用的远程目录并卸载对应 SSHFS。
-- `Serverless Remote SSH: Show Status`：在输出面板中显示所有挂载状态；WSL 还会显示 SSHFS/SSH 中继状态。
-- `Serverless Remote SSH: Open Config`：打开共用的 JSON 配置文件。
-- `Serverless Remote SSH: Add SSH Config`：依次输入配置名、`user@IP` 和密码；输入密码后还需设置并确认配置加密主口令，密码留空时则改为输入私钥路径。密码与私钥只保存一种，并自动生成同名挂载配置。WSL 会额外询问是否使用 VPN 中继，默认为 `false`；使用 aTrust 等外部 VPN 时选择 `true`。
-- `Serverless Remote SSH: Install Dependencies Tips`：检查当前平台所需软件，提示缺少的软件包或可复制的安装命令。
+- `name`：主机唯一名称，供 `mounts[].host` 引用。
+- `ip`：服务器 IP 地址或域名。
+- `user`：SSH 用户名。
+- `port`：SSH 端口，默认 `22`。
+- `vpn`：WSL 是否通过 Windows VPN 中继连接；其他平台直接使用本机网络。
+- `private_key_path`：SSH 私钥路径。
+- `password`：加密密码，使用私钥时无需设置。请勿把包含凭据的配置提交到版本库。
 
-新配置固定挂载 SSH 登录目录，并固定使用 `open` 终端方式。WSL、Linux 和 macOS 默认在当前工作区下创建 `[配置名]` 目录，Windows 默认使用 `R:` 盘。执行 `Open Remote Folder` 后，插件会依次完成挂载、切换到挂载目录，并在新窗口恢复后只创建一个 SSH 终端。已有同名终端会直接复用。
+### `mounts`
 
-新向导输入的 SSH 密码会使用加密主口令保存为 `enc:v1:` 密文。旧配置中的明文密码会在下次连接时要求设置主口令并自动迁移为密文。macOS 和 Linux 通过短生命周期的 `SSH_ASKPASS` 辅助程序将解密后的密码提供给 OpenSSH 和 SSHFS；密码不会出现在命令参数或任务输出中。
+- `name`：挂载和终端显示名称。
+- `host`：对应 `hosts[].name`。
+- `remote_path`：远程目录，`.` 表示 SSH 登录目录。
+- `local_path`：没有平台专用值时使用的固定本地挂载路径。
+- `local_paths`：`windows`、`macos`、`linux`、`wsl` 各平台的固定挂载路径；
+  平台专用值优先于 `local_path`。
+- `remote_terminal`：当前固定为 `open`。旧配置中的 `now`、`never` 等值会兼容
+  读取并统一按 `open` 处理。
 
-旧配置中的自定义 `remote_path`、`local_path` 和 `local_paths` 仍然兼容；`now`、`never` 等旧终端方式会统一按 `open` 处理。
+显式配置的 `local_path` 和 `local_paths` 始终视为固定位置，不会因为当前工作区
+变化而重新计算。只有未配置本地路径时，WSL、Linux 和 macOS 才在当前工作区下
+使用挂载名称创建默认目录。
 
-`vpn: true` 表示使用 VPN 可访问的网络路径。在 WSL 上，桥接程序会启动并共享 Windows TCP 中继。在原生 Windows、macOS 和 Linux 上不需要额外中继，因为 SSHFS 与该平台的 VPN 客户端位于同一个网络环境中。macOS 和 Linux 的配置向导不会显示中继选项，状态输出中也不会包含中继部分。
+## 认证与安全
 
-在 Linux 和 macOS 上，由当前 VS Code 插件会话创建的挂载会在该 VS Code 窗口关闭时自动卸载。插件不会卸载本次会话开始前已经存在的挂载。
+- 向导创建的密码使用主口令加密为 `enc:v1:` 格式。
+- 加密主口令存放在 VS Code SecretStorage 中，不写入 JSON 配置。
+- 旧配置中的明文密码会在下次连接时要求设置主口令并自动迁移。
+- macOS 和 Linux 使用权限受限、生命周期很短的 `SSH_ASKPASS` 文件传递密码，
+  使用后立即删除。
+- Windows 密码通过环境变量传给系统网络 API。
+- WSL 将主口令安全传递给配套 bridge，由 bridge 解密和认证。
+- 密码不会放入 SSH/SSHFS 命令参数或性能输出。
+- OpenSSH 使用 `StrictHostKeyChecking=accept-new`：自动接受新主机，但拒绝
+  已记录主机密钥发生变化的连接。
+- 密码认证失败时会清除失效密码，并提供打开配置和定位密码字段的操作。
+- 网络中断、认证失败和普通命令错误会分别识别，并保留底层命令的错误信息。
 
-## 性能设置
+## 路径与工作区恢复
 
-- `serverlessRemote.reuseSshConnection`：Linux、macOS 和 WSL 默认为
-  `true`，SSHFS 与远程终端通过 OpenSSH ControlMaster 复用连接。WSL
-  需要安装包含连接池支持的新版 `wsl-vpn-ssh-bridge`。
-- `serverlessRemote.sshfsCacheProfile`：Linux/macOS 默认为 `balanced`。
-  `fresh` 尽量关闭缓存，`balanced` 缓存元数据数秒，`fast` 使用更长的
-  元数据和内核缓存；使用 `fast` 时，服务器上由其他进程完成的修改可能
-  延迟显示。
-- “输出”面板中的 `Serverless Remote SSH` 通道会使用 `[性能]` 前缀输出
-  配置读取、状态检查、凭据准备、挂载、挂载验证、终端创建和自动连接总耗时。
+- 支持挂载根目录下任意层级的工作区，并保持本地、远程子目录对应关系。
+- 多根工作区会按顺序查找匹配项；嵌套挂载优先选择路径最具体的配置。
+- Windows 和 macOS 路径匹配不区分大小写。
+- 路径通过独立进程参数传递；远程 Shell 目录经过安全引用，支持普通空格、中文、
+  括号、方括号和单引号。
+- 未挂载的 Windows 盘符以及只包含空工作区占位目录的挂载点都可以被识别并恢复。
+- VS Code 切换文件夹、关闭文件夹和扩展主机重载期间，待处理操作会保存到全局
+  状态并设置有效期；过期或配置已删除的状态会安全丢弃。
+- 本地挂载客户端从用户主目录启动，避免窗口切换时临时空工作区导致 `cwd`
+  校验失败。
+
+## 性能与连接设置
+
+### `serverlessRemote.reuseSshConnection`
+
+默认值为 `true`。Linux、macOS 和 WSL 让 SSHFS 与远程终端通过 OpenSSH
+ControlMaster 复用连接，减少重复握手。WSL 需要安装支持连接池的新版
+`wsl-vpn-ssh-bridge`。Windows 当前由系统 SSHFS/SSH 实现各自管理连接。
+
+### `serverlessRemote.sshfsCacheProfile`
+
+Linux 和 macOS 可选：
+
+- `fresh`：尽量关闭元数据缓存，优先看到外部远程修改。
+- `balanced`：默认值，缓存文件和目录元数据数秒。
+- `fast`：使用更长的元数据与内核缓存，速度更高；其他远程进程的修改可能延迟
+  显示。
+
+### `serverlessRemote.configPath`
+
+覆盖当前平台的默认 JSON 配置文件位置，支持 `~` 展开。
+
+### 性能输出
+
+VS Code 的“输出”面板中，`Serverless Remote SSH` 通道使用 `[性能]` 前缀记录：
+
+- 配置读取和依赖检查
+- 挂载状态检查
+- 密码凭据准备
+- SSHFS 挂载与结果验证
+- SSH 终端创建（不包含远端握手）
+- 工作区变化和启动自动连接总耗时
+
+四个平台使用同一种输出格式；实际出现的阶段取决于平台和当前连接流程。
 
 ## 安装
 
 ### 在 VS Code 中手动安装
 
-1. 将 `.vsix` 安装包下载到本地。
-2. 打开 VS Code，选择活动栏中的**扩展**图标，或者按 `Ctrl+Shift+X`；macOS 使用 `Cmd+Shift+X`。
-3. 选择扩展视图右上角的**视图和更多操作...**（`...`）菜单。
-4. 选择**从 VSIX 安装...**。
-5. 选择 `vscode-serverless-remote-ssh-0.8.10.vsix` 并确认安装。
-6. 如果 VS Code 提示重新加载窗口，选择**立即重新加载**。
-7. 安装完成后，会提示安装必要软件包：1）WSL、Linux 环境复制安装指令；2）macOS 需要安装 [macFUSE](https://macfuse.github.io/) 和 [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS)，提示中提供对应下载按钮；3）Windows 系统需要安装 [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest) 和 [WinFsp](https://github.com/winfsp/winfsp/releases/latest)，提示中提供对应下载按钮。
-8. `Ctrl+Shift+P`打开命令面板输入 `Serverless Remote SSH: Add SSH Config` 命令，开始添加配置，配置完毕后点击状态栏左下角中的 `Serverless SSH`，或者打开命令面板输入 `Serverless Remote SSH: Open Remote Folder`。
-9. 关闭挂载连接使用 `Serverless Remote SSH: Close`。
+1. 下载 `vscode-serverless-remote-ssh-0.8.15.vsix`。
+2. 打开 VS Code 扩展视图（Windows/Linux：`Ctrl+Shift+X`；macOS：
+   `Cmd+Shift+X`）。
+3. 打开扩展视图右上角的 `...` 菜单，选择“从 VSIX 安装...”。
+4. 选择下载的 VSIX；提示时重新加载窗口。
+5. 运行 `Serverless Remote SSH: Install Dependencies Tips`。
+6. 运行 `Serverless Remote SSH: Add SSH Config`，然后点击状态栏中的
+   `Serverless SSH`。
 
-升级已有版本时，使用新的 VSIX 安装包重复上述步骤即可，VS Code 会替换已经安装的版本。
+升级时用新版 VSIX 重复安装即可，VS Code 会替换已有版本并保留配置。
 
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.8.10.vsix
+code --install-extension vscode-serverless-remote-ssh-0.8.15.vsix
 ```
 
 ## 开发
@@ -111,4 +306,8 @@ npm run package
 npm run vsix
 ```
 
-此插件将语言服务和扩展保留在本地运行。必须在目标主机上执行的命令，应通过 SSH 终端运行。
+生产构建由 TypeScript 类型检查和 esbuild 打包组成，VSIX 构建还会自动运行
+预发布检查。
+
+此扩展不在远程主机运行 VS Code 组件。必须在目标主机执行的构建、测试或其他
+命令，应在远程 SSH 终端中运行。

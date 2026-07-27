@@ -50,7 +50,7 @@ Example:
 ## Commands
 
 - `Serverless Remote SSH: Open Remote Folder` mounts the selected entry, opens its local SSHFS directory, and opens a remote terminal in that folder.
-- `Serverless Remote SSH: Open Remote Terminal` opens an SSH connection in an integrated terminal and uses `ssh-bridge` on WSL. When the workspace or active file is inside a configured mount, the extension selects the matching configuration and enters the corresponding remote subdirectory on WSL and native Windows, macOS, or Linux. When an empty, unmounted mount root is opened directly, the extension mounts it first and then opens the remote terminal.
+- `Serverless Remote SSH: Open Remote Terminal` always creates a new SSH connection in an integrated terminal and uses `ssh-bridge` on WSL. When the workspace or active file is inside a configured mount, the extension selects the matching configuration and enters the corresponding remote subdirectory on WSL and native Windows, macOS, or Linux. When an empty, unmounted mount root is opened directly, the extension mounts it first and then opens the remote terminal. Automatic workspace connection and recovery still reuse a matching terminal to prevent duplicates.
 - When a managed remote terminal exits because its connection process ended, the extension prompts you to run `Serverless Remote SSH: Open Remote Terminal` to reopen it.
 - `Serverless Remote SSH: Close` closes the remote folder and unmounts its SSHFS entry.
 - `Serverless Remote SSH: Show Status` opens an output panel summarizing every mount and, on WSL, the SSHFS/SSH relay state.
@@ -58,7 +58,7 @@ Example:
 - `Serverless Remote SSH: Add SSH Config` asks for a name, `user@host`, and a password. After a password is entered, it also asks you to set and confirm a configuration encryption passphrase. Leaving the password empty asks for a private-key path instead, so only one authentication method is saved. WSL adds a VPN relay prompt which defaults to `false`; select `true` when using an external VPN such as aTrust.
 - `Serverless Remote SSH: Install Dependencies Tips` checks required software and shows missing packages or a copyable installation command.
 
-New configurations always mount the SSH login directory and use the `open` terminal behavior. WSL, Linux, and macOS create `[configuration name]` below the current workspace by default; Windows uses `R:`. `Open Remote Folder` mounts first, switches to the mounted directory, then creates exactly one SSH terminal after the new window resumes. An existing matching terminal is reused.
+New configurations always mount the SSH login directory and use the `open` terminal behavior. WSL, Linux, and macOS create `[configuration name]` below the current workspace by default; Windows uses `R:`. `Open Remote Folder` mounts first, switches to the mounted directory, then creates exactly one SSH terminal after the new window resumes. Automatic flows reuse an existing matching terminal, while each manual `Open Remote Terminal` invocation creates a new one.
 
 SSH passwords entered by the wizard are stored as `enc:v1:` ciphertext using the configuration encryption passphrase. Plaintext passwords in older configurations are migrated the next time they are used. macOS and Linux pass the decrypted password to OpenSSH and SSHFS through a short-lived `SSH_ASKPASS` helper, never through command arguments or task output.
 
@@ -90,7 +90,7 @@ On Linux and macOS, mounts created by the current VS Code extension session are 
 2. Open VS Code and select the **Extensions** icon in the Activity Bar, or press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
 3. Select the **Views and More Actions...** (`...`) menu in the upper-right corner of the Extensions view.
 4. Select **Install from VSIX...**.
-5. Choose `vscode-serverless-remote-ssh-0.8.10.vsix` and confirm the installation.
+5. Choose `vscode-serverless-remote-ssh-0.8.15.vsix` and confirm the installation.
 6. Select **Reload Now** if VS Code asks you to reload the window.
 7. After installation, the extension prompts you to install the required software. On WSL and Linux, copy and run the provided installation command. On macOS, install [macFUSE](https://macfuse.github.io/) and [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS) using the corresponding download buttons in the prompt. On Windows, install [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest) and [WinFsp](https://github.com/winfsp/winfsp/releases/latest) using the corresponding download buttons.
 8. Press `Ctrl+Shift+P` to open the Command Palette and run `Serverless Remote SSH: Add SSH Config`. After completing the configuration, select `Serverless SSH` in the lower-left corner of the status bar, or run `Serverless Remote SSH: Open Remote Folder` from the Command Palette.
@@ -101,7 +101,7 @@ To upgrade an existing installation, repeat these steps with the newer VSIX pack
 ### Install from the command line
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.8.10.vsix
+code --install-extension vscode-serverless-remote-ssh-0.8.15.vsix
 ```
 
 After installation, use the `$(remote) Serverless SSH` status bar item or open the Command Palette.
