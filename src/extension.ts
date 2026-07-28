@@ -6,7 +6,7 @@ import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
   parseSshLogin, resolveMount, saveConfig, setMountLocalPath
 } from './config';
-import { commandExists, commandSucceeds, executeWithStdin } from './process';
+import { commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, ConnectionOptions, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
@@ -15,7 +15,6 @@ import {
   resolveMountDirectory
 } from './mount-path';
 import { MountOperationLock, normalizeMountLockKey } from './mount-lock';
-import { hasWindowsInstallDirectory } from './windows-installer';
 import { createDependencyGuide } from './dependency-guide';
 import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
 import {
@@ -55,7 +54,8 @@ const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const terminalIdentityEnv = 'SERVERLESS_REMOTE_TERMINAL_ID';
-const dependencyCacheKey = 'serverlessRemote.dependencyCache';
+const dependencyPromptShownKey = 'serverlessRemote.dependencyPromptShown';
+const legacyDependencyCacheKey = 'serverlessRemote.dependencyCache';
 let bridgeOutput: vscode.OutputChannel | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 const openingTerminalIds = new Set<string>();
@@ -1136,52 +1136,8 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
   }
 }
 
-async function missingDependencies(): Promise<string[]> {
-  const commands = platformAdapter.dependencies().filter(
-    (command) => platformAdapter.kind !== 'windows' || command !== 'sshfs-win.exe'
-  );
-  const results = await Promise.all(commands.map(async (command) => ({
-    command, exists: await commandExists(command)
-  })));
-  const missing = results.filter(({ exists }) => !exists).map(({ command }) => command);
-  if (platformAdapter.kind !== 'windows') return missing;
-  const [hasWinFspCommand, hasWinFspDirectory, hasSshfsWinCommand, hasSshfsWinDirectory] =
-    await Promise.all([
-      commandExists('fsptool-x64.exe'),
-      hasWindowsInstallDirectory('WinFsp'),
-      commandExists('sshfs-win.exe'),
-      hasWindowsInstallDirectory('SSHFS-Win')
-    ]);
-  if (!hasWinFspCommand && !hasWinFspDirectory) missing.push('WinFsp');
-  const hasSshfsWin = hasSshfsWinCommand || hasSshfsWinDirectory;
-  if (!hasSshfsWin) missing.push('SSHFS-Win');
-  return missing;
-}
-
-interface DependencyCache {
-  missing: string[];
-}
-
-async function showDependencyTips(
-  context: vscode.ExtensionContext, force = true
-): Promise<void> {
-  const platformCacheKey = `${dependencyCacheKey}.${platformAdapter.kind}`;
-  const cached = context.globalState.get<DependencyCache>(platformCacheKey);
-  const validCache = !force && cached?.missing.length === 0;
-  const missing = validCache && cached
-    ? cached.missing
-    : await timedPhase('依赖检查', missingDependencies);
-  if (!validCache) {
-    await context.globalState.update(
-      platformCacheKey, { missing } satisfies DependencyCache
-    );
-  }
-  if (missing.length === 0) {
-    if (force) void vscode.window.showInformationMessage('当前平台所需依赖均已安装。');
-    return;
-  }
-  const guide = await createDependencyGuide(platformAdapter.kind, missing);
-  if (!guide) return;
+async function showDependencyTips(): Promise<void> {
+  const guide = await createDependencyGuide(platformAdapter.kind);
   const copyAction = guide.command ? '复制安装命令' : undefined;
   const linkActions = guide.links ?? (guide.url ? [{ label: '查看安装说明', url: guide.url }] : []);
   const actions = [copyAction, ...linkActions.map((link) => link.label)]
@@ -1215,7 +1171,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await addSshConfig(context);
       remoteFolders.refresh();
     })],
-    ['installDependenciesTips', () => guard(() => showDependencyTips(context))]
+    ['installDependenciesTips', () => guard(() => showDependencyTips())]
   ];
   for (const [name, handler] of registrations) {
     context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));
@@ -1273,7 +1229,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     '启动自动连接总计',
     () => autoOpenWorkspaceTerminal(context)
   ));
-  void guard(() => showDependencyTips(context, false));
+  const promptShown = context.globalState.get<boolean>(dependencyPromptShownKey, false);
+  const upgradedFromDependencyCheckingVersion =
+    context.globalState.get(`${legacyDependencyCacheKey}.${platformAdapter.kind}`) !== undefined;
+  if (!promptShown && upgradedFromDependencyCheckingVersion) {
+    await context.globalState.update(dependencyPromptShownKey, true);
+  } else if (!promptShown) {
+    await context.globalState.update(dependencyPromptShownKey, true);
+    void guard(() => showDependencyTips());
+  }
 }
 
 export async function deactivate(): Promise<void> {

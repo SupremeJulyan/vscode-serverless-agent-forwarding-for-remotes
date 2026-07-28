@@ -15,7 +15,7 @@ The extension selects a platform adapter and exposes every remote folder as a re
 - Native Windows, macOS, and Linux default to `~/serverless-remote-ssh/config.json`
 - WSL keeps `~/.wsl-vpn-ssh/config.json` shared with [`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) and [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
 
-Windows requires OpenSSH Client, [WinFsp](https://github.com/winfsp/winfsp/releases/latest), and [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest). Run `Serverless Remote SSH: Install Dependencies Tips` to check missing software and open the corresponding download page.
+Windows requires OpenSSH Client, [WinFsp](https://github.com/winfsp/winfsp/releases/latest), and [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest). Run `Serverless Remote SSH: Install Dependencies Tips` to view the installation guide and corresponding download pages.
 On macOS, a missing dependency prompt provides official download links for [macFUSE](https://macfuse.github.io/) and [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS).
 On Linux and WSL, the extension reads `/etc/os-release` and offers a copyable install command for Debian/Ubuntu,
 Fedora/RHEL, Arch/Manjaro, openSUSE, or Alpine. When the WSL bridge commands are missing, the command also
@@ -56,7 +56,7 @@ Example:
 - `Serverless Remote SSH: Show Status` opens an output panel summarizing every mount and, on WSL, the SSHFS/SSH relay state.
 - `Serverless Remote SSH: Open Config` opens the shared JSON configuration.
 - `Serverless Remote SSH: Add SSH Config` asks for a name, `user@host`, and a password. After a password is entered, it also asks you to set and confirm a configuration encryption passphrase. Leaving the password empty asks for a private-key path instead, so only one authentication method is saved. WSL adds a VPN relay prompt which defaults to `false`; select `true` when using an external VPN such as aTrust.
-- `Serverless Remote SSH: Install Dependencies Tips` checks required software and shows missing packages or a copyable installation command.
+- `Serverless Remote SSH: Install Dependencies Tips` shows platform installation links or a copyable installation command. The extension displays this guide only once, after its first installation.
 
 New configurations always mount the SSH login directory and use the `open` terminal behavior. WSL, Linux, and macOS create `[configuration name]` below the current workspace by default; Windows uses `R:`. `Open Remote Folder` mounts first, switches to the mounted directory, then creates exactly one SSH terminal after the new window resumes. Automatic flows reuse an existing matching terminal, while each manual `Open Remote Terminal` invocation creates a new one.
 

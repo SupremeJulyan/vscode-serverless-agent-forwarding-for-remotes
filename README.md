@@ -24,7 +24,7 @@ SSH 会话，无需在目标主机上安装或运行 VS Code Server。语言服�
 - Linux、macOS 和 WSL 可通过 OpenSSH ControlMaster 在 SSHFS 与多个终端之间
   复用 SSH 连接。
 - Linux 和 macOS 提供 `fresh`、`balanced`、`fast` 三档 SSHFS 缓存策略。
-- 自动检测各平台依赖，并提供安装包链接或适合当前 Linux 发行版的可复制命令。
+- 首次安装插件后提示一次平台依赖安装说明，并提供安装包链接或适合当前 Linux 发行版的可复制命令。
 - 提供挂载状态、WSL 中继状态、连接阶段耗时和错误诊断。
 - 支持平台专用挂载路径，以及包含空格、中文、括号、方括号和单引号的本地或
   远程路径。
@@ -61,14 +61,14 @@ WSL 继续与
 - WSL：`mountpoint`、[`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
   和 [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
 
-`Serverless Remote SSH: Install Dependencies Tips` 会检查当前平台：
+`Serverless Remote SSH: Install Dependencies Tips` 会显示当前平台的安装说明：
 
 - Windows 和 macOS 显示缺失组件的官方下载入口。
 - Linux 和 WSL 会读取 `/etc/os-release`，为 Debian/Ubuntu、Fedora/RHEL、
   Arch/Manjaro、openSUSE 或 Alpine 生成安装命令。
 - WSL 缺少 bridge 时会提供从官方 GitHub 仓库安装的命令；安装时仅保留卸载
   脚本，并在扩展卸载时执行清理。
-- 自动依赖检查会缓存已经通过的结果，手动执行命令始终重新检查。
+- 插件首次安装后只自动显示一次说明，后续更新不再提示；手动执行命令可随时再次查看。
 
 ## 快速开始
 
@@ -155,7 +155,7 @@ WSL 还会显示已注册的 Windows TCP 中继、端口映射和进程状态。
 
 `Serverless Remote SSH: Install Dependencies Tips`
 
-重新检查当前平台依赖并显示下载入口或可复制的安装命令。
+显示当前平台的下载入口或可复制的安装命令。
 
 ## 配置
 
@@ -270,7 +270,7 @@ Linux 和 macOS 可选：
 
 VS Code 的“输出”面板中，`Serverless Remote SSH` 通道使用 `[性能]` 前缀记录：
 
-- 配置读取和依赖检查
+- 配置读取和依赖安装提示
 - 挂载状态检查
 - 密码凭据准备
 - SSHFS 挂载与结果验证

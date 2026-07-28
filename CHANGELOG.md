@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.9.5
+
+- Remove automatic dependency detection and show the platform installation
+  guide only once, on the extension's first installation.
+
 ## 0.9.4
 
 - Persist a manually selected local mount directory in the current platform's

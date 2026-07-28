@@ -18,7 +18,6 @@ export interface ConnectionOptions {
 
 export interface PlatformAdapter {
   readonly kind: PlatformKind;
-  dependencies(): string[];
   mount(remote: ResolvedMount, localPath: string, options?: ConnectionOptions): CommandPlan;
   unmount(remote: ResolvedMount, localPath: string): CommandPlan;
   lazyUnmount?(remote: ResolvedMount, localPath: string): CommandPlan;
@@ -114,9 +113,6 @@ function sshfsArgs(
 
 class UnixAdapter implements PlatformAdapter {
   constructor(readonly kind: 'linux' | 'macos') {}
-  dependencies(): string[] {
-    return this.kind === 'macos' ? ['ssh', 'sshfs', 'umount'] : ['ssh', 'sshfs', 'mountpoint', 'fusermount3'];
-  }
   mount(remote: ResolvedMount, localPath: string, options?: ConnectionOptions): CommandPlan {
     return { command: 'sshfs', args: sshfsArgs(remote, localPath, options), cwd: localPath };
   }
@@ -145,7 +141,6 @@ class UnixAdapter implements PlatformAdapter {
 
 class WslAdapter implements PlatformAdapter {
   readonly kind = 'wsl' as const;
-  dependencies(): string[] { return ['ssh-bridge', 'sshfs-bridge', 'mountpoint']; }
   mount(
     remote: ResolvedMount, _localPath: string, options?: ConnectionOptions
   ): CommandPlan {
@@ -229,7 +224,6 @@ Add-Type -TypeDefinition $source
 
 class WindowsAdapter implements PlatformAdapter {
   readonly kind = 'windows' as const;
-  dependencies(): string[] { return ['ssh', 'net', 'sshfs-win.exe']; }
   private drive(localPath: string): string {
     if (!/^[a-zA-Z]:[\\/]?$/.test(localPath)) {
       throw new Error(`Windows SSHFS local_path must be a drive letter such as X:, got: ${localPath}`);

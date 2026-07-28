@@ -10,7 +10,7 @@ test('parses quoted os-release values', () => {
 
 test('offers apt packages on Debian Linux', async () => {
   const guide = await createDependencyGuide(
-    'linux', ['sshfs', 'fusermount3'], '/etc/os-release'
+    'linux', '/etc/os-release'
   );
   assert.ok(guide?.command);
   // The test environment is Debian; derived distributions are covered by the parser/family lookup.
@@ -21,7 +21,7 @@ test('offers apt packages on Debian Linux', async () => {
 
 test('WSL guide includes distro packages and bridge installer', async () => {
   const guide = await createDependencyGuide(
-    'wsl', ['ssh-bridge', 'sshfs-bridge'], '/etc/os-release'
+    'wsl', '/etc/os-release'
   );
   assert.match(guide?.command ?? '', /wsl-vpn-ssh-bridge\.git/);
   assert.match(guide?.command ?? '', /\.\/install\.sh/);
@@ -34,14 +34,14 @@ test('WSL guide includes distro packages and bridge installer', async () => {
 });
 
 test('macOS guide links to macFUSE SSHFS instructions', async () => {
-  const guide = await createDependencyGuide('macos', ['sshfs']);
+  const guide = await createDependencyGuide('macos');
   assert.match(guide?.message ?? '', /macFUSE SSHFS/);
   assert.match(guide?.url ?? '', /macfuse\/macfuse\/wiki/);
   assert.deepEqual(guide?.links?.map((link) => link.label), ['下载 macFUSE', '下载 SSHFS']);
 });
 
-test('Windows guide links to each missing filesystem dependency', async () => {
-  const guide = await createDependencyGuide('windows', ['WinFsp', 'SSHFS-Win']);
+test('Windows guide links to each filesystem dependency', async () => {
+  const guide = await createDependencyGuide('windows');
   assert.deepEqual(guide?.links?.map((link) => link.label), ['下载 WinFsp', '下载 SSHFS-Win']);
   assert.ok(guide?.links?.every((link) => link.url.endsWith('/releases/latest')));
 });

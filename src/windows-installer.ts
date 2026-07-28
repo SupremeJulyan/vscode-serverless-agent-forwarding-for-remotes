@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 
@@ -26,18 +26,6 @@ export const sshfsWinInstaller: WindowsInstaller = {
   url: 'https://github.com/winfsp/sshfs-win/releases/download/v3.7.21011/sshfs-win-3.7.21011-x64.msi',
   sha256: '76080d7bfb1ba0a807f8874d07388bec4bc30893f2da511d5cb7a16d4490f7d1'
 };
-
-export async function hasWindowsInstallDirectory(directoryName: string): Promise<boolean> {
-  for (const root of [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) {
-    if (!root) continue;
-    try {
-      if ((await stat(path.join(root, directoryName))).isDirectory()) return true;
-    } catch {
-      // Try the other standard Program Files root.
-    }
-  }
-  return false;
-}
 
 export async function downloadInstaller(
   installer: WindowsInstaller, directory: string
