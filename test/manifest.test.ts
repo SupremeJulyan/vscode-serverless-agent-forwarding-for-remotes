@@ -12,6 +12,6 @@ test('extension activates immediately so first-install dependency tips can run',
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '0.9.2');
+  assert.equal(manifest.version, '0.9.4');
   assert.ok(manifest.activationEvents?.includes('*'));
 });

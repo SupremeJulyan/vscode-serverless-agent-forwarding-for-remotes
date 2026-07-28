@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  ensureConfigFile, expandHome, parseConfig, parseSshLogin, resolveMount, saveConfig
+  ensureConfigFile, expandHome, parseConfig, parseSshLogin, resolveMount, saveConfig,
+  setMountLocalPath
 } from '../src/config';
 
 test('parses and resolves a mount through its host reference', () => {
@@ -29,6 +30,27 @@ test('saves a configuration that can be loaded as JSON', async () => {
 
   await saveConfig(configPath, config);
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), config);
+});
+
+test('stores a selected mount directory for only the current platform', () => {
+  const config = parseConfig({
+    hosts: [{ name: 'dev', ip: 'host', user: 'alice' }],
+    mounts: [{
+      name: 'project',
+      host: 'dev',
+      remote_path: '.',
+      local_path: '/fallback',
+      local_paths: { macos: '/Users/alice/project' }
+    }]
+  });
+
+  const mount = setMountLocalPath(config, 'project', 'linux', '/mnt/project');
+
+  assert.equal(mount.local_path, '/fallback');
+  assert.deepEqual(mount.local_paths, {
+    macos: '/Users/alice/project',
+    linux: '/mnt/project'
+  });
 });
 
 test('rejects a missing host reference', () => {

@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
-  parseSshLogin, resolveMount, saveConfig
+  parseSshLogin, resolveMount, saveConfig, setMountLocalPath
 } from './config';
 import { commandExists, commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, ConnectionOptions, createPlatformAdapter } from './platform';
@@ -417,7 +417,12 @@ async function openRemoteFolder(
   context: vscode.ExtensionContext, requestedMount?: MountConfig
 ): Promise<void> {
   const selected = requestedMount
-    ? { mount: requestedMount, config: await readConfig() }
+    ? await (async () => {
+        const config = await readConfig();
+        const mount = config.mounts.find((candidate) => candidate.name === requestedMount.name);
+        if (!mount) throw new Error(`Remote folder no longer exists: ${requestedMount.name}`);
+        return { mount, config };
+      })()
     : await selectMount('Select a remote folder to open');
   if (!selected) return;
   const { mount, config } = selected;
@@ -425,6 +430,10 @@ async function openRemoteFolder(
   if (!resolvedLocalPath) return;
   const localPath = await confirmMountDirectory(resolvedLocalPath);
   if (!localPath) return;
+  if (!sameLocalPath(localPath, resolvedLocalPath)) {
+    setMountLocalPath(config, mount.name, platformAdapter.kind, localPath);
+    await saveConfig(configPath(), config);
+  }
   if (platformAdapter.kind !== 'windows') await mkdir(localPath, { recursive: true });
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   await withMountLock(localPath, async () => {
@@ -454,7 +463,7 @@ async function openRemoteFolder(
       const opened = await vscode.commands.executeCommand<boolean | undefined>(
         'vscode.openFolder',
         vscode.Uri.file(absoluteLocalPath),
-        false
+        true
       );
       if (opened === false) {
         workspaceSwitchMountPath = undefined;
@@ -916,7 +925,7 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> 
       ].join('\n'));
       item.command = {
         command: `${commandPrefix}.openFolderItem`,
-        title: 'Open Remote Folder',
+        title: '打开远程文件夹',
         arguments: [item]
       };
       return item;

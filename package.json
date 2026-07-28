@@ -3,7 +3,7 @@
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
   "icon": "images/icon.png",
-  "version": "0.9.2",
+  "version": "0.9.4",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -43,53 +43,53 @@
     "commands": [
       {
         "command": "serverlessRemote.openFolder",
-        "title": "Serverless Remote SSH: Open Remote Folder",
+        "title": "Serverless Remote SSH: 打开远程文件夹",
         "icon": "$(remote-explorer)"
       },
       {
         "command": "serverlessRemote.openTerminal",
-        "title": "Serverless Remote SSH: Open Remote Terminal",
+        "title": "Serverless Remote SSH: 打开远程终端",
         "icon": "$(terminal)"
       },
       {
         "command": "serverlessRemote.close",
-        "title": "Serverless Remote SSH: Close"
+        "title": "Serverless Remote SSH: 关闭连接"
       },
       {
         "command": "serverlessRemote.status",
-        "title": "Serverless Remote SSH: Show Status"
+        "title": "Serverless Remote SSH: 显示状态"
       },
       {
         "command": "serverlessRemote.openConfig",
-        "title": "Serverless Remote SSH: Open Config"
+        "title": "Serverless Remote SSH: 打开配置"
       },
       {
         "command": "serverlessRemote.addSshConfig",
-        "title": "Serverless Remote SSH: Add SSH Config",
+        "title": "Serverless Remote SSH: 添加 SSH 配置",
         "icon": "$(add)"
       },
       {
         "command": "serverlessRemote.installDependenciesTips",
-        "title": "Serverless Remote SSH: Install Dependencies Tips"
+        "title": "Serverless Remote SSH: 查看依赖安装说明"
       },
       {
         "command": "serverlessRemote.refreshExplorer",
-        "title": "Refresh Remote Folders",
+        "title": "刷新远程文件夹",
         "icon": "$(refresh)"
       },
       {
         "command": "serverlessRemote.openFolderItem",
-        "title": "Open Remote Folder",
+        "title": "打开远程文件夹",
         "icon": "$(folder-opened)"
       },
       {
         "command": "serverlessRemote.openTerminalItem",
-        "title": "Open Remote Terminal",
+        "title": "打开远程终端",
         "icon": "$(terminal)"
       },
       {
         "command": "serverlessRemote.closeItem",
-        "title": "Disconnect",
+        "title": "断开连接",
         "icon": "$(debug-disconnect)"
       }
     ],
@@ -106,14 +106,14 @@
       "serverlessRemote": [
         {
           "id": "serverlessRemote.mounts",
-          "name": "Remote Folders"
+          "name": "远程文件夹"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "serverlessRemote.mounts",
-        "contents": "No remote folders are configured.\n[Add SSH Config](command:serverlessRemote.addSshConfig)\n[Open Config](command:serverlessRemote.openConfig)",
+        "contents": "尚未配置远程文件夹。\n[添加 SSH 配置](command:serverlessRemote.addSshConfig)\n[打开配置](command:serverlessRemote.openConfig)",
         "when": "serverlessRemote.hasNoMounts"
       }
     ],

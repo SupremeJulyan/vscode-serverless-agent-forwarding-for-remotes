@@ -27,6 +27,18 @@ export interface BridgeConfig {
   mounts: MountConfig[];
 }
 
+export function setMountLocalPath(
+  config: BridgeConfig,
+  mountName: string,
+  platform: keyof NonNullable<MountConfig['local_paths']>,
+  localPath: string
+): MountConfig {
+  const mount = config.mounts.find((candidate) => candidate.name === mountName);
+  if (!mount) throw new Error(`Mount '${mountName}' no longer exists`);
+  mount.local_paths = { ...mount.local_paths, [platform]: localPath };
+  return mount;
+}
+
 export interface ResolvedMount extends MountConfig {
   hostConfig: HostConfig;
 }

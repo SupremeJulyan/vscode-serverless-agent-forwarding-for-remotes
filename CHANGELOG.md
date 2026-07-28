@@ -1,13 +1,25 @@
 # Change Log
 
+## 0.9.4
+
+- Persist a manually selected local mount directory in the current platform's
+  configuration.
+- Open manually selected remote folders in a new VS Code window so the current
+  mounted workspace remains open.
+- Localize the remote-folders view, command entries, and context menus in
+  Chinese.
+
+## 0.9.3
+
+- Confirm the resolved local mount directory before opening a remote folder,
+  with an option to choose another local directory for the current operation.
+
 ## 0.9.2
 
 - Fall back to `diskutil unmount` when a normal macOS unmount reports that the
   SSHFS mount is busy.
 - Pass the documented reuse-window argument to `vscode.openFolder`, restoring
   automatic folder switching and remote-terminal creation after mounting.
-- Confirm the resolved local mount directory before opening a remote folder,
-  with an option to choose another local directory for the current operation.
 
 ## 0.9.1
 
