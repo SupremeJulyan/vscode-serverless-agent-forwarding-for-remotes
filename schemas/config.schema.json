@@ -39,12 +39,7 @@
             "name": "${1:project}",
             "host": "${2:dev}",
             "remote_path": ".",
-            "local_paths": {
-              "windows": "${4:X:}",
-              "macos": "${5:/Users/alice/mnt/project}",
-              "linux": "${6:/home/alice/mnt/project}",
-              "wsl": "${7:/home/alice/mnt/project}"
-            },
+            "local_path": "${4:/home/alice/mnt/project}",
             "remote_terminal": "open"
           }]
         }
@@ -74,10 +69,11 @@
         "name": { "type": "string", "minLength": 1, "description": "远程目录的显示名称。" },
         "host": { "type": "string", "minLength": 1, "description": "对应 hosts 中的 name。" },
         "remote_path": { "type": "string", "minLength": 1, "default": ".", "description": "服务器目录；`.` 表示 SSH 登录目录。" },
-        "local_path": { "type": "string", "description": "没有平台专用路径时使用的通用本地挂载路径。" },
+        "local_path": { "type": "string", "description": "本配置文件使用的唯一的本地挂载路径。" },
         "local_paths": {
           "type": "object",
-          "description": "各平台的本地挂载路径。",
+          "deprecated": true,
+          "description": "旧版各平台本地挂载路径；仅为兼容现有配置保留，请改用 local_path。",
           "properties": {
             "windows": { "type": "string", "pattern": "^[A-Za-z]:$", "description": "Windows 盘符，例如 X:。" },
             "macos": { "type": "string", "description": "macOS 本地挂载目录。" },

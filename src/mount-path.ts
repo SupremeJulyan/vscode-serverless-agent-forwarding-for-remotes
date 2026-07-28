@@ -20,6 +20,12 @@ export function resolveMountDirectory(
     : defaultMountDirectory(mount, currentDirectory, platform);
 }
 
+export function mountPathInDirectory(
+  directory: string, mountName: string, platform: PlatformKind
+): string {
+  return pathApi(platform).join(directory, mountName);
+}
+
 export interface MountPathMatch {
   mount: MountConfig;
   localPath: string;

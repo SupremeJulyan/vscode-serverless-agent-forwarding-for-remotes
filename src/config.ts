@@ -30,12 +30,14 @@ export interface BridgeConfig {
 export function setMountLocalPath(
   config: BridgeConfig,
   mountName: string,
-  platform: keyof NonNullable<MountConfig['local_paths']>,
   localPath: string
 ): MountConfig {
   const mount = config.mounts.find((candidate) => candidate.name === mountName);
   if (!mount) throw new Error(`Mount '${mountName}' no longer exists`);
-  mount.local_paths = { ...mount.local_paths, [platform]: localPath };
+  mount.local_path = localPath;
+  // Config files are platform-specific, so persist one authoritative path.
+  // Remove the legacy per-platform map when a path is changed through the UI.
+  delete mount.local_paths;
   return mount;
 }
 

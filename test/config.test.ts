@@ -32,7 +32,7 @@ test('saves a configuration that can be loaded as JSON', async () => {
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), config);
 });
 
-test('stores a selected mount directory for only the current platform', () => {
+test('stores one selected mount directory and removes the legacy platform map', () => {
   const config = parseConfig({
     hosts: [{ name: 'dev', ip: 'host', user: 'alice' }],
     mounts: [{
@@ -44,13 +44,10 @@ test('stores a selected mount directory for only the current platform', () => {
     }]
   });
 
-  const mount = setMountLocalPath(config, 'project', 'linux', '/mnt/project');
+  const mount = setMountLocalPath(config, 'project', '/mnt/project');
 
-  assert.equal(mount.local_path, '/fallback');
-  assert.deepEqual(mount.local_paths, {
-    macos: '/Users/alice/project',
-    linux: '/mnt/project'
-  });
+  assert.equal(mount.local_path, '/mnt/project');
+  assert.equal(mount.local_paths, undefined);
 });
 
 test('rejects a missing host reference', () => {

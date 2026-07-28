@@ -62,7 +62,7 @@ New configurations always mount the SSH login directory and use the `open` termi
 
 SSH passwords entered by the wizard are stored as `enc:v1:` ciphertext using the configuration encryption passphrase. Plaintext passwords in older configurations are migrated the next time they are used. macOS and Linux pass the decrypted password to OpenSSH and SSHFS through a short-lived `SSH_ASKPASS` helper, never through command arguments or task output.
 
-Custom `remote_path`, `local_path`, and `local_paths` values in existing configurations remain supported. Legacy `now` and `never` terminal modes are normalized to `open`.
+Custom `remote_path` and `local_path` values remain supported. Legacy `local_paths` maps are read for compatibility, but new selections are saved as the config file's single `local_path`. Legacy `now` and `never` terminal modes are normalized to `open`.
 
 `vpn: true` means “use the VPN-visible network path.” On WSL the bridge starts and shares the Windows TCP relay. On native Windows, macOS, and Linux no extra relay is needed because SSHFS runs in the same network namespace as that platform's VPN client.
 The macOS and Linux configuration wizard hides the relay option, and their status output does not include a relay section.

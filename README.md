@@ -179,13 +179,7 @@ WSL 还会显示已注册的 Windows TCP 中继、端口映射和进程状态。
       "name": "dev",
       "host": "dev",
       "remote_path": "/srv/My Project",
-      "local_path": "/通用挂载目录/My Project",
-      "local_paths": {
-        "windows": "R:",
-        "macos": "/Users/alice/远程项目/My Project",
-        "linux": "/home/alice/远程项目/My Project",
-        "wsl": "/home/alice/远程项目/My Project"
-      },
+      "local_path": "/挂载目录/My Project",
       "remote_terminal": "open"
     }
   ]
@@ -207,13 +201,12 @@ WSL 还会显示已注册的 Windows TCP 中继、端口映射和进程状态。
 - `name`：挂载和终端显示名称。
 - `host`：对应 `hosts[].name`。
 - `remote_path`：远程目录，`.` 表示 SSH 登录目录。
-- `local_path`：没有平台专用值时使用的固定本地挂载路径。
-- `local_paths`：`windows`、`macos`、`linux`、`wsl` 各平台的固定挂载路径；
-  平台专用值优先于 `local_path`。
+- `local_path`：本配置文件使用的唯一固定本地挂载路径。各平台使用各自独立的
+  配置文件，因此无需按平台分别配置路径。
 - `remote_terminal`：当前固定为 `open`。旧配置中的 `now`、`never` 等值会兼容
   读取并统一按 `open` 处理。
 
-显式配置的 `local_path` 和 `local_paths` 始终视为固定位置，不会因为当前工作区
+显式配置的 `local_path` 始终视为固定位置，不会因为当前工作区
 变化而重新计算。只有未配置本地路径时，WSL、Linux 和 macOS 才在当前工作区下
 使用挂载名称创建默认目录。
 

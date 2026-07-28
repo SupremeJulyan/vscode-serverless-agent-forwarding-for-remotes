@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.9.6
+
+- 挂载配置统一写入唯一的 `local_path`，不再按平台分别保存。
+- 选择其他本地目录时自动追加挂载名称。
+- 拒绝在已有挂载目录中创建嵌套挂载，并继续提示选择其他目录。
+
 ## 0.9.5
 
 - Remove automatic dependency detection and show the platform installation

@@ -12,7 +12,7 @@ import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
 import {
   defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
-  resolveMountDirectory
+  mountPathInDirectory, resolveMountDirectory
 } from './mount-path';
 import { MountOperationLock, normalizeMountLockKey } from './mount-lock';
 import { createDependencyGuide } from './dependency-guide';
@@ -156,7 +156,9 @@ async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
   return resolveMountDirectory(mount, current, platformAdapter.kind, expandHome);
 }
 
-async function confirmMountDirectory(localPath: string): Promise<string | undefined> {
+async function confirmMountDirectory(
+  mount: MountConfig, config: BridgeConfig, localPath: string
+): Promise<string | undefined> {
   const selected = await vscode.window.showInformationMessage(
     `远程目录将挂载到：\n${localPath}`,
     { modal: true, detail: '确认使用该目录，或选择另一个本地目录作为本次挂载位置。' },
@@ -165,15 +167,29 @@ async function confirmMountDirectory(localPath: string): Promise<string | undefi
   );
   if (selected === confirmMountAction) return localPath;
   if (selected !== chooseMountDirectoryAction) return undefined;
-  const picked = await vscode.window.showOpenDialog({
-    title: '选择本地挂载目录',
-    defaultUri: vscode.Uri.file(path.dirname(localPath)),
-    canSelectFiles: false,
-    canSelectFolders: true,
-    canSelectMany: false,
-    openLabel: '使用此目录'
-  });
-  return picked?.[0]?.fsPath;
+  while (true) {
+    const picked = await vscode.window.showOpenDialog({
+      title: `选择本地目录（将在其中创建 ${mount.name}）`,
+      defaultUri: vscode.Uri.file(path.dirname(localPath)),
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: '使用此目录'
+    });
+    const parentDirectory = picked?.[0]?.fsPath;
+    if (!parentDirectory) return undefined;
+    const parentIsMount = await commandSucceeds(
+      platformAdapter.status(resolveMount(config, mount), parentDirectory)
+    );
+    if (parentIsMount) {
+      await vscode.window.showErrorMessage(
+        '不能在已挂载的目录中创建嵌套挂载。',
+        { modal: true, detail: `请选择其他本地目录：${parentDirectory}` }
+      );
+      continue;
+    }
+    return mountPathInDirectory(parentDirectory, mount.name, platformAdapter.kind);
+  }
 }
 
 async function executeTask(plan: CommandPlan): Promise<void> {
@@ -428,10 +444,10 @@ async function openRemoteFolder(
   const { mount, config } = selected;
   const resolvedLocalPath = await mountDirectory(mount);
   if (!resolvedLocalPath) return;
-  const localPath = await confirmMountDirectory(resolvedLocalPath);
+  const localPath = await confirmMountDirectory(mount, config, resolvedLocalPath);
   if (!localPath) return;
   if (!sameLocalPath(localPath, resolvedLocalPath)) {
-    setMountLocalPath(config, mount.name, platformAdapter.kind, localPath);
+    setMountLocalPath(config, mount.name, localPath);
     await saveConfig(configPath(), config);
   }
   if (platformAdapter.kind !== 'windows') await mkdir(localPath, { recursive: true });

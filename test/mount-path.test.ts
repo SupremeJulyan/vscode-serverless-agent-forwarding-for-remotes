@@ -3,7 +3,7 @@ import test from 'node:test';
 import { MountConfig } from '../src/config';
 import {
   defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
-  resolveMountDirectory
+  mountPathInDirectory, resolveMountDirectory
 } from '../src/mount-path';
 
 const mounts: MountConfig[] = [
@@ -128,5 +128,16 @@ test('uses a workspace-based default only when no local path is configured', () 
   assert.equal(
     resolveMountDirectory(mount, '/workspace', 'wsl', (value) => value),
     '/workspace/gkn'
+  );
+});
+
+test('appends the mount name to a user-selected parent directory', () => {
+  assert.equal(
+    mountPathInDirectory('/home/alice/mounts', 'project', 'linux'),
+    '/home/alice/mounts/project'
+  );
+  assert.equal(
+    mountPathInDirectory('C:\\mounts', 'project', 'windows'),
+    'C:\\mounts\\project'
   );
 });
