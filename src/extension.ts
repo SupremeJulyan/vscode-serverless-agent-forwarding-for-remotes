@@ -429,7 +429,7 @@ async function openRemoteFolder(
       const opened = await vscode.commands.executeCommand<boolean | undefined>(
         'vscode.openFolder',
         vscode.Uri.file(absoluteLocalPath),
-        { forceReuseWindow: true }
+        false
       );
       if (opened === false) {
         workspaceSwitchMountPath = undefined;
@@ -526,7 +526,7 @@ async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void
       await vscode.commands.executeCommand(
         'vscode.openFolder',
         vscode.Uri.file(path.resolve(pending.localPath)),
-        { forceReuseWindow: true }
+        false
       );
     } finally {
       workspaceSwitchMountPath = undefined;
@@ -752,9 +752,11 @@ async function executePlatformUnmount(remote: ResolvedMount, localPath: string):
     await executePlan(platformAdapter.unmount(remote, localPath));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (platformAdapter.kind !== 'linux'
-      || !message.includes('Device or resource busy')
-      || !platformAdapter.lazyUnmount) {
+    const busy = platformAdapter.kind === 'macos'
+      ? message.includes('Resource busy')
+      : message.includes('Device or resource busy');
+    if ((platformAdapter.kind !== 'linux' && platformAdapter.kind !== 'macos')
+      || !busy || !platformAdapter.lazyUnmount) {
       throw error;
     }
     await executePlan(platformAdapter.lazyUnmount(remote, localPath));

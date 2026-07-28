@@ -107,6 +107,9 @@ test('native Unix platforms provide non-interactive shutdown unmount commands', 
   assert.deepEqual(createPlatformAdapter('macos').unmount(remote, '/Users/alice/project'), {
     command: 'umount', args: ['/Users/alice/project']
   });
+  assert.deepEqual(createPlatformAdapter('macos').lazyUnmount?.(remote, '/Users/alice/project'), {
+    command: 'diskutil', args: ['unmount', '/Users/alice/project']
+  });
   assert.deepEqual(createPlatformAdapter('linux').unmount(remote, '/mnt/project'), {
     command: 'fusermount3', args: ['-u', '--', '/mnt/project'], stdin: ''
   });

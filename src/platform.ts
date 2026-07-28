@@ -126,7 +126,9 @@ class UnixAdapter implements PlatformAdapter {
       : { command: 'fusermount3', args: ['-u', '--', localPath], stdin: '' };
   }
   lazyUnmount(_remote: ResolvedMount, localPath: string): CommandPlan {
-    return { command: 'fusermount3', args: ['-uz', '--', localPath], stdin: '' };
+    return this.kind === 'macos'
+      ? { command: 'diskutil', args: ['unmount', localPath] }
+      : { command: 'fusermount3', args: ['-uz', '--', localPath], stdin: '' };
   }
   status(_remote: ResolvedMount, localPath: string): CommandPlan {
     return this.kind === 'macos'

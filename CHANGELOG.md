@@ -1,5 +1,18 @@
 # Change Log
 
+## 0.9.2
+
+- Fall back to `diskutil unmount` when a normal macOS unmount reports that the
+  SSHFS mount is busy.
+- Pass the documented reuse-window argument to `vscode.openFolder`, restoring
+  automatic folder switching and remote-terminal creation after mounting.
+
+## 0.9.1
+
+- Activate immediately after installation so the initial missing-dependency
+  check and installation prompt are shown without requiring a VS Code restart
+  or another extension command.
+
 ## 0.9.0
 
 - Add a dedicated Serverless Remote SSH activity-bar view listing configured

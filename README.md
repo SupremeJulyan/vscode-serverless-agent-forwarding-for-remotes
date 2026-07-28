@@ -119,7 +119,8 @@ Windows VPN 客户端时可选择启用。
 
 - 选择要卸载的配置。
 - 如果当前工作区正在使用该挂载，先关闭工作区，窗口重载后继续卸载。
-- Linux 正常卸载遇到 `Device or resource busy` 时会回退到 lazy unmount。
+- Linux 正常卸载遇到 `Device or resource busy` 时会回退到 lazy unmount；macOS
+  遇到 `Resource busy` 时会自动改用 `diskutil unmount`。
 - Linux 和 macOS 只在窗口关闭时自动清理本次插件会话创建的挂载，不会擅自
   卸载会话开始前已经存在的挂载。
 
