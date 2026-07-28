@@ -41,6 +41,16 @@ export function setMountLocalPath(
   return mount;
 }
 
+export function removeMountConfig(config: BridgeConfig, mountName: string): MountConfig {
+  const index = config.mounts.findIndex((candidate) => candidate.name === mountName);
+  if (index < 0) throw new Error(`Mount '${mountName}' no longer exists`);
+  const [removed] = config.mounts.splice(index, 1);
+  if (!config.mounts.some((mount) => mount.host === removed.host)) {
+    config.hosts = config.hosts.filter((host) => host.name !== removed.host);
+  }
+  return removed;
+}
+
 export interface ResolvedMount extends MountConfig {
   hostConfig: HostConfig;
 }

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   ensureConfigFile, expandHome, parseConfig, parseSshLogin, resolveMount, saveConfig,
-  setMountLocalPath
+  removeMountConfig, setMountLocalPath
 } from '../src/config';
 
 test('parses and resolves a mount through its host reference', () => {
@@ -48,6 +48,27 @@ test('stores one selected mount directory and removes the legacy platform map', 
 
   assert.equal(mount.local_path, '/mnt/project');
   assert.equal(mount.local_paths, undefined);
+});
+
+test('removes a mount and its host only when no other mount uses that host', () => {
+  const config = parseConfig({
+    hosts: [
+      { name: 'dev', ip: 'host', user: 'alice' },
+      { name: 'other', ip: 'other', user: 'bob' }
+    ],
+    mounts: [
+      { name: 'project', host: 'dev', remote_path: '.' },
+      { name: 'docs', host: 'dev', remote_path: '/docs' },
+      { name: 'other', host: 'other', remote_path: '.' }
+    ]
+  });
+
+  removeMountConfig(config, 'project');
+  assert.deepEqual(config.mounts.map((mount) => mount.name), ['docs', 'other']);
+  assert.deepEqual(config.hosts.map((host) => host.name), ['dev', 'other']);
+
+  removeMountConfig(config, 'docs');
+  assert.deepEqual(config.hosts.map((host) => host.name), ['other']);
 });
 
 test('rejects a missing host reference', () => {

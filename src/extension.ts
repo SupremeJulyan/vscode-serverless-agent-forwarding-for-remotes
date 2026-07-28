@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { mkdir, readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rmdir } from 'node:fs/promises';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
-  parseSshLogin, resolveMount, saveConfig, setMountLocalPath
+  parseSshLogin, removeMountConfig, resolveMount, saveConfig, setMountLocalPath
 } from './config';
 import { commandSucceeds, executeWithStdin } from './process';
 import { CommandPlan, ConnectionOptions, createPlatformAdapter } from './platform';
@@ -956,6 +956,33 @@ async function configuredMount(item: RemoteMountTreeItem): Promise<MountConfig> 
   return mount;
 }
 
+async function deleteRemoteConfig(item: RemoteMountTreeItem): Promise<void> {
+  const config = await readConfig();
+  const mount = config.mounts.find((candidate) => candidate.name === item.mountName);
+  if (!mount) throw new Error(`Remote folder no longer exists: ${item.mountName}`);
+  const localPath = await mountDirectory(mount);
+  if (!localPath || !await isEmptyDirectory(localPath, true)) {
+    await vscode.window.showErrorMessage(
+      '当前目录已被挂载，请先断开连接一段时间后删除。',
+      { modal: true }
+    );
+    return;
+  }
+  const confirmed = await vscode.window.showWarningMessage(
+    `确定删除“${mount.name}”配置及空挂载目录吗？`,
+    { modal: true, detail: localPath },
+    '删除'
+  );
+  if (confirmed !== '删除') return;
+  try {
+    await rmdir(localPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  removeMountConfig(config, mount.name);
+  await saveConfig(configPath(), config);
+}
+
 async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<void> {
   const pending = context.globalState.get<PendingUnmount>(pendingUnmountKey);
   if (!pending) return;
@@ -1218,6 +1245,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       `${commandPrefix}.closeItem`,
       (item: RemoteMountTreeItem) => guard(async () => {
         await closeRemote(context, await configuredMount(item));
+        remoteFolders.refresh();
+      })
+    ),
+    vscode.commands.registerCommand(
+      `${commandPrefix}.deleteConfigItem`,
+      (item: RemoteMountTreeItem) => guard(async () => {
+        await deleteRemoteConfig(item);
         remoteFolders.refresh();
       })
     )

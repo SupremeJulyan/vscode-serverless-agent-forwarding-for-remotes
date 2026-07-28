@@ -3,7 +3,7 @@
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
   "icon": "images/icon.png",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -91,6 +91,11 @@
         "command": "serverlessRemote.closeItem",
         "title": "断开连接",
         "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "serverlessRemote.deleteConfigItem",
+        "title": "删除配置",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -198,6 +203,11 @@
           "command": "serverlessRemote.closeItem",
           "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
           "group": "serverlessRemote@3"
+        },
+        {
+          "command": "serverlessRemote.deleteConfigItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "group": "serverlessRemote@4"
         }
       ]
     },
