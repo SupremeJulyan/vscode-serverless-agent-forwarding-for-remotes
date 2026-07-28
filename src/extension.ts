@@ -39,6 +39,10 @@ interface PendingUnmount {
   createdAt: number;
 }
 
+interface RemoteMountTreeItem {
+  mountName: string;
+}
+
 const pendingOpenKey = 'serverlessRemote.pendingOpen';
 const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
 const pendingOpenTtlMs = 5 * 60 * 1000;
@@ -387,8 +391,12 @@ async function ensureMountedUnlocked(
   return false;
 }
 
-async function openRemoteFolder(context: vscode.ExtensionContext): Promise<void> {
-  const selected = await selectMount('Select a remote folder to open');
+async function openRemoteFolder(
+  context: vscode.ExtensionContext, requestedMount?: MountConfig
+): Promise<void> {
+  const selected = requestedMount
+    ? { mount: requestedMount, config: await readConfig() }
+    : await selectMount('Select a remote folder to open');
   if (!selected) return;
   const { mount, config } = selected;
   const localPath = await mountDirectory(mount);
@@ -753,8 +761,12 @@ async function executePlatformUnmount(remote: ResolvedMount, localPath: string):
   }
 }
 
-async function closeRemote(context: vscode.ExtensionContext): Promise<void> {
-  const selected = await selectMount('Select a remote folder to close');
+async function closeRemote(
+  context: vscode.ExtensionContext, requestedMount?: MountConfig
+): Promise<void> {
+  const selected = requestedMount
+    ? { mount: requestedMount, config: await readConfig() }
+    : await selectMount('Select a remote folder to close');
   if (selected) {
     const { mount } = selected;
     const expandedPath = await mountDirectory(mount);
@@ -804,6 +816,92 @@ async function showStatus(output: vscode.OutputChannel): Promise<void> {
     for (const line of await relayStatusLines()) output.appendLine(line);
   }
   output.show(true);
+}
+
+class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+  private readonly changed = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
+  readonly onDidChangeTreeData = this.changed.event;
+
+  dispose(): void {
+    this.changed.dispose();
+  }
+
+  refresh(): void {
+    this.changed.fire();
+  }
+
+  getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
+    return item;
+  }
+
+  async getChildren(): Promise<vscode.TreeItem[]> {
+    let config: BridgeConfig;
+    try {
+      config = await readConfig();
+    } catch (error) {
+      await vscode.commands.executeCommand('setContext', 'serverlessRemote.hasNoMounts', false);
+      const message = error instanceof Error ? error.message : String(error);
+      const item = new vscode.TreeItem('Cannot read configuration');
+      item.description = 'Open config to fix';
+      item.iconPath = new vscode.ThemeIcon(
+        'warning', new vscode.ThemeColor('list.warningForeground')
+      );
+      item.tooltip = message;
+      item.command = {
+        command: `${commandPrefix}.openConfig`,
+        title: 'Open Config'
+      };
+      return [item];
+    }
+
+    await vscode.commands.executeCommand(
+      'setContext', 'serverlessRemote.hasNoMounts', config.mounts.length === 0
+    );
+    return Promise.all(config.mounts.map(async (mount) => {
+      const localPath = await mountDirectory(mount);
+      const resolved = resolveMount(config, mount);
+      const mounted = localPath
+        ? await commandSucceeds(platformAdapter.status(resolved, localPath))
+        : false;
+      const item = new vscode.TreeItem(
+        mount.name, vscode.TreeItemCollapsibleState.None
+      ) as vscode.TreeItem & RemoteMountTreeItem;
+      item.mountName = mount.name;
+      item.description = `${resolved.hostConfig.user}@${resolved.hostConfig.ip} · ${
+        mounted ? 'mounted' : 'not mounted'
+      }`;
+      item.contextValue = mounted
+        ? 'serverlessRemote.mount.mounted'
+        : 'serverlessRemote.mount';
+      item.iconPath = mounted
+        ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('testing.iconPassed'))
+        : new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('descriptionForeground'));
+      item.tooltip = new vscode.MarkdownString([
+        `**${mount.name}**`,
+        '',
+        `${resolved.hostConfig.user}@${resolved.hostConfig.ip}:${resolved.hostConfig.port ?? 22}`,
+        '',
+        `Remote: \`${mount.remote_path}\``,
+        '',
+        `Local: \`${localPath ?? 'Not configured'}\``,
+        '',
+        mounted ? 'Mounted' : 'Not mounted'
+      ].join('\n'));
+      item.command = {
+        command: `${commandPrefix}.openFolderItem`,
+        title: 'Open Remote Folder',
+        arguments: [item]
+      };
+      return item;
+    }));
+  }
+}
+
+async function configuredMount(item: RemoteMountTreeItem): Promise<MountConfig> {
+  const config = await readConfig();
+  const mount = config.mounts.find((candidate) => candidate.name === item.mountName);
+  if (!mount) throw new Error(`Remote folder no longer exists: ${item.mountName}`);
+  return mount;
 }
 
 async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<void> {
@@ -1066,19 +1164,56 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
   bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
   context.subscriptions.push(statusOutput, bridgeOutput);
+  const remoteFolders = new RemoteFoldersProvider();
   const registrations: Array<[string, () => Promise<void>]> = [
     ['openFolder', () => guard(() => openRemoteFolder(context))],
     ['openTerminal', () =>
       guard(() => openTerminal(context, undefined, undefined, undefined, true))],
-    ['close', () => guard(() => closeRemote(context))],
+    ['close', () => guard(async () => {
+      await closeRemote(context);
+      remoteFolders.refresh();
+    })],
     ['status', () => guard(() => showStatus(statusOutput))],
     ['openConfig', () => guard(() => openConfig())],
-    ['addSshConfig', () => guard(() => addSshConfig(context))],
+    ['addSshConfig', () => guard(async () => {
+      await addSshConfig(context);
+      remoteFolders.refresh();
+    })],
     ['installDependenciesTips', () => guard(() => showDependencyTips(context))]
   ];
   for (const [name, handler] of registrations) {
     context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));
   }
+  context.subscriptions.push(
+    remoteFolders,
+    vscode.window.registerTreeDataProvider(`${commandPrefix}.mounts`, remoteFolders),
+    vscode.commands.registerCommand(`${commandPrefix}.refreshExplorer`, () => {
+      remoteFolders.refresh();
+    }),
+    vscode.commands.registerCommand(
+      `${commandPrefix}.openFolderItem`,
+      (item: RemoteMountTreeItem) => guard(async () => {
+        await openRemoteFolder(context, await configuredMount(item));
+        remoteFolders.refresh();
+      })
+    ),
+    vscode.commands.registerCommand(
+      `${commandPrefix}.openTerminalItem`,
+      (item: RemoteMountTreeItem) => guard(async () => {
+        await openTerminal(
+          context, await configuredMount(item), undefined, undefined, true
+        );
+        remoteFolders.refresh();
+      })
+    ),
+    vscode.commands.registerCommand(
+      `${commandPrefix}.closeItem`,
+      (item: RemoteMountTreeItem) => guard(async () => {
+        await closeRemote(context, await configuredMount(item));
+        remoteFolders.refresh();
+      })
+    )
+  );
   context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
     void suggestReopeningClosedTerminal(terminal);
   }));

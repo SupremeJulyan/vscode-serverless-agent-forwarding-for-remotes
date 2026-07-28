@@ -1,5 +1,17 @@
 # Change Log
 
+## 0.9.0
+
+- Add a dedicated Serverless Remote SSH activity-bar view listing configured
+  remote folders and their current mount status.
+- Open remote folders and terminals or disconnect active mounts directly from
+  the view.
+- Add title-bar actions for creating configurations and refreshing the view,
+  with configuration, status, and dependency commands available from the
+  overflow menu.
+- Show guided empty and configuration-error states without changing the
+  existing command-palette workflows.
+
 ## 0.8.15
 
 - Make `Open Remote Terminal` create a new SSH terminal every time, while

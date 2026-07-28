@@ -3,7 +3,7 @@
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
   "icon": "images/icon.png",
-  "version": "0.8.15",
+  "version": "0.9.0",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -29,6 +29,7 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished",
+    "onView:serverlessRemote.mounts",
     "onCommand:serverlessRemote.openFolder",
     "onCommand:serverlessRemote.openTerminal",
     "onCommand:serverlessRemote.close",
@@ -63,11 +64,56 @@
       },
       {
         "command": "serverlessRemote.addSshConfig",
-        "title": "Serverless Remote SSH: Add SSH Config"
+        "title": "Serverless Remote SSH: Add SSH Config",
+        "icon": "$(add)"
       },
       {
         "command": "serverlessRemote.installDependenciesTips",
         "title": "Serverless Remote SSH: Install Dependencies Tips"
+      },
+      {
+        "command": "serverlessRemote.refreshExplorer",
+        "title": "Refresh Remote Folders",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "serverlessRemote.openFolderItem",
+        "title": "Open Remote Folder",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "serverlessRemote.openTerminalItem",
+        "title": "Open Remote Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "serverlessRemote.closeItem",
+        "title": "Disconnect",
+        "icon": "$(debug-disconnect)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "serverlessRemote",
+          "title": "Serverless Remote SSH",
+          "icon": "resources/remote-ssh.svg"
+        }
+      ]
+    },
+    "views": {
+      "serverlessRemote": [
+        {
+          "id": "serverlessRemote.mounts",
+          "name": "Remote Folders"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "serverlessRemote.mounts",
+        "contents": "No remote folders are configured.\n[Add SSH Config](command:serverlessRemote.addSshConfig)\n[Open Config](command:serverlessRemote.openConfig)",
+        "when": "serverlessRemote.hasNoMounts"
       }
     ],
     "menus": {
@@ -92,6 +138,65 @@
         },
         {
           "command": "serverlessRemote.installDependenciesTips"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "serverlessRemote.addSshConfig",
+          "when": "view == serverlessRemote.mounts",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serverlessRemote.refreshExplorer",
+          "when": "view == serverlessRemote.mounts",
+          "group": "navigation@2"
+        },
+        {
+          "command": "serverlessRemote.openConfig",
+          "when": "view == serverlessRemote.mounts",
+          "group": "serverlessRemote@1"
+        },
+        {
+          "command": "serverlessRemote.status",
+          "when": "view == serverlessRemote.mounts",
+          "group": "serverlessRemote@2"
+        },
+        {
+          "command": "serverlessRemote.installDependenciesTips",
+          "when": "view == serverlessRemote.mounts",
+          "group": "serverlessRemote@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "serverlessRemote.openFolderItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverlessRemote.openTerminalItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "group": "inline@2"
+        },
+        {
+          "command": "serverlessRemote.closeItem",
+          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
+          "group": "inline@3"
+        },
+        {
+          "command": "serverlessRemote.openFolderItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "group": "serverlessRemote@1"
+        },
+        {
+          "command": "serverlessRemote.openTerminalItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "group": "serverlessRemote@2"
+        },
+        {
+          "command": "serverlessRemote.closeItem",
+          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
+          "group": "serverlessRemote@3"
         }
       ]
     },
