@@ -49,6 +49,8 @@ const pendingOpenTtlMs = 5 * 60 * 1000;
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const openRemoteTerminalAction = 'Open Remote Terminal';
+const confirmMountAction = '确认挂载';
+const chooseMountDirectoryAction = '选择其他本地目录';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
@@ -152,6 +154,26 @@ async function selectMount(placeHolder: string): Promise<{ mount: MountConfig; c
 async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   return resolveMountDirectory(mount, current, platformAdapter.kind, expandHome);
+}
+
+async function confirmMountDirectory(localPath: string): Promise<string | undefined> {
+  const selected = await vscode.window.showInformationMessage(
+    `远程目录将挂载到：\n${localPath}`,
+    { modal: true, detail: '确认使用该目录，或选择另一个本地目录作为本次挂载位置。' },
+    confirmMountAction,
+    chooseMountDirectoryAction
+  );
+  if (selected === confirmMountAction) return localPath;
+  if (selected !== chooseMountDirectoryAction) return undefined;
+  const picked = await vscode.window.showOpenDialog({
+    title: '选择本地挂载目录',
+    defaultUri: vscode.Uri.file(path.dirname(localPath)),
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: '使用此目录'
+  });
+  return picked?.[0]?.fsPath;
 }
 
 async function executeTask(plan: CommandPlan): Promise<void> {
@@ -399,8 +421,11 @@ async function openRemoteFolder(
     : await selectMount('Select a remote folder to open');
   if (!selected) return;
   const { mount, config } = selected;
-  const localPath = await mountDirectory(mount);
+  const resolvedLocalPath = await mountDirectory(mount);
+  if (!resolvedLocalPath) return;
+  const localPath = await confirmMountDirectory(resolvedLocalPath);
   if (!localPath) return;
+  if (platformAdapter.kind !== 'windows') await mkdir(localPath, { recursive: true });
   const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   await withMountLock(localPath, async () => {
     if (current && sameLocalPath(current, localPath)) {

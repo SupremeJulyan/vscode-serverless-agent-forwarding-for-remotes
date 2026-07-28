@@ -6,6 +6,8 @@
   SSHFS mount is busy.
 - Pass the documented reuse-window argument to `vscode.openFolder`, restoring
   automatic folder switching and remote-terminal creation after mounting.
+- Confirm the resolved local mount directory before opening a remote folder,
+  with an option to choose another local directory for the current operation.
 
 ## 0.9.1
 
