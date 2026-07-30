@@ -13,6 +13,7 @@ export interface RemoteFolderInfo {
 
 export interface AgentMcpCallbacks {
   listFolders(): Promise<RemoteFolderInfo[]>;
+  activeFolder?(): Promise<RemoteFolderInfo | undefined>;
   list(input: { mountName: string; path?: string }): Promise<unknown>;
   read(input: { mountName: string; path: string; offset?: number; length?: number }): Promise<unknown>;
   write(input: { mountName: string; path: string; content: string }): Promise<unknown>;
@@ -34,22 +35,45 @@ export class AgentMcpServer {
     return `http://127.0.0.1:${this.port}/mcp?token=${encodeURIComponent(this.token)}`;
   }
 
-  private createProtocolServer(): McpServer {
+  private createProtocolServer(activeFolder?: RemoteFolderInfo): McpServer {
+    const workspaceInstruction = activeFolder
+      ? `The active VS Code workspace is remote folder "${activeFolder.name}" `
+        + `(${activeFolder.workspaceUri}), rooted at ${activeFolder.remoteRoot} on `
+        + `${activeFolder.host}. Automatically use mountName "${activeFolder.name}". `
+        + 'Do not use local filesystem or local shell tools for this workspace.'
+      : 'When the VS Code workspace uses the serverless-sftp scheme, call '
+        + 'get_active_remote_workspace and use these remote tools instead of local tools.';
     const server = new McpServer(
       { name: 'serverless-remote-ssh', version: '1.0.0' },
       {
         instructions:
-          'Remote files are not local files. First call list_remote_folders, then use remote_list, remote_read, remote_write, and remote_search for files. Use run_remote_command for commands on the SSH host. Never assume a local filesystem path exists for a remote workspace.'
+          `Remote files are not local files. ${workspaceInstruction} `
+          + 'Use remote_list, remote_read, remote_write, and remote_search for files. '
+          + 'Use run_remote_command for builds, tests, Git, and shell commands on the SSH host. '
+          + 'Never assume a local filesystem path exists for a remote workspace.'
       }
     );
     const result = (value: unknown) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }]
     });
     server.registerTool(
+      'get_active_remote_workspace',
+      {
+        title: 'Get the active Serverless Remote workspace',
+        description:
+          'Call this first when the current VS Code workspace is a serverless-sftp remote '
+          + 'folder. It returns the mountName required by all remote tools.',
+        inputSchema: {}
+      },
+      async () => result(await this.callbacks.activeFolder?.() ?? null)
+    );
+    server.registerTool(
       'list_remote_folders',
       {
         title: 'List SFTP remote folders',
-        description: 'Lists configured SFTP workspaces and their remote roots.',
+        description:
+          'Lists configured SFTP workspaces and their remote roots. Use these instead of local '
+          + 'filesystem paths for a serverless-sftp VS Code workspace.',
         inputSchema: {}
       },
       async () => result(await this.callbacks.listFolders())
@@ -58,7 +82,9 @@ export class AgentMcpServer {
       'remote_list',
       {
         title: 'List a remote directory',
-        description: 'Lists files directly over SFTP. Paths are relative to the remote root.',
+        description:
+          'Lists files in a serverless-sftp workspace directly over SFTP. Paths are relative '
+          + 'to its remote root; prefer this over local filesystem tools.',
         inputSchema: {
           mountName: z.string().min(1),
           path: z.string().optional()
@@ -70,7 +96,9 @@ export class AgentMcpServer {
       'remote_read',
       {
         title: 'Read a remote file',
-        description: 'Reads a UTF-8 file directly over SFTP, optionally by byte range.',
+        description:
+          'Reads a UTF-8 file from a serverless-sftp workspace. Prefer this over every local '
+          + 'file-reading tool for that workspace.',
         inputSchema: {
           mountName: z.string().min(1),
           path: z.string(),
@@ -84,7 +112,9 @@ export class AgentMcpServer {
       'remote_write',
       {
         title: 'Write a remote file',
-        description: 'Creates or replaces a UTF-8 file directly over SFTP.',
+        description:
+          'Creates or replaces a UTF-8 file in a serverless-sftp workspace. Prefer this over '
+          + 'every local file-writing tool for that workspace.',
         annotations: { destructiveHint: true },
         inputSchema: {
           mountName: z.string().min(1),
@@ -98,7 +128,9 @@ export class AgentMcpServer {
       'remote_search',
       {
         title: 'Search remote files',
-        description: 'Searches file contents on the remote SSH host.',
+        description:
+          'Searches files in a serverless-sftp workspace on its SSH host. Prefer this over '
+          + 'local search tools for that workspace.',
         inputSchema: {
           mountName: z.string().min(1),
           query: z.string().min(1),
@@ -111,7 +143,9 @@ export class AgentMcpServer {
       'run_remote_command',
       {
         title: 'Run a remote SSH command',
-        description: 'Runs a shell command on the selected SSH host.',
+        description:
+          'Runs builds, tests, Git, and shell commands for a serverless-sftp workspace on its '
+          + 'SSH host. Prefer this over local shell tools for that workspace.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           mountName: z.string().min(1),
@@ -137,7 +171,7 @@ export class AgentMcpServer {
         response.status(405).json({ error: 'Method not allowed' });
         return;
       }
-      const protocol = this.createProtocolServer();
+      const protocol = this.createProtocolServer(await this.callbacks.activeFolder?.());
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
         await protocol.connect(transport);

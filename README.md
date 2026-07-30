@@ -73,8 +73,15 @@ VS Code Agent 可使用：
 - `#serverlessRemoteRun`
 
 扩展还在 `127.0.0.1` 上提供令牌保护的 Streamable HTTP MCP 服务，工具包括
-`list_remote_folders`、`remote_list`、`remote_read`、`remote_write`、
+`get_active_remote_workspace`、`list_remote_folders`、`remote_list`、`remote_read`、`remote_write`、
 `remote_search` 和 `run_remote_command`。
+
+MCP 服务启动后，扩展会检测系统中的 Codex、Claude Code CLI，也会检测对应
+VS Code 扩展内置的 CLI。尚未注册时会提示“一键配置”；注册完成后重启对应
+Agent/扩展即可加载工具。
+
+打开 `serverless-sftp://` 工作区时，扩展会把当前挂载名、远端根目录和主机
+注入 MCP 上下文，使 Agent 优先选择远程文件和命令工具。
 
 Agent 不应把远程 URI 当作本地路径。所有远程文件访问都通过 SFTP 工具完成，
 构建、测试、Git 和系统检查通过 SSH 远程命令完成。文件工具被限制在配置的
