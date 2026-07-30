@@ -303,7 +303,7 @@ VS Code 的“输出”面板中，`Serverless Remote SSH` 通道使用 `[性能
 
 ### 在 VS Code 中手动安装
 
-1. 下载 `vscode-serverless-remote-ssh-0.8.15.vsix`。
+1. 下载 `vscode-serverless-remote-ssh-1.0.0.vsix`。
 2. 打开 VS Code 扩展视图（Windows/Linux：`Ctrl+Shift+X`；macOS：
    `Cmd+Shift+X`）。
 3. 打开扩展视图右上角的 `...` 菜单，选择“从 VSIX 安装...”。
@@ -317,7 +317,7 @@ VS Code 的“输出”面板中，`Serverless Remote SSH` 通道使用 `[性能
 ### 使用命令行安装
 
 ```bash
-code --install-extension vscode-serverless-remote-ssh-0.8.15.vsix
+code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
 ```
 
 ## 开发

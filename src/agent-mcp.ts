@@ -36,7 +36,7 @@ export class AgentMcpServer {
 
   private createProtocolServer(): McpServer {
     const server = new McpServer(
-      { name: 'serverless-remote-ssh', version: '0.10.0' },
+      { name: 'serverless-remote-ssh', version: '1.0.0' },
       {
         instructions:
           'IMPORTANT remote-routing rule: first call list_forwarded_mounts when the current working directory may be inside an SSHFS-forwarded folder. When cwd is inside a listed localRoot, you MUST use run_remote_command for every shell command that depends on the remote machine or its files, including operating-system and hardware inspection, environment diagnostics, builds, tests, Git, package managers, and process or service checks. Do not run those commands in the agent host shell. Continue reading and editing mounted files with the agent file tools.'
