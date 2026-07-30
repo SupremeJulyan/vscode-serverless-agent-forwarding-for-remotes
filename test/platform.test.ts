@@ -129,6 +129,30 @@ test('native SSH starts an interactive login shell in the mapped remote director
   assert.equal(plan.args.at(-1), `cd -- '/srv/project/it'\"'\"'s here' && exec "\${SHELL:-/bin/sh}" -l`);
 });
 
+test('native AI execution is non-interactive and uses the mapped remote directory', () => {
+  const plan = createPlatformAdapter('linux').exec(
+    remote.hostConfig, "/srv/project/it's here", 'npm test',
+    { reuseSshConnection: true }
+  );
+  assert.equal(plan.command, 'ssh');
+  assert.equal(plan.args.includes('-t'), false);
+  assert.equal(plan.args.includes('ControlMaster=auto'), true);
+  assert.match(plan.args.at(-1) ?? '', /cd -- '\/srv\/project\/it'"'"'s here'/);
+  assert.match(plan.args.at(-1) ?? '', /-lc 'npm test'$/);
+});
+
+test('WSL AI execution follows the ssh-bridge host configuration without a PTY', () => {
+  const plan = createPlatformAdapter('wsl').exec(
+    remote.hostConfig, '/srv/project', 'npm test',
+    { reuseSshConnection: true }
+  );
+  assert.equal(plan.command, 'ssh-bridge');
+  assert.equal(plan.args[0], remote.hostConfig.name);
+  assert.equal(plan.args.includes('--tty'), false);
+  assert.match(plan.args[1], /cd -- '\/srv\/project'/);
+  assert.equal(plan.env?.WSL_VPN_SSH_CONNECTION_REUSE, '1');
+});
+
 test('every platform preserves unusual path characters as single command arguments', () => {
   const remotePath = "/srv/项目 (A)/O'Brien/[草稿]";
   const localPath = "/Volumes/团队 (A)/O'Brien/[草稿]";

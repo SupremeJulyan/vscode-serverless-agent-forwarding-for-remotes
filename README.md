@@ -26,6 +26,9 @@ SSH 会话，无需在目标主机上安装或运行 VS Code Server。语言服�
 - Linux 和 macOS 提供 `fresh`、`balanced`、`fast` 三档 SSHFS 缓存策略。
 - 首次安装插件后提示一次平台依赖安装说明，并提供安装包链接或适合当前 Linux 发行版的可复制命令。
 - 提供挂载状态、WSL 中继状态、连接阶段耗时和错误诊断。
+- 可在远程文件夹侧栏点击 `$(sparkle)` 打开 AI 转发。VS Code Agent 可通过
+  `#serverlessRemoteRun` 在远端执行命令，当前 SSHFS 工作目录会自动映射到
+  `remote_path` 下的相同相对目录。
 - 支持平台专用挂载路径，以及包含空格、中文、括号、方括号和单引号的本地或
   远程路径。
 - 关闭工作区后安全卸载对应挂载；Linux 和 macOS 还会在扩展会话结束时清理
@@ -114,6 +117,25 @@ Windows VPN 客户端时可选择启用。
 
 工作区启动、窗口恢复等自动流程仍会复用相同配置和远程目录的已有终端。这只
 用于防止自动重复，不影响手动创建多个 SSH 会话。
+
+### AI 转发
+
+远程文件夹挂载成功后，侧栏会显示 `$(sparkle)`。点击它可打开或关闭该配置的
+Agent 转发；未挂载的配置不会显示此入口。GitHub Copilot Agent 可以直接调用
+`#serverlessRemoteRun`，无需额外配置。
+
+插件还会在 `127.0.0.1` 启动带随机访问令牌的 Streamable HTTP MCP 服务，为
+Codex、Claude Code 和其他 MCP Agent 提供 `list_forwarded_mounts` 与
+`run_remote_command`。第一次打开转发时，插件会检测 `codex` 和 `claude`
+命令；确认“一键配置”后，通过各自 CLI 注册 MCP。这个注册对整台本机只需执行
+一次，而不是每个 SSH 配置执行一次。Agent 通常需要重启或重载扩展才能看到新
+工具。
+
+工具沿用配置中的主机、端口、私钥或加密密码、WSL VPN bridge 和 SSH 连接复用
+设置。挂载目录中的工作路径会映射到远端 `remote_path` 下的相同相对目录。
+命令以非交互方式运行，并把标准输出、错误输出和退出码返回给 Agent。每次调用
+的批准由当前 Agent 的工具权限机制控制。关闭最后一个挂载的 Agent 转发，或
+停用插件时，本地 MCP 服务会停止。
 
 ### Close
 

@@ -3,7 +3,7 @@
   "displayName": "Serverless Remote SSH",
   "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
   "icon": "images/icon.png",
-  "version": "0.9.8",
+  "version": "0.10.0",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -11,7 +11,7 @@
     "url": "https://github.com/SupremeJulyan/vscode-serverless-remote-ssh.git"
   },
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
@@ -86,6 +86,11 @@
         "command": "serverlessRemote.openTerminalItem",
         "title": "打开远程终端",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "serverlessRemote.toggleAiForwardItem",
+        "title": "打开/关闭 AI 转发",
+        "icon": "$(sparkle)"
       },
       {
         "command": "serverlessRemote.closeItem",
@@ -185,9 +190,14 @@
           "group": "inline@2"
         },
         {
-          "command": "serverlessRemote.closeItem",
+          "command": "serverlessRemote.toggleAiForwardItem",
           "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
           "group": "inline@3"
+        },
+        {
+          "command": "serverlessRemote.closeItem",
+          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
+          "group": "inline@4"
         },
         {
           "command": "serverlessRemote.openFolderItem",
@@ -200,17 +210,53 @@
           "group": "serverlessRemote@2"
         },
         {
-          "command": "serverlessRemote.closeItem",
+          "command": "serverlessRemote.toggleAiForwardItem",
           "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
           "group": "serverlessRemote@3"
         },
         {
+          "command": "serverlessRemote.closeItem",
+          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
+          "group": "serverlessRemote@4"
+        },
+        {
           "command": "serverlessRemote.deleteConfigItem",
           "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
-          "group": "serverlessRemote@4"
+          "group": "serverlessRemote@5"
         }
       ]
     },
+    "languageModelTools": [
+      {
+        "name": "serverlessRemote_runRemoteCommand",
+        "displayName": "Run Command over Serverless SSH",
+        "toolReferenceName": "serverlessRemoteRun",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(terminal)",
+        "userDescription": "Run a command in the matching remote SSH directory.",
+        "modelDescription": "Runs a non-interactive shell command on the SSH host whose AI forwarding is enabled. A cwd inside the SSHFS-mounted workspace is automatically translated to the same relative directory under the configured remote_path. Use this for builds, tests, Git, and commands that must use the remote environment. Do not use it for local commands.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Shell command to execute remotely."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Optional absolute path inside the local SSHFS mount. Defaults to the active file or workspace directory."
+            },
+            "mountName": {
+              "type": "string",
+              "description": "Optional enabled mount name. Auto-detected from cwd/workspace when omitted."
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      }
+    ],
     "jsonValidation": [
       {
         "fileMatch": [
@@ -247,6 +293,13 @@
           ],
           "default": "balanced",
           "description": "Native Linux/macOS SSHFS cache policy."
+        },
+        "serverlessRemote.agentMcpPort": {
+          "type": "number",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 9848,
+          "description": "Loopback-only Streamable HTTP MCP port used by Codex, Claude Code, and other agents."
         }
       }
     }
@@ -261,11 +314,17 @@
     "vsix": "npx @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "^1.93.0",
     "@vscode/vsce": "^3.6.2",
     "esbuild": "^0.25.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "express": "^5.2.1",
+    "zod": "^4.4.3"
   }
 }

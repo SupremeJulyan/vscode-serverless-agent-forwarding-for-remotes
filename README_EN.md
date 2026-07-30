@@ -81,6 +81,14 @@ On Linux and macOS, mounts created by the current VS Code extension session are 
 - The `Serverless Remote SSH` Output channel reports configuration, status,
   credentials, mount, verification, terminal creation, and total connection
   timings with a `[性能]` prefix.
+- Click the `$(sparkle)` action beside a remote folder to enable AI forwarding.
+  VS Code agents can use `#serverlessRemoteRun`; a cwd inside the SSHFS mount is
+  translated to the same relative directory below `remote_path`, and execution
+  follows the configured SSH/bridge authentication and connection reuse path.
+  The action is visible only while the folder is mounted. A loopback-only,
+  tokenized Streamable HTTP MCP server exposes the same execution core to
+  Codex, Claude Code, and other MCP agents. On first use, the extension can
+  detect and configure the `codex` and `claude` CLIs after one confirmation.
 
 ## Install
 

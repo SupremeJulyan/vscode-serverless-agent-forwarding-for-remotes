@@ -1,5 +1,16 @@
 # Change Log
 
+## 0.10.0
+
+- 为已挂载的远程文件夹增加可单独启停的 Agent 转发入口。
+- 增加面向 GitHub Copilot 的 VS Code Language Model Tool。
+- 增加仅监听本机、使用随机令牌保护的 Streamable HTTP MCP 服务，支持 Codex、
+  Claude Code 和其他 MCP Agent。
+- 首次启用时可自动检测并一键配置 Codex 与 Claude Code。
+- 将 SSHFS 挂载目录自动映射到远端相同相对目录，并沿用现有 SSH、WSL bridge、
+  VPN、认证和连接复用逻辑执行命令。
+- 支持一个 MCP 服务管理多个远程挂载，并随 Agent 转发挂载的生命周期启停。
+
 ## 0.9.8
 
 - 删除配置前同时确认挂载点已经断开且本地目录完全为空。

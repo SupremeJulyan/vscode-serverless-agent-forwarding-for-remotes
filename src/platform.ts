@@ -23,6 +23,7 @@ export interface PlatformAdapter {
   lazyUnmount?(remote: ResolvedMount, localPath: string): CommandPlan;
   status(remote: ResolvedMount, localPath: string): CommandPlan;
   terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan;
+  exec(host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions): CommandPlan;
 }
 
 function shellQuote(value: string): string {
@@ -90,6 +91,10 @@ function remoteLoginCommand(remoteCwd: string): string {
   return `cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`;
 }
 
+function remoteExecCommand(remoteCwd: string, command: string): string {
+  return `cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -lc ${shellQuote(command)}`;
+}
+
 function sshfsArgs(
   remote: ResolvedMount, localPath: string, options?: ConnectionOptions
 ): string[] {
@@ -137,6 +142,11 @@ class UnixAdapter implements PlatformAdapter {
   terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan {
     return { command: 'ssh', args: sshArgs(host, remoteCwd, options) };
   }
+  exec(host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions): CommandPlan {
+    const args = sshArgs(host, undefined, options);
+    args.push(remoteExecCommand(remoteCwd, command));
+    return { command: 'ssh', args };
+  }
 }
 
 class WslAdapter implements PlatformAdapter {
@@ -170,6 +180,17 @@ class WslAdapter implements PlatformAdapter {
     return {
       command: 'ssh-bridge',
       args,
+      ...(options?.reuseSshConnection === undefined ? {} : {
+        env: {
+          WSL_VPN_SSH_CONNECTION_REUSE: options.reuseSshConnection ? '1' : '0'
+        }
+      })
+    };
+  }
+  exec(host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions): CommandPlan {
+    return {
+      command: 'ssh-bridge',
+      args: [host.name, remoteExecCommand(remoteCwd, command)],
       ...(options?.reuseSshConnection === undefined ? {} : {
         env: {
           WSL_VPN_SSH_CONNECTION_REUSE: options.reuseSshConnection ? '1' : '0'
@@ -267,6 +288,11 @@ class WindowsAdapter implements PlatformAdapter {
   }
   terminal(host: HostConfig, remoteCwd?: string, _options?: ConnectionOptions): CommandPlan {
     return { command: 'ssh', args: sshArgs(host, remoteCwd) };
+  }
+  exec(host: HostConfig, remoteCwd: string, command: string): CommandPlan {
+    const args = sshArgs(host);
+    args.push(remoteExecCommand(remoteCwd, command));
+    return { command: 'ssh', args };
   }
 }
 

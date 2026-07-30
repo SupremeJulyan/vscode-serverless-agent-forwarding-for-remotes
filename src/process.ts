@@ -84,6 +84,55 @@ export interface ProcessOutputHandlers {
   stderr?: (chunk: string) => void;
 }
 
+export interface CapturedProcessResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+}
+
+export async function executeCaptured(
+  plan: CommandPlan, signal?: AbortSignal, maxOutputBytes = 1024 * 1024
+): Promise<CapturedProcessResult> {
+  const command = await resolveExecutable(plan.command, plan.env);
+  return new Promise<CapturedProcessResult>((resolve, reject) => {
+    const child = spawn(command, plan.args, {
+      cwd: plan.cwd,
+      env: { ...process.env, ...plan.env },
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let capturedBytes = 0;
+    let truncated = false;
+    const capture = (target: Buffer[], chunk: Buffer) => {
+      const remaining = maxOutputBytes - capturedBytes;
+      if (remaining > 0) {
+        const kept = chunk.subarray(0, remaining);
+        target.push(kept);
+        capturedBytes += kept.length;
+      }
+      if (chunk.length > remaining) truncated = true;
+    };
+    child.stdout.on('data', (chunk: Buffer) => capture(stdout, chunk));
+    child.stderr.on('data', (chunk: Buffer) => capture(stderr, chunk));
+    const abort = () => child.kill();
+    signal?.addEventListener('abort', abort, { once: true });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      signal?.removeEventListener('abort', abort);
+      resolve({
+        exitCode: code ?? (signal?.aborted ? 130 : 1),
+        stdout: Buffer.concat(stdout).toString(),
+        stderr: Buffer.concat(stderr).toString(),
+        truncated
+      });
+    });
+    child.stdin.end(plan.stdin);
+  });
+}
+
 export async function executeWithStdin(
   plan: CommandPlan, handlers: ProcessOutputHandlers = {}
 ): Promise<void> {

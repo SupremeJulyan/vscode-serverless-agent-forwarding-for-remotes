@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
   parseSshLogin, removeMountConfig, resolveMount, saveConfig, setMountLocalPath
 } from './config';
-import { commandSucceeds, executeWithStdin } from './process';
+import { commandExists, commandSucceeds, executeCaptured, executeWithStdin } from './process';
 import { CommandPlan, ConnectionOptions, createPlatformAdapter } from './platform';
 import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
@@ -21,6 +22,7 @@ import {
   isAuthenticationFailure, isNetworkFailure, passwordValueOffset
 } from './authentication';
 import { isEmptyDirectory, isEmptyDirectoryTree } from './directory';
+import { AgentMcpServer, ForwardedMountInfo } from './agent-mcp';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -55,8 +57,12 @@ const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const terminalIdentityEnv = 'SERVERLESS_REMOTE_TERMINAL_ID';
 const dependencyPromptShownKey = 'serverlessRemote.dependencyPromptShown';
+const aiForwardMountsKey = 'serverlessRemote.aiForwardMounts';
+const agentMcpTokenSecret = 'serverlessRemote.agentMcpToken';
+const agentSetupCompletedKey = 'serverlessRemote.agentSetupCompleted';
 const legacyDependencyCacheKey = 'serverlessRemote.dependencyCache';
 let bridgeOutput: vscode.OutputChannel | undefined;
+let agentMcpServer: AgentMcpServer | undefined;
 const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
 const openingTerminalIds = new Set<string>();
 let workspaceSwitchMountPath: string | undefined;
@@ -831,6 +837,10 @@ async function closeRemote(
       return;
     }
     await executeUnmount(mount, expandedPath);
+    const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+    enabled.delete(mount.name);
+    await context.globalState.update(aiForwardMountsKey, [...enabled]);
+    if (enabled.size === 0) await agentMcpServer?.stop();
   }
 }
 
@@ -871,6 +881,7 @@ async function showStatus(output: vscode.OutputChannel): Promise<void> {
 }
 
 class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+  constructor(private readonly context: vscode.ExtensionContext) {}
   private readonly changed = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
   readonly onDidChangeTreeData = this.changed.event;
 
@@ -910,6 +921,8 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> 
       'setContext', 'serverlessRemote.hasNoMounts', config.mounts.length === 0
     );
     return Promise.all(config.mounts.map(async (mount) => {
+      const aiForwarded = this.context.globalState
+        .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
       const localPath = await mountDirectory(mount);
       const resolved = resolveMount(config, mount);
       const mounted = localPath
@@ -921,7 +934,7 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> 
       item.mountName = mount.name;
       item.description = `${resolved.hostConfig.user}@${resolved.hostConfig.ip} · ${
         mounted ? 'mounted' : 'not mounted'
-      }`;
+      }${aiForwarded ? ' · AI forwarding' : ''}`;
       item.contextValue = mounted
         ? 'serverlessRemote.mount.mounted'
         : 'serverlessRemote.mount';
@@ -937,7 +950,9 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> 
         '',
         `Local: \`${localPath ?? 'Not configured'}\``,
         '',
-        mounted ? 'Mounted' : 'Not mounted'
+        mounted ? 'Mounted' : 'Not mounted',
+        '',
+        aiForwarded ? '$(sparkle) AI forwarding enabled' : 'AI forwarding disabled'
       ].join('\n'));
       item.command = {
         command: `${commandPrefix}.openFolderItem`,
@@ -947,6 +962,259 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> 
       return item;
     }));
   }
+}
+
+interface RemoteCommandInput {
+  command: string;
+  cwd?: string;
+  mountName?: string;
+}
+
+async function toggleAiForward(
+  context: vscode.ExtensionContext, item: RemoteMountTreeItem
+): Promise<void> {
+  const mount = await configuredMount(item);
+  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  const turningOn = !enabled.has(mount.name);
+  if (turningOn) {
+    const config = await readConfig();
+    const localRoot = await mountDirectory(mount);
+    if (!localRoot
+      || !await commandSucceeds(platformAdapter.status(resolveMount(config, mount), localRoot))) {
+      throw new Error('请先挂载远程文件夹，再打开 Agent 转发。');
+    }
+    enabled.add(mount.name);
+  } else {
+    enabled.delete(mount.name);
+  }
+  if (turningOn) {
+    try {
+      const server = await ensureAgentMcpServer(context);
+      await context.globalState.update(aiForwardMountsKey, [...enabled]);
+      await configureDetectedAgents(context, server);
+    } catch (error) {
+      enabled.delete(mount.name);
+      await context.globalState.update(aiForwardMountsKey, [...enabled]);
+      throw error;
+    }
+  } else if (enabled.size === 0) {
+    await context.globalState.update(aiForwardMountsKey, []);
+    await agentMcpServer?.stop();
+  } else {
+    await context.globalState.update(aiForwardMountsKey, [...enabled]);
+  }
+  void vscode.window.showInformationMessage(
+    `“${mount.name}”AI 转发已${turningOn ? '打开' : '关闭'}。${
+      turningOn ? 'Agent 的远程命令会自动映射到相同的远程工作目录。' : ''
+    }`
+  );
+}
+
+async function invokeRemoteCommand(
+  context: vscode.ExtensionContext, input: RemoteCommandInput,
+  token: vscode.CancellationToken
+): Promise<vscode.LanguageModelToolResult> {
+  const result = await executeRemoteCommand(context, input, token);
+  return new vscode.LanguageModelToolResult([
+    new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2))
+  ]);
+}
+
+async function executeRemoteCommand(
+  context: vscode.ExtensionContext, input: RemoteCommandInput,
+  token?: vscode.CancellationToken
+): Promise<Record<string, unknown>> {
+  if (!input.command?.trim()) throw new Error('Remote command must not be empty.');
+  const config = await readConfig();
+  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  const enabledMounts = config.mounts.filter((mount) => enabled.has(mount.name));
+  if (enabledMounts.length === 0) {
+    throw new Error('AI forwarding is not enabled. Click the sparkle action on a remote folder first.');
+  }
+  const candidatePath = input.cwd
+    ?? (vscode.window.activeTextEditor?.document.uri.scheme === 'file'
+      ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+      : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+  let mount = input.mountName
+    ? enabledMounts.find((candidate) => candidate.name === input.mountName)
+    : undefined;
+  let localRoot: string | undefined;
+  if (!mount && candidatePath) {
+    const match = findMountForPath(enabledMounts, candidatePath, platformAdapter.kind, expandHome);
+    mount = match?.mount;
+    localRoot = match?.localPath;
+  }
+  if (!mount && enabledMounts.length === 1) mount = enabledMounts[0];
+  if (!mount) {
+    throw new Error('More than one AI forwarding target is enabled; provide mountName or a cwd inside one mount.');
+  }
+  localRoot ??= await mountDirectory(mount);
+  if (!localRoot) throw new Error(`No local mount path is available for ${mount.name}.`);
+  const localCwd = candidatePath ?? localRoot;
+  const remoteCwd = remotePathForLocalPath(
+    mount.remote_path, localRoot, localCwd, platformAdapter.kind
+  );
+  if (!remoteCwd) {
+    throw new Error(`cwd must be inside the SSHFS mount ${localRoot}; got ${localCwd}.`);
+  }
+  const resolved = resolveMount(config, mount);
+  let credentials: AskpassCredentials | undefined;
+  try {
+    if (resolved.hostConfig.password) {
+      resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
+      if (platformUsesAskpass(platformAdapter.kind)) {
+        credentials = await createAskpassCredentials(resolved.hostConfig.password!);
+      }
+    }
+    const plan = platformAdapter.exec(
+      resolved.hostConfig, remoteCwd, input.command, connectionOptions()
+    );
+    plan.env = {
+      ...plan.env,
+      ...await bridgeMasterPasswordEnv(context, resolved.hostConfig),
+      ...credentials?.env
+    };
+    const controller = new AbortController();
+    const cancellation = token?.onCancellationRequested(() => controller.abort());
+    try {
+      const result = await executeCaptured(plan, controller.signal);
+      return {
+        mountName: mount.name,
+        remoteCwd,
+        command: input.command,
+        ...result
+      };
+    } finally {
+      cancellation?.dispose();
+    }
+  } finally {
+    await credentials?.cleanup();
+  }
+}
+
+async function forwardedMounts(context: vscode.ExtensionContext): Promise<ForwardedMountInfo[]> {
+  const config = await readConfig();
+  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  const result: ForwardedMountInfo[] = [];
+  for (const mount of config.mounts) {
+    if (!enabled.has(mount.name)) continue;
+    const localRoot = await mountDirectory(mount);
+    if (!localRoot) continue;
+    const resolved = resolveMount(config, mount);
+    if (!await commandSucceeds(platformAdapter.status(resolved, localRoot))) continue;
+    result.push({
+      name: mount.name,
+      localRoot,
+      remoteRoot: mount.remote_path,
+      host: resolved.hostConfig.name
+    });
+  }
+  return result;
+}
+
+async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<AgentMcpServer> {
+  if (!agentMcpServer) {
+    let token = await context.secrets.get(agentMcpTokenSecret);
+    if (!token) {
+      token = randomBytes(24).toString('hex');
+      await context.secrets.store(agentMcpTokenSecret, token);
+    }
+    agentMcpServer = new AgentMcpServer(
+      settings().get<number>('agentMcpPort', 9848),
+      token,
+      {
+        listMounts: () => forwardedMounts(context),
+        run: (input) => executeRemoteCommand(context, input)
+      }
+    );
+    context.subscriptions.push({ dispose: () => void agentMcpServer?.stop() });
+  }
+  await agentMcpServer.start();
+  return agentMcpServer;
+}
+
+async function configureDetectedAgents(
+  context: vscode.ExtensionContext, server: AgentMcpServer
+): Promise<void> {
+  const saved = context.globalState.get<unknown>(agentSetupCompletedKey);
+  const configured = new Set(Array.isArray(saved) ? saved.filter(
+    (item): item is string => typeof item === 'string'
+  ) : []);
+  const [hasCodex, hasClaude] = await Promise.all([
+    commandExists('codex'), commandExists('claude')
+  ]);
+  const [codexConfigured, claudeConfigured] = await Promise.all([
+    hasCodex
+      ? commandSucceeds({ command: 'codex', args: ['mcp', 'get', 'serverless-remote'] })
+      : Promise.resolve(false),
+    hasClaude
+      ? commandSucceeds({ command: 'claude', args: ['mcp', 'get', 'serverless-remote'] })
+      : Promise.resolve(false)
+  ]);
+  if (!codexConfigured) configured.delete('codex');
+  if (!claudeConfigured) configured.delete('claude');
+  const agents = [
+    ...(hasCodex && !codexConfigured ? ['Codex'] : []),
+    ...(hasClaude && !claudeConfigured ? ['Claude Code'] : [])
+  ];
+  if (agents.length === 0) {
+    await context.globalState.update(agentSetupCompletedKey, [...configured]);
+    return;
+  }
+  const configureAction = '一键配置';
+  const selected = await vscode.window.showInformationMessage(
+    `检测到 ${agents.join(' 和 ')}。是否注册 Serverless Remote SSH MCP？此操作只需一次。`,
+    { modal: true, detail: `MCP 服务仅监听本机：${server.url.replace(/token=.*/, 'token=<hidden>')}` },
+    configureAction
+  );
+  if (selected !== configureAction) return;
+  const failures: string[] = [];
+  if (hasCodex && !configured.has('codex')) {
+    const result = await executeCaptured({
+      command: 'codex',
+      args: ['mcp', 'add', 'serverless-remote', '--url', server.url]
+    });
+    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
+      failures.push(`Codex: ${result.stderr || result.stdout}`);
+    } else {
+      configured.add('codex');
+    }
+  }
+  if (hasClaude && !configured.has('claude')) {
+    const result = await executeCaptured({
+      command: 'claude',
+      args: [
+        'mcp', 'add', '--transport', 'http', '--scope', 'user',
+        'serverless-remote', server.url
+      ]
+    });
+    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
+      failures.push(`Claude Code: ${result.stderr || result.stdout}`);
+    } else {
+      configured.add('claude');
+    }
+  }
+  await context.globalState.update(agentSetupCompletedKey, [...configured]);
+  if (failures.length > 0) {
+    bridgeOutput?.appendLine(`[Agent MCP] 自动配置失败\n${failures.join('\n')}`);
+    const copyAction = '复制手工配置命令';
+    const choice = await vscode.window.showWarningMessage(
+      '部分 Agent 自动配置失败，详情已写入输出面板。',
+      copyAction
+    );
+    if (choice === copyAction) {
+      await vscode.env.clipboard.writeText([
+        hasCodex ? `codex mcp add serverless-remote --url '${server.url}'` : '',
+        hasClaude
+          ? `claude mcp add --transport http --scope user serverless-remote '${server.url}'`
+          : ''
+      ].filter(Boolean).join('\n'));
+    }
+    return;
+  }
+  void vscode.window.showInformationMessage(
+    `${agents.join(' 和 ')} 已配置。请重启对应 Agent/扩展以加载 MCP。`
+  );
 }
 
 async function configuredMount(item: RemoteMountTreeItem): Promise<MountConfig> {
@@ -998,6 +1266,9 @@ async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<v
   // this is merely stale cleanup state, not a failure of the next connection.
   if (!mount) return;
   await executeUnmount(mount, pending.localPath);
+  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  enabled.delete(mount.name);
+  await context.globalState.update(aiForwardMountsKey, [...enabled]);
 }
 
 async function openConfig(hostName?: string): Promise<void> {
@@ -1198,7 +1469,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
   bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
   context.subscriptions.push(statusOutput, bridgeOutput);
-  const remoteFolders = new RemoteFoldersProvider();
+  const remoteFolders = new RemoteFoldersProvider(context);
   const registrations: Array<[string, () => Promise<void>]> = [
     ['openFolder', () => guard(() => openRemoteFolder(context))],
     ['openTerminal', () =>
@@ -1241,6 +1512,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       })
     ),
     vscode.commands.registerCommand(
+      `${commandPrefix}.toggleAiForwardItem`,
+      (item: RemoteMountTreeItem) => guard(async () => {
+        await toggleAiForward(context, item);
+        remoteFolders.refresh();
+      })
+    ),
+    vscode.commands.registerCommand(
       `${commandPrefix}.closeItem`,
       (item: RemoteMountTreeItem) => guard(async () => {
         await closeRemote(context, await configuredMount(item));
@@ -1255,6 +1533,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       })
     )
   );
+  context.subscriptions.push(vscode.lm.registerTool<RemoteCommandInput>(
+    'serverlessRemote_runRemoteCommand',
+    {
+      prepareInvocation: async (options) => ({
+        invocationMessage: '正在通过 Serverless SSH 执行远程命令',
+        confirmationMessages: {
+          title: '执行远程 SSH 命令',
+          message: new vscode.MarkdownString(
+            `是否在远程环境执行？\n\n\`\`\`sh\n${options.input.command}\n\`\`\``
+          )
+        }
+      }),
+      invoke: (options, token) => invokeRemoteCommand(context, options.input, token)
+    }
+  ));
   context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
     void suggestReopeningClosedTerminal(terminal);
   }));
@@ -1278,6 +1571,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     '启动自动连接总计',
     () => autoOpenWorkspaceTerminal(context)
   ));
+  await guard(async () => {
+    if ((await forwardedMounts(context)).length > 0) await ensureAgentMcpServer(context);
+  });
   const promptShown = context.globalState.get<boolean>(dependencyPromptShownKey, false);
   const upgradedFromDependencyCheckingVersion =
     context.globalState.get(`${legacyDependencyCacheKey}.${platformAdapter.kind}`) !== undefined;
@@ -1290,6 +1586,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
+  await agentMcpServer?.stop();
   if (platformAdapter.kind !== 'macos' && platformAdapter.kind !== 'linux') return;
   const mounts = [...nativeSessionMounts.entries()]
     .filter(([mountPath]) => mountPath !== workspaceSwitchMountPath)
