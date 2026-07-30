@@ -137,6 +137,11 @@ Codex、Claude Code 和其他 MCP Agent 提供 `list_forwarded_mounts` 与
 的批准由当前 Agent 的工具权限机制控制。关闭最后一个挂载的 Agent 转发，或
 停用插件时，本地 MCP 服务会停止。
 
+当 Agent 的当前目录位于已转发挂载中时，MCP 元数据会明确要求先检查转发列表，
+并将操作系统、内核、硬件与环境检查，以及构建、测试、Git、包管理、进程和服务
+命令路由到远端。挂载文件仍由 Agent 的文件工具直接读写，真正的本地命令也不会
+被错误转发。
+
 ### Close
 
 `Serverless Remote SSH: Close`

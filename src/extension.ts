@@ -1124,7 +1124,8 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
       token,
       {
         listMounts: () => forwardedMounts(context),
-        run: (input) => executeRemoteCommand(context, input)
+        run: (input) => executeRemoteCommand(context, input),
+        log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
       }
     );
     context.subscriptions.push({ dispose: () => void agentMcpServer?.stop() });
@@ -1186,6 +1187,11 @@ async function configureDetectedAgents(
   const [codexCommand, claudeCommand] = await Promise.all([
     detectedCodexCommand(), detectedClaudeCommand()
   ]);
+  bridgeOutput?.appendLine(
+    `[Agent MCP] Agent 检测：Codex ${codexCommand ? '可用' : '未找到'}，Claude Code ${
+      claudeCommand ? '可用' : '未找到'
+    }`
+  );
   const [codexConfigured, claudeConfigured] = await Promise.all([
     codexCommand
       ? commandSucceeds({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
@@ -1196,6 +1202,11 @@ async function configureDetectedAgents(
   ]);
   if (!codexConfigured) configured.delete('codex');
   if (!claudeConfigured) configured.delete('claude');
+  bridgeOutput?.appendLine(
+    `[Agent MCP] 注册状态：Codex ${codexConfigured ? '已注册' : '未注册'}，Claude Code ${
+      claudeConfigured ? '已注册' : '未注册'
+    }`
+  );
   const agents = [
     ...(codexCommand && !codexConfigured ? ['Codex'] : []),
     ...(claudeCommand && !claudeConfigured ? ['Claude Code'] : [])
@@ -1210,7 +1221,10 @@ async function configureDetectedAgents(
     { modal: true, detail: `MCP 服务仅监听本机：${server.url.replace(/token=.*/, 'token=<hidden>')}` },
     configureAction
   );
-  if (selected !== configureAction) return;
+  if (selected !== configureAction) {
+    bridgeOutput?.appendLine('[Agent MCP] 用户取消了 Agent 自动配置');
+    return;
+  }
   const failures: string[] = [];
   if (codexCommand && !configured.has('codex')) {
     const result = await executeCaptured({
@@ -1221,6 +1235,7 @@ async function configureDetectedAgents(
       failures.push(`Codex: ${result.stderr || result.stdout}`);
     } else {
       configured.add('codex');
+      bridgeOutput?.appendLine('[Agent MCP] Codex 注册成功');
     }
   }
   if (claudeCommand && !configured.has('claude')) {
@@ -1235,6 +1250,7 @@ async function configureDetectedAgents(
       failures.push(`Claude Code: ${result.stderr || result.stdout}`);
     } else {
       configured.add('claude');
+      bridgeOutput?.appendLine('[Agent MCP] Claude Code 注册成功');
     }
   }
   await context.globalState.update(agentSetupCompletedKey, [...configured]);

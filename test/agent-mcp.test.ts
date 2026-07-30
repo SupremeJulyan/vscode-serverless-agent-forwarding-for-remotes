@@ -24,6 +24,11 @@ test('serves forwarded mounts and remote execution through Streamable HTTP MCP',
       tools.tools.map((tool) => tool.name).sort(),
       ['list_forwarded_mounts', 'run_remote_command']
     );
+    const listTool = tools.tools.find((tool) => tool.name === 'list_forwarded_mounts');
+    const runTool = tools.tools.find((tool) => tool.name === 'run_remote_command');
+    assert.match(listTool?.description ?? '', /cwd\/workspace is remote-backed/);
+    assert.match(runTool?.description ?? '', /OS\/kernel\/hardware inspection/);
+    assert.match(runTool?.description ?? '', /instead of the local shell/);
     const result = await client.callTool({
       name: 'run_remote_command',
       arguments: { command: 'npm test', cwd: '/mnt/project' }

@@ -234,7 +234,7 @@
         "canBeReferencedInPrompt": true,
         "icon": "$(terminal)",
         "userDescription": "Run a command in the matching remote SSH directory.",
-        "modelDescription": "Runs a non-interactive shell command on the SSH host whose AI forwarding is enabled. A cwd inside the SSHFS-mounted workspace is automatically translated to the same relative directory under the configured remote_path. Use this for builds, tests, Git, and commands that must use the remote environment. Do not use it for local commands.",
+        "modelDescription": "Runs a non-interactive shell command on the SSH host whose AI forwarding is enabled. A cwd inside the SSHFS-mounted workspace is automatically translated to the same relative directory under the configured remote_path. When cwd is in that mounted workspace, use this instead of a local shell for OS, kernel, hardware and environment inspection, builds, tests, Git, package managers, processes, services, and any command that depends on the remote machine or its files. Do not use it for genuinely local commands or file edits.",
         "inputSchema": {
           "type": "object",
           "properties": {

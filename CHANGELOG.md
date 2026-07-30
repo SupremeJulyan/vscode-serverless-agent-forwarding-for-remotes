@@ -2,6 +2,8 @@
 
 ## 0.10.0
 
+- 强化 Agent 的远端路由提示：当前目录位于 SSHFS 转发挂载时，系统、硬件和
+  环境检查以及所有依赖远端环境的命令必须通过远端命令工具执行。
 - 为已挂载的远程文件夹增加可单独启停的 Agent 转发入口。
 - 增加面向 GitHub Copilot 的 VS Code Language Model Tool。
 - 增加仅监听本机、使用随机令牌保护的 Streamable HTTP MCP 服务，支持 Codex、
