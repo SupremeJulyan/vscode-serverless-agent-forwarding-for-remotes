@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile } from 'node:fs/promises';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
   parseSshLogin, removeMountConfig, resolveMount, saveConfig, setMountLocalPath
@@ -1133,6 +1133,49 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
   return agentMcpServer;
 }
 
+async function detectedCodexCommand(): Promise<string | undefined> {
+  if (await commandExists('codex')) return 'codex';
+  const extension = vscode.extensions.getExtension('openai.chatgpt');
+  if (!extension) return undefined;
+  const binRoot = path.join(extension.extensionPath, 'bin');
+  try {
+    const platformDirectories = await readdir(binRoot, { withFileTypes: true });
+    for (const directory of platformDirectories) {
+      if (!directory.isDirectory()) continue;
+      const candidate = path.join(
+        binRoot, directory.name, process.platform === 'win32' ? 'codex.exe' : 'codex'
+      );
+      try {
+        await access(candidate);
+        bridgeOutput?.appendLine(`[Agent MCP] 使用 Codex 扩展内置 CLI：${candidate}`);
+        return candidate;
+      } catch {
+        // Try the next platform directory.
+      }
+    }
+  } catch {
+    // The installed Codex extension does not expose a bundled CLI.
+  }
+  return undefined;
+}
+
+async function detectedClaudeCommand(): Promise<string | undefined> {
+  if (await commandExists('claude')) return 'claude';
+  const extension = vscode.extensions.getExtension('anthropic.claude-code');
+  if (!extension) return undefined;
+  const candidate = path.join(
+    extension.extensionPath, 'resources', 'native-binary',
+    process.platform === 'win32' ? 'claude.exe' : 'claude'
+  );
+  try {
+    await access(candidate);
+    bridgeOutput?.appendLine(`[Agent MCP] 使用 Claude Code 扩展内置 CLI：${candidate}`);
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
 async function configureDetectedAgents(
   context: vscode.ExtensionContext, server: AgentMcpServer
 ): Promise<void> {
@@ -1140,22 +1183,22 @@ async function configureDetectedAgents(
   const configured = new Set(Array.isArray(saved) ? saved.filter(
     (item): item is string => typeof item === 'string'
   ) : []);
-  const [hasCodex, hasClaude] = await Promise.all([
-    commandExists('codex'), commandExists('claude')
+  const [codexCommand, claudeCommand] = await Promise.all([
+    detectedCodexCommand(), detectedClaudeCommand()
   ]);
   const [codexConfigured, claudeConfigured] = await Promise.all([
-    hasCodex
-      ? commandSucceeds({ command: 'codex', args: ['mcp', 'get', 'serverless-remote'] })
+    codexCommand
+      ? commandSucceeds({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
       : Promise.resolve(false),
-    hasClaude
-      ? commandSucceeds({ command: 'claude', args: ['mcp', 'get', 'serverless-remote'] })
+    claudeCommand
+      ? commandSucceeds({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
       : Promise.resolve(false)
   ]);
   if (!codexConfigured) configured.delete('codex');
   if (!claudeConfigured) configured.delete('claude');
   const agents = [
-    ...(hasCodex && !codexConfigured ? ['Codex'] : []),
-    ...(hasClaude && !claudeConfigured ? ['Claude Code'] : [])
+    ...(codexCommand && !codexConfigured ? ['Codex'] : []),
+    ...(claudeCommand && !claudeConfigured ? ['Claude Code'] : [])
   ];
   if (agents.length === 0) {
     await context.globalState.update(agentSetupCompletedKey, [...configured]);
@@ -1169,9 +1212,9 @@ async function configureDetectedAgents(
   );
   if (selected !== configureAction) return;
   const failures: string[] = [];
-  if (hasCodex && !configured.has('codex')) {
+  if (codexCommand && !configured.has('codex')) {
     const result = await executeCaptured({
-      command: 'codex',
+      command: codexCommand,
       args: ['mcp', 'add', 'serverless-remote', '--url', server.url]
     });
     if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
@@ -1180,9 +1223,9 @@ async function configureDetectedAgents(
       configured.add('codex');
     }
   }
-  if (hasClaude && !configured.has('claude')) {
+  if (claudeCommand && !configured.has('claude')) {
     const result = await executeCaptured({
-      command: 'claude',
+      command: claudeCommand,
       args: [
         'mcp', 'add', '--transport', 'http', '--scope', 'user',
         'serverless-remote', server.url
@@ -1204,8 +1247,8 @@ async function configureDetectedAgents(
     );
     if (choice === copyAction) {
       await vscode.env.clipboard.writeText([
-        hasCodex ? `codex mcp add serverless-remote --url '${server.url}'` : '',
-        hasClaude
+        codexCommand ? `codex mcp add serverless-remote --url '${server.url}'` : '',
+        claudeCommand
           ? `claude mcp add --transport http --scope user serverless-remote '${server.url}'`
           : ''
       ].filter(Boolean).join('\n'));
