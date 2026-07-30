@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   ensureConfigFile, expandHome, parseConfig, parseSshLogin, resolveMount, saveConfig,
-  removeMountConfig, setMountLocalPath
+  removeMountConfig
 } from '../src/config';
 
 test('parses and resolves a mount through its host reference', () => {
@@ -32,7 +32,7 @@ test('saves a configuration that can be loaded as JSON', async () => {
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), config);
 });
 
-test('stores one selected mount directory and removes the legacy platform map', () => {
+test('ignores legacy local mount paths when parsing SFTP folders', () => {
   const config = parseConfig({
     hosts: [{ name: 'dev', ip: 'host', user: 'alice' }],
     mounts: [{
@@ -44,10 +44,12 @@ test('stores one selected mount directory and removes the legacy platform map', 
     }]
   });
 
-  const mount = setMountLocalPath(config, 'project', '/mnt/project');
-
-  assert.equal(mount.local_path, '/mnt/project');
-  assert.equal(mount.local_paths, undefined);
+  assert.deepEqual(config.mounts[0], {
+    name: 'project',
+    host: 'dev',
+    remote_path: '.',
+    remote_terminal: 'open'
+  });
 });
 
 test('removes a mount and its host only when no other mount uses that host', () => {

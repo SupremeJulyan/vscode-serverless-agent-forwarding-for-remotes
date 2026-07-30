@@ -7,11 +7,12 @@ interface ExtensionManifest {
   activationEvents?: string[];
 }
 
-test('extension activates immediately so first-install dependency tips can run', async () => {
+test('extension declares the SFTP filesystem activation event', async () => {
   const manifest = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
   assert.equal(manifest.version, '1.0.0');
-  assert.ok(manifest.activationEvents?.includes('*'));
+  assert.ok(manifest.activationEvents?.includes('onFileSystem:serverless-sftp'));
+  assert.equal(manifest.activationEvents?.includes('*'), false);
 });

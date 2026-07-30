@@ -30,7 +30,7 @@
     },
     "mounts": {
       "type": "array",
-      "description": "由 Add SSH Config 自动生成的挂载信息。",
+      "description": "由 Add SSH Config 自动生成的 SFTP 远程目录。",
       "items": { "$ref": "#/definitions/mount" },
       "defaultSnippets": [
         {
@@ -39,7 +39,6 @@
             "name": "${1:project}",
             "host": "${2:dev}",
             "remote_path": ".",
-            "local_path": "${4:/home/alice/mnt/project}",
             "remote_terminal": "open"
           }]
         }
@@ -68,19 +67,16 @@
       "properties": {
         "name": { "type": "string", "minLength": 1, "description": "远程目录的显示名称。" },
         "host": { "type": "string", "minLength": 1, "description": "对应 hosts 中的 name。" },
-        "remote_path": { "type": "string", "minLength": 1, "default": ".", "description": "服务器目录；`.` 表示 SSH 登录目录。" },
-        "local_path": { "type": "string", "description": "本配置文件使用的唯一的本地挂载路径。" },
+        "remote_path": { "type": "string", "minLength": 1, "default": ".", "description": "SFTP 远程目录；`.` 表示 SSH 登录目录。" },
+        "local_path": {
+          "type": "string",
+          "deprecated": true,
+          "description": "旧版 SSHFS 本地路径；SFTP 版本会忽略此字段。"
+        },
         "local_paths": {
           "type": "object",
           "deprecated": true,
-          "description": "旧版各平台本地挂载路径；仅为兼容现有配置保留，请改用 local_path。",
-          "properties": {
-            "windows": { "type": "string", "pattern": "^[A-Za-z]:$", "description": "Windows 盘符，例如 X:。" },
-            "macos": { "type": "string", "description": "macOS 本地挂载目录。" },
-            "linux": { "type": "string", "description": "Linux 本地挂载目录。" },
-            "wsl": { "type": "string", "description": "WSL 本地挂载目录。" }
-          },
-          "additionalProperties": false
+          "description": "旧版分平台 SSHFS 路径；SFTP 版本会忽略此字段。"
         },
         "remote_terminal": {
           "type": "string",

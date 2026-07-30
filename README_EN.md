@@ -2,125 +2,79 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-Edit remote files in VS Code through SSHFS and use a real SSH terminal without installing VS Code Server on the target host.
+Browse and edit remote files directly in VS Code over SFTP and open real SSH
+terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 
-The extension selects a platform adapter and exposes every remote folder as a real operating-system mount. WSL delegates VPN relay lifecycle to `sshfs-bridge` and `ssh-bridge`; native Windows, macOS, and Linux connect through the VPN/network stack of that operating system.
+## Features
 
-## Requirements
+- Opens remote folders as `serverless-sftp://` virtual workspaces.
+- Browse, read, save, create, rename, and delete remote files and directories.
+- Password and private-key authentication with optional master-password encryption.
+- Pooled SFTP connections, metadata caching, reconnect support, and file polling.
+- Opens SSH terminals in the directory selected in the remote workspace.
+- Direct remote list/read/write/search tools for VS Code agents and MCP clients.
+- Runs builds, tests, Git, and system commands remotely over SSH.
 
-- Windows: [WinFsp](https://github.com/winfsp/winfsp/releases/latest) and [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest); the default mount is drive `R:`
-- macOS: [macFUSE](https://macfuse.github.io/), [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS), and OpenSSH
-- Linux: SSHFS, FUSE 3, and OpenSSH
-- WSL: [`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge), [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge), and `mountpoint`
-- Native Windows, macOS, and Linux default to `~/serverless-remote-ssh/config.json`
-- WSL keeps `~/.wsl-vpn-ssh/config.json` shared with [`ssh-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge) and [`sshfs-bridge`](https://github.com/SupremeJulyan/wsl-vpn-ssh-bridge)
+## Quick start
 
-Windows requires OpenSSH Client, [WinFsp](https://github.com/winfsp/winfsp/releases/latest), and [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest). Run `Serverless Remote SSH: Install Dependencies Tips` to view the installation guide and corresponding download pages.
-On macOS, a missing dependency prompt provides official download links for [macFUSE](https://macfuse.github.io/) and [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS).
-On Linux and WSL, the extension reads `/etc/os-release` and offers a copyable install command for Debian/Ubuntu,
-Fedora/RHEL, Arch/Manjaro, openSUSE, or Alpine. When the WSL bridge commands are missing, the command also
-installs the bridge from its official GitHub repository.
+1. Install `vscode-serverless-remote-ssh-1.0.0.vsix`.
+2. Run `Serverless Remote SSH: Add SSH Config`.
+3. Enter a name, `user@host`, and password or private key.
+4. Run `Serverless Remote SSH: Open Remote Folder`.
+5. Edit files directly in the Explorer.
+6. Run `Serverless Remote SSH: Disconnect` when finished.
 
-Example:
+```sh
+code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
+```
+
+## Configuration
+
+The native default is `~/serverless-remote-ssh/config.json`; WSL keeps
+`~/.wsl-vpn-ssh/config.json` for configuration compatibility.
 
 ```json
 {
   "encrypt_passwords": true,
-  "hosts": [
-    {
-      "name": "dev",
-      "ip": "10.0.0.2",
-      "user": "alice",
-      "port": 22,
-      "vpn": true
-    }
-  ],
-  "mounts": [
-    {
-      "name": "dev",
-      "host": "dev",
-      "remote_path": ".",
-      "local_path": "/current/directory/dev",
-      "remote_terminal": "open"
-    }
-  ]
+  "hosts": [{
+    "name": "dev",
+    "ip": "10.0.0.2",
+    "user": "alice",
+    "port": 22,
+    "private_key_path": "~/.ssh/id_ed25519"
+  }],
+  "mounts": [{
+    "name": "project",
+    "host": "dev",
+    "remote_path": "/srv/project",
+    "remote_terminal": "open"
+  }]
 }
 ```
 
-## Commands
+The `mounts` array name remains for backward compatibility. Version 1.0.0
+ignores legacy `local_path` and `local_paths` fields because no local mount is
+created.
 
-- `Serverless Remote SSH: Open Remote Folder` mounts the selected entry, opens its local SSHFS directory, and opens a remote terminal in that folder.
-- `Serverless Remote SSH: Open Remote Terminal` always creates a new SSH connection in an integrated terminal and uses `ssh-bridge` on WSL. When the workspace or active file is inside a configured mount, the extension selects the matching configuration and enters the corresponding remote subdirectory on WSL and native Windows, macOS, or Linux. When an empty, unmounted mount root is opened directly, the extension mounts it first and then opens the remote terminal. Automatic workspace connection and recovery still reuse a matching terminal to prevent duplicates.
-- When a managed remote terminal exits because its connection process ended, the extension prompts you to run `Serverless Remote SSH: Open Remote Terminal` to reopen it.
-- `Serverless Remote SSH: Close` closes the remote folder and unmounts its SSHFS entry.
-- `Serverless Remote SSH: Show Status` opens an output panel summarizing every mount and, on WSL, the SSHFS/SSH relay state.
-- `Serverless Remote SSH: Open Config` opens the shared JSON configuration.
-- `Serverless Remote SSH: Add SSH Config` asks for a name, `user@host`, and a password. After a password is entered, it also asks you to set and confirm a configuration encryption passphrase. Leaving the password empty asks for a private-key path instead, so only one authentication method is saved. WSL adds a VPN relay prompt which defaults to `false`; select `true` when using an external VPN such as aTrust.
-- `Serverless Remote SSH: Install Dependencies Tips` shows platform installation links or a copyable installation command. The extension displays this guide only once, after its first installation.
+## Agent access
 
-New configurations always mount the SSH login directory and use the `open` terminal behavior. WSL, Linux, and macOS create `[configuration name]` below the current workspace by default; Windows uses `R:`. `Open Remote Folder` mounts first, switches to the mounted directory, then creates exactly one SSH terminal after the new window resumes. Automatic flows reuse an existing matching terminal, while each manual `Open Remote Terminal` invocation creates a new one.
+VS Code tools: `#serverlessRemoteList`, `#serverlessRemoteRead`,
+`#serverlessRemoteWrite`, `#serverlessRemoteSearch`, and
+`#serverlessRemoteRun`.
 
-SSH passwords entered by the wizard are stored as `enc:v1:` ciphertext using the configuration encryption passphrase. Plaintext passwords in older configurations are migrated the next time they are used. macOS and Linux pass the decrypted password to OpenSSH and SSHFS through a short-lived `SSH_ASKPASS` helper, never through command arguments or task output.
+The loopback-only, token-protected MCP service exposes
+`list_remote_folders`, `remote_list`, `remote_read`, `remote_write`,
+`remote_search`, and `run_remote_command`.
 
-Custom `remote_path` and `local_path` values remain supported. Legacy `local_paths` maps are read for compatibility, but new selections are saved as the config file's single `local_path`. Legacy `now` and `never` terminal modes are normalized to `open`.
+Remote URIs are not local paths. Agents must use the SFTP tools for files and
+SSH remote execution for builds, tests, Git, and operating-system inspection.
+File operations are constrained to the configured remote root.
 
-`vpn: true` means “use the VPN-visible network path.” On WSL the bridge starts and shares the Windows TCP relay. On native Windows, macOS, and Linux no extra relay is needed because SSHFS runs in the same network namespace as that platform's VPN client.
-The macOS and Linux configuration wizard hides the relay option, and their status output does not include a relay section.
+## Limitations
 
-On Linux and macOS, mounts created by the current VS Code extension session are automatically unmounted when that VS Code window closes. Mounts that already existed before the session are left untouched.
-
-## Performance settings
-
-- `serverlessRemote.reuseSshConnection` defaults to `true` on Linux, macOS,
-  and WSL and lets SSHFS and remote terminals share an OpenSSH ControlMaster
-  connection. WSL requires a current `wsl-vpn-ssh-bridge` with pooling support.
-- `serverlessRemote.sshfsCacheProfile` defaults to `balanced` on Linux/macOS.
-  `fresh` minimizes caching, `balanced` caches metadata for a few seconds, and
-  `fast` uses longer metadata and kernel caches. With `fast`, changes made by
-  other remote processes can take longer to appear locally.
-- The `Serverless Remote SSH` Output channel reports configuration, status,
-  credentials, mount, verification, terminal creation, and total connection
-  timings with a `[性能]` prefix.
-- Click the `$(sparkle)` action beside a remote folder to enable AI forwarding.
-  VS Code agents can use `#serverlessRemoteRun`; a cwd inside the SSHFS mount is
-  translated to the same relative directory below `remote_path`, and execution
-  follows the configured SSH/bridge authentication and connection reuse path.
-  The action is visible only while the folder is mounted. A loopback-only,
-  tokenized Streamable HTTP MCP server exposes the same execution core to
-  Codex, Claude Code, and other MCP agents. On first use, the extension can
-  detect and configure the `codex` and `claude` CLIs after one confirmation.
-
-## Install
-
-### Install manually in VS Code
-
-1. Download the `.vsix` package to your computer.
-2. Open VS Code and select the **Extensions** icon in the Activity Bar, or press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
-3. Select the **Views and More Actions...** (`...`) menu in the upper-right corner of the Extensions view.
-4. Select **Install from VSIX...**.
-5. Choose `vscode-serverless-remote-ssh-1.0.0.vsix` and confirm the installation.
-6. Select **Reload Now** if VS Code asks you to reload the window.
-7. After installation, the extension prompts you to install the required software. On WSL and Linux, copy and run the provided installation command. On macOS, install [macFUSE](https://macfuse.github.io/) and [SSHFS](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS) using the corresponding download buttons in the prompt. On Windows, install [SSHFS-Win](https://github.com/winfsp/sshfs-win/releases/latest) and [WinFsp](https://github.com/winfsp/winfsp/releases/latest) using the corresponding download buttons.
-8. Press `Ctrl+Shift+P` to open the Command Palette and run `Serverless Remote SSH: Add SSH Config`. After completing the configuration, select `Serverless SSH` in the lower-left corner of the status bar, or run `Serverless Remote SSH: Open Remote Folder` from the Command Palette.
-9. To close the mounted connection, run `Serverless Remote SSH: Close`.
-
-To upgrade an existing installation, repeat these steps with the newer VSIX package. VS Code replaces the installed version.
-
-### Install from the command line
-
-```bash
-code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
-```
-
-After installation, use the `$(remote) Serverless SSH` status bar item or open the Command Palette.
-
-## Development
-
-```bash
-npm install
-npm test
-npm run package
-npm run vsix
-```
-
-This extension keeps language services and extensions local. Commands that must execute on the target should be run through the SSH terminal.
+- Local command-line programs cannot access `serverless-sftp://` files.
+- Extensions that only support `file://` workspaces may be unavailable.
+- SFTP has no native change notifications, so external changes are polled.
+- WSL configurations with `vpn: true` reuse the Windows TCP relay supplied by
+  `wsl-vpn-ssh-bridge`; install the bridge before using that mode. With
+  `vpn: false`, SFTP connects directly.

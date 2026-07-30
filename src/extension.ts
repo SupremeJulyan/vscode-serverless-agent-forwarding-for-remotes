@@ -1,116 +1,38 @@
-import * as vscode from 'vscode';
-import * as path from 'node:path';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { access, mkdir, readdir, readFile } from 'node:fs/promises';
+import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
-  parseSshLogin, removeMountConfig, resolveMount, saveConfig, setMountLocalPath
+  parseSshLogin, removeMountConfig, resolveMount, saveConfig
 } from './config';
-import { commandExists, commandSucceeds, executeCaptured, executeWithStdin } from './process';
-import { CommandPlan, ConnectionOptions, createPlatformAdapter } from './platform';
-import type { ResolvedMount } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
+import { createPlatformAdapter } from './platform';
+import { executeCaptured } from './process';
+import { AgentMcpServer } from './agent-mcp';
+import { connectSftp } from './sftp/client';
+import { SftpConnectionPool } from './sftp/connection-pool';
 import {
-  defaultMountDirectory, findMountForPath, findMountForPaths, remotePathForLocalPath,
-  mountPathInDirectory, resolveMountDirectory
-} from './mount-path';
-import { MountOperationLock, normalizeMountLockKey } from './mount-lock';
-import { createDependencyGuide } from './dependency-guide';
-import { AskpassCredentials, createAskpassCredentials, platformUsesAskpass } from './askpass';
+  RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider
+} from './sftp/filesystem-provider';
 import {
-  isAuthenticationFailure, isNetworkFailure, passwordValueOffset
-} from './authentication';
-import { isEmptyDirectory, isEmptyDirectoryTree } from './directory';
-import { AgentMcpServer, ForwardedMountInfo } from './agent-mcp';
+  isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
+} from './sftp/uri';
 
 const commandPrefix = 'serverlessRemote';
-const platformAdapter = createPlatformAdapter();
-
-interface PendingOpen {
-  mountName: string;
-  localPath: string;
-  createdAt: number;
-  ownsMount?: boolean;
-}
-
-interface PendingUnmount {
-  mountName: string;
-  localPath: string;
-  createdAt: number;
-}
-
-interface RemoteMountTreeItem {
-  mountName: string;
-}
-
-const pendingOpenKey = 'serverlessRemote.pendingOpen';
-const pendingUnmountKey = 'serverlessRemote.pendingUnmount';
-const pendingOpenTtlMs = 5 * 60 * 1000;
-const openConfigAction = 'Open Config';
-const addSshConfigAction = 'Add SSH Config';
-const openRemoteTerminalAction = 'Open Remote Terminal';
-const confirmMountAction = '确认挂载';
-const chooseMountDirectoryAction = '选择其他本地目录';
 const masterPasswordSecret = 'serverlessRemote.masterPassword';
+const agentMcpTokenSecret = 'serverlessRemote.agentMcpToken';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
-const terminalIdentityEnv = 'SERVERLESS_REMOTE_TERMINAL_ID';
-const dependencyPromptShownKey = 'serverlessRemote.dependencyPromptShown';
-const aiForwardMountsKey = 'serverlessRemote.aiForwardMounts';
-const agentMcpTokenSecret = 'serverlessRemote.agentMcpToken';
-const agentSetupCompletedKey = 'serverlessRemote.agentSetupCompleted';
-const legacyDependencyCacheKey = 'serverlessRemote.dependencyCache';
-let bridgeOutput: vscode.OutputChannel | undefined;
-let agentMcpServer: AgentMcpServer | undefined;
-const nativeSessionMounts = new Map<string, { remote: ResolvedMount; localPath: string }>();
-const openingTerminalIds = new Set<string>();
-let workspaceSwitchMountPath: string | undefined;
-const mountOperations = new MountOperationLock();
-const cachedEnv = Object.fromEntries(
-  Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
-);
-
-function withMountLock<T>(key: string, action: () => Promise<T>): Promise<T> {
-  const caseInsensitive = platformAdapter.kind === 'windows' || platformAdapter.kind === 'macos';
-  return mountOperations.run(normalizeMountLockKey(key, caseInsensitive), action);
-}
-
-function performanceLine(label: string, startedAt: number): void {
-  bridgeOutput?.appendLine(`[性能] ${label}: ${(performance.now() - startedAt).toFixed(1)} ms`);
-}
-
-async function timedPhase<T>(label: string, action: () => Promise<T>): Promise<T> {
-  const startedAt = performance.now();
-  try {
-    return await action();
-  } finally {
-    performanceLine(label, startedAt);
-  }
-}
-
-class ConfigActionRequiredError extends Error {
-  constructor(
-    message: string,
-    readonly actions = [openConfigAction],
-    readonly hostName?: string
-  ) {
-    super(message);
-  }
-}
+const platformAdapter = createPlatformAdapter();
+let output: vscode.OutputChannel;
+let pool: SftpConnectionPool;
+let registry: RemoteFolderRegistry;
+let provider: SftpFileSystemProvider;
+let mcp: AgentMcpServer | undefined;
 
 function settings(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('serverlessRemote');
-}
-
-function connectionOptions(): ConnectionOptions {
-  return {
-    reuseSshConnection: settings().get<boolean>('reuseSshConnection', true)
-      && platformAdapter.kind !== 'windows',
-    sshfsCacheProfile: settings().get<'fresh' | 'balanced' | 'fast'>(
-      'sshfsCacheProfile', 'balanced'
-    )
-  };
 }
 
 function configPath(): string {
@@ -118,8 +40,8 @@ function configPath(): string {
   const configured = inspected?.workspaceFolderValue
     ?? inspected?.workspaceValue
     ?? inspected?.globalValue;
-  const defaultPath = platformAdapter.kind === 'wsl' ? defaultWslConfigPath : defaultNativeConfigPath;
-  return expandHome(configured ?? defaultPath);
+  const fallback = platformAdapter.kind === 'wsl' ? defaultWslConfigPath : defaultNativeConfigPath;
+  return expandHome(configured ?? fallback);
 }
 
 async function readConfig(): Promise<BridgeConfig> {
@@ -127,1364 +49,440 @@ async function readConfig(): Promise<BridgeConfig> {
     return await loadConfig(configPath());
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new ConfigActionRequiredError(
-        `No config file was found at ${configPath()}.`,
-        [addSshConfigAction]
-      );
+      throw new Error(`找不到配置文件：${configPath()}。请先运行“添加 SSH 配置”。`);
     }
-    const message = error instanceof Error ? error.message : String(error);
-    throw new ConfigActionRequiredError(`Cannot read ${configPath()}: ${message}`);
-  }
-}
-
-async function selectMount(placeHolder: string): Promise<{ mount: MountConfig; config: BridgeConfig } | undefined> {
-  const config = await readConfig();
-  if (config.mounts.length === 0) {
-    throw new ConfigActionRequiredError(
-      'No remote folders are configured yet.',
-      [addSshConfigAction]
-    );
-  }
-  const picked = await vscode.window.showQuickPick(
-    config.mounts.map((mount) => ({
-      label: mount.name,
-      description: `${mount.host}: ${mount.remote_path}`,
-      detail: mount.local_path ? expandHome(mount.local_path) : 'Uses the platform default mount path',
-      mount
-    })),
-    { placeHolder, matchOnDescription: true, matchOnDetail: true }
-  );
-  return picked ? { mount: picked.mount, config } : undefined;
-}
-
-async function mountDirectory(mount: MountConfig): Promise<string | undefined> {
-  const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  return resolveMountDirectory(mount, current, platformAdapter.kind, expandHome);
-}
-
-async function confirmMountDirectory(
-  mount: MountConfig, config: BridgeConfig, localPath: string
-): Promise<string | undefined> {
-  const selected = await vscode.window.showInformationMessage(
-    `远程目录将挂载到：\n${localPath}`,
-    { modal: true, detail: '确认使用该目录，或选择另一个本地目录作为本次挂载位置。' },
-    confirmMountAction,
-    chooseMountDirectoryAction
-  );
-  if (selected === confirmMountAction) return localPath;
-  if (selected !== chooseMountDirectoryAction) return undefined;
-  while (true) {
-    const picked = await vscode.window.showOpenDialog({
-      title: `选择本地目录（将在其中创建 ${mount.name}）`,
-      defaultUri: vscode.Uri.file(path.dirname(localPath)),
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: '使用此目录'
-    });
-    const parentDirectory = picked?.[0]?.fsPath;
-    if (!parentDirectory) return undefined;
-    const parentIsMount = await commandSucceeds(
-      platformAdapter.status(resolveMount(config, mount), parentDirectory)
-    );
-    if (parentIsMount) {
-      await vscode.window.showErrorMessage(
-        '不能在已挂载的目录中创建嵌套挂载。',
-        { modal: true, detail: `请选择其他本地目录：${parentDirectory}` }
-      );
-      continue;
-    }
-    return mountPathInDirectory(parentDirectory, mount.name, platformAdapter.kind);
-  }
-}
-
-async function executeTask(plan: CommandPlan): Promise<void> {
-  const inheritedEnv = cachedEnv;
-  // A ProcessExecution without an explicit cwd can fall back to a user's
-  // terminal.integrated.cwd setting. If that contains ${workspaceFolder}, VS
-  // Code cannot resolve it while this extension is opening the first folder.
-  const options = {
-    cwd: plan.cwd ?? os.homedir(),
-    env: { ...inheritedEnv, ...plan.env }
-  };
-  const execution = new vscode.ProcessExecution(plan.command, plan.args, options);
-  const task = new vscode.Task(
-    { type: 'serverlessRemote', command: plan.command, target: plan.args.at(-1) ?? '' },
-    vscode.TaskScope.Global,
-    `${plan.command} ${plan.args.join(' ')}`,
-    'Serverless Remote SSH',
-    execution
-  );
-  task.presentationOptions = {
-    reveal: vscode.TaskRevealKind.Always,
-    panel: vscode.TaskPanelKind.Dedicated,
-    close: true,
-    showReuseMessage: false
-  };
-  let endListener: vscode.Disposable | undefined;
-  const ended = new Promise<number | undefined>((resolve) => {
-    endListener = vscode.tasks.onDidEndTaskProcess((event) => {
-      if (event.execution.task === task) {
-        endListener?.dispose();
-        resolve(event.exitCode);
-      }
-    });
-  });
-  try {
-    await vscode.tasks.executeTask(task);
-  } catch (error) {
-    endListener?.dispose();
     throw error;
   }
-  const exitCode = await ended;
-  if (exitCode !== 0) {
-    throw new Error(`${plan.command} exited with code ${exitCode ?? 'unknown'}`);
-  }
 }
 
-async function executePlan(plan: CommandPlan): Promise<void> {
-  if (plan.stdin !== undefined) {
-    if (plan.command === 'sshfs-bridge' && bridgeOutput) {
-      bridgeOutput.show(true);
-      bridgeOutput.appendLine(`[${new Date().toLocaleString()}] $ ${plan.command} ${plan.args.join(' ')}`);
-      let emittedOutput = false;
-      try {
-        await executeWithStdin(plan, {
-          stdout: (chunk) => {
-            emittedOutput = true;
-            bridgeOutput?.append(chunk);
-          },
-          stderr: (chunk) => {
-            emittedOutput = true;
-            bridgeOutput?.append(chunk);
-          }
-        });
-        bridgeOutput.appendLine(`[完成] ${plan.command} ${plan.args.join(' ')}`);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        bridgeOutput.appendLine(emittedOutput ? '[失败]' : `[失败] ${detail}`);
-        throw error;
-      }
-      return;
-    }
-    await executeWithStdin(plan);
-    return;
-  }
-  await executeTask(plan);
-}
-
-async function promptMasterPassword(context: vscode.ExtensionContext, confirm: boolean): Promise<string> {
-  const stored = await context.secrets.get(masterPasswordSecret);
-  if (stored) return stored;
-  const password = await input({
-    title: '配置密码加密',
-    prompt: confirm ? '设置配置加密主口令' : '输入配置加密主口令',
-    placeHolder: '此口令用于加密 SSH 密码，请妥善保存',
+async function promptMasterPassword(
+  context: vscode.ExtensionContext, creating = false
+): Promise<string> {
+  const saved = await context.secrets.get(masterPasswordSecret);
+  if (saved) return saved;
+  const first = await vscode.window.showInputBox({
+    title: creating ? '设置配置主口令' : '解锁 SSH 密码',
+    prompt: creating ? '主口令用于加密配置中的 SSH 密码' : '输入配置文件的加密主口令',
     password: true,
-    validateInput: required('加密主口令')
-  });
-  if (password === undefined) throw new Error('已取消密码加密');
-  if (confirm) {
-    const repeated = await input({
-      title: '配置密码加密', prompt: '再次输入配置加密主口令', password: true,
-      validateInput: required('加密主口令')
-    });
-    if (repeated === undefined) throw new Error('已取消密码加密');
-    if (repeated !== password) throw new Error('两次输入的加密主口令不一致');
-  }
-  await context.secrets.store(masterPasswordSecret, password);
-  return password;
-}
-
-async function decryptHostPassword(context: vscode.ExtensionContext, encrypted: string): Promise<string> {
-  const stored = await context.secrets.get(masterPasswordSecret);
-  if (stored) {
-    try {
-      return await decryptPassword(encrypted, stored);
-    } catch {
-      await context.secrets.delete(masterPasswordSecret);
-    }
-  }
-  const password = await promptMasterPassword(context, false);
-  try {
-    return await decryptPassword(encrypted, password);
-  } catch (error) {
-    await context.secrets.delete(masterPasswordSecret);
-    throw error;
-  }
-}
-
-async function bridgeMasterPasswordEnv(
-  context: vscode.ExtensionContext, host: HostConfig
-): Promise<Record<string, string>> {
-  if (platformAdapter.kind !== 'wsl' || !host.password) return {};
-  const encrypted = isEncryptedPassword(host.password);
-  if (encrypted) {
-    // This validates a stored value and prompts again immediately if it is
-    // stale, rather than failing inside the non-interactive bridge process.
-    await decryptHostPassword(context, host.password);
-    const masterPassword = await context.secrets.get(masterPasswordSecret);
-    if (!masterPassword) throw new Error('无法读取配置加密主口令');
-    return { WSL_VPN_MASTER_PASSWORD: masterPassword };
-  }
-  const masterPassword = await promptMasterPassword(context, true);
-  return { WSL_VPN_MASTER_PASSWORD: masterPassword };
-}
-
-async function resolveStoredHostPassword(
-  context: vscode.ExtensionContext, config: BridgeConfig, host: HostConfig
-): Promise<HostConfig> {
-  if (!host.password) return host;
-  if (isEncryptedPassword(host.password)) {
-    return { ...host, password: await decryptHostPassword(context, host.password) };
-  }
-  const plainPassword = host.password;
-  const masterPassword = await promptMasterPassword(context, true);
-  const encrypted = await encryptPassword(plainPassword, masterPassword);
-  const index = config.hosts.findIndex((item) => item.name === host.name);
-  if (index >= 0) config.hosts[index] = { ...host, password: encrypted };
-  config.encrypt_passwords = true;
-  await saveConfig(configPath(), config);
-  return { ...host, password: plainPassword };
-}
-
-interface EnsureMountedOptions {
-  config?: BridgeConfig;
-  knownUnmounted?: boolean;
-}
-
-async function ensureMountedUnlocked(
-  context: vscode.ExtensionContext, mount: MountConfig, localPath: string,
-  options: EnsureMountedOptions = {}
-): Promise<boolean> {
-  const config = options.config ?? await readConfig();
-  const resolved = resolveMount(config, mount);
-  const statusPlan = platformAdapter.status(resolved, localPath);
-  const mounted = options.knownUnmounted === true
-    ? false
-    : await timedPhase(
-      `${mount.name} 挂载状态检查`,
-      () => commandSucceeds(statusPlan)
-    );
-  if (!mounted) {
-    let credentials: AskpassCredentials | undefined;
-    const connectionFailure = async (clearPassword: boolean): Promise<ConfigActionRequiredError> => {
-      const hostIndex = config.hosts.findIndex((host) => host.name === resolved.hostConfig.name);
-      if (clearPassword && hostIndex >= 0 && config.hosts[hostIndex].password) {
-        config.hosts[hostIndex] = { ...config.hosts[hostIndex], password: '' };
-        await saveConfig(configPath(), config);
-      }
-      return new ConfigActionRequiredError(
-        `主机“${resolved.hostConfig.name}”网络连接失败或者密码错误，请打开配置设置新密码。`,
-        [openConfigAction],
-        resolved.hostConfig.name
-      );
-    };
-    try {
-      if (resolved.hostConfig.password) {
-        resolved.hostConfig = await timedPhase(
-          `${mount.name} 凭据准备`,
-          () => resolveStoredHostPassword(context, config, resolved.hostConfig)
-        );
-      }
-      let mountPlan = platformAdapter.mount(resolved, localPath, connectionOptions());
-      if (platformAdapter.kind === 'wsl') {
-        mountPlan = {
-          ...mountPlan,
-          env: {
-            ...mountPlan.env,
-            ...await bridgeMasterPasswordEnv(context, resolved.hostConfig)
-          }
-        };
-      }
-      if (
-        platformUsesAskpass(platformAdapter.kind) && resolved.hostConfig.password
-      ) {
-        credentials = await createAskpassCredentials(resolved.hostConfig.password!);
-        mountPlan = {
-          ...mountPlan,
-          env: { ...mountPlan.env, ...credentials.env },
-          // Waiting for sshfs lets its own authentication/network errors reach
-          // the extension.
-          stdin: ''
-        };
-      }
-      try {
-        await timedPhase(`${mount.name} SSHFS 挂载`, () => executePlan(mountPlan));
-      } catch (error) {
-        const authenticationFailed = Boolean(
-          resolved.hostConfig.password && isAuthenticationFailure(error)
-        );
-        if (!authenticationFailed && !isNetworkFailure(error)) throw error;
-        throw await connectionFailure(authenticationFailed);
-      }
-      if (!await timedPhase(
-        `${mount.name} 挂载结果验证`,
-        () => commandSucceeds(statusPlan)
-      )) {
-        throw await connectionFailure(false);
-      }
-      if (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux') {
-        nativeSessionMounts.set(path.resolve(localPath), { remote: resolved, localPath });
-      }
-      return true;
-    } finally {
-      await credentials?.cleanup();
-    }
-  }
-  return false;
-}
-
-async function openRemoteFolder(
-  context: vscode.ExtensionContext, requestedMount?: MountConfig
-): Promise<void> {
-  const selected = requestedMount
-    ? await (async () => {
-        const config = await readConfig();
-        const mount = config.mounts.find((candidate) => candidate.name === requestedMount.name);
-        if (!mount) throw new Error(`Remote folder no longer exists: ${requestedMount.name}`);
-        return { mount, config };
-      })()
-    : await selectMount('Select a remote folder to open');
-  if (!selected) return;
-  const { mount, config } = selected;
-  const resolvedLocalPath = await mountDirectory(mount);
-  if (!resolvedLocalPath) return;
-  const localPath = await confirmMountDirectory(mount, config, resolvedLocalPath);
-  if (!localPath) return;
-  if (!sameLocalPath(localPath, resolvedLocalPath)) {
-    setMountLocalPath(config, mount.name, localPath);
-    await saveConfig(configPath(), config);
-  }
-  if (platformAdapter.kind !== 'windows') await mkdir(localPath, { recursive: true });
-  const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  await withMountLock(localPath, async () => {
-    if (current && sameLocalPath(current, localPath)) {
-      await ensureMountedUnlocked(context, mount, localPath, { config });
-      await openTerminal(context, mount, localPath, config);
-      return;
-    }
-    const ownsMount = await ensureMountedUnlocked(context, mount, localPath, { config });
-    // VS Code can reconnect a terminal across vscode.openFolder even when it was
-    // created as transient. Once ssh-bridge execs sshpass, the revived terminal's
-    // title no longer matches "SSH: <mount>", so startup auto-connect would open
-    // a second terminal. Close this mount's bridge terminal before switching;
-    // resumePendingOpen creates exactly one terminal in the destination window.
-    const host = resolveMount(config, mount).hostConfig;
-    for (const terminal of vscode.window.terminals) {
-      if (isBridgeTerminalForMount(terminal, mount.name, host.name)) {
-        terminal.dispose();
-      }
-    }
-    await context.globalState.update(pendingOpenKey, {
-      mountName: mount.name, localPath, createdAt: Date.now(), ownsMount
-    });
-    const absoluteLocalPath = path.resolve(localPath);
-    workspaceSwitchMountPath = absoluteLocalPath;
-    try {
-      const opened = await vscode.commands.executeCommand<boolean | undefined>(
-        'vscode.openFolder',
-        vscode.Uri.file(absoluteLocalPath),
-        true
-      );
-      if (opened === false) {
-        workspaceSwitchMountPath = undefined;
-        await context.globalState.update(pendingOpenKey, undefined);
-      }
-    } catch (error) {
-      workspaceSwitchMountPath = undefined;
-      await context.globalState.update(pendingOpenKey, undefined);
-      throw error;
-    }
-  });
-}
-
-function sameLocalPath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return platformAdapter.kind === 'windows' || platformAdapter.kind === 'macos'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-function isBridgeTerminalForMount(
-  terminal: vscode.Terminal, mountName: string, hostName: string
-): boolean {
-  const options = terminal.creationOptions;
-  if (!('shellPath' in options)) return false;
-  const identity = options.env?.[terminalIdentityEnv];
-  if (identity?.startsWith(`${mountName}\0`)) return true;
-  const configuredMount = options.env?.SSH_BRIDGE_MOUNT_NAME;
-  if (configuredMount === mountName) return true;
-  const args = Array.isArray(options.shellArgs) ? options.shellArgs : [];
-  return typeof options.shellPath === 'string'
-    && path.basename(options.shellPath) === 'ssh-bridge'
-    && args[0] === hostName;
-}
-
-function isManagedRemoteTerminal(terminal: vscode.Terminal): boolean {
-  const options = terminal.creationOptions;
-  return 'env' in options && typeof options.env?.[terminalIdentityEnv] === 'string';
-}
-
-async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promise<void> {
-  if (!isManagedRemoteTerminal(terminal)
-    || terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
-    return;
-  }
-  const selected = await vscode.window.showWarningMessage(
-    `远程终端“${terminal.name}”已退出。请运行“Serverless Remote SSH: Open Remote Terminal”重新打开。`,
-    openRemoteTerminalAction
-  );
-  if (selected === openRemoteTerminalAction) {
-    await vscode.commands.executeCommand(`${commandPrefix}.openTerminal`);
-  }
-}
-
-async function resumePendingOpen(context: vscode.ExtensionContext): Promise<void> {
-  const pending = context.globalState.get<PendingOpen>(pendingOpenKey);
-  if (!pending) return;
-  if (!pending.createdAt || Date.now() - pending.createdAt > pendingOpenTtlMs) {
-    await context.globalState.update(pendingOpenKey, undefined);
-    return;
-  }
-  const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (current && sameLocalPath(current, pending.localPath)) {
-    await context.globalState.update(pendingOpenKey, undefined);
-    const config = await readConfig();
-    const mount = config.mounts.find((item) => item.name === pending.mountName);
-    if (!mount) throw new Error(`Pending mount no longer exists: ${pending.mountName}`);
-    if (pending.ownsMount && (platformAdapter.kind === 'macos' || platformAdapter.kind === 'linux')) {
-      nativeSessionMounts.set(path.resolve(pending.localPath), {
-        remote: resolveMount(config, mount),
-        localPath: pending.localPath
-      });
-    }
-    await openTerminal(context, mount, pending.localPath, config);
-    return;
-  }
-  // No current workspace matches the pending open — the local directory may
-  // have disappeared (e.g. WSL was shut down). Re-mount and re-open it so
-  // the user does not see "Cannot open a non-existent workspace folder".
-  if (!current || workspaceCount() === 0) {
-    await context.globalState.update(pendingOpenKey, undefined);
-    const config = await readConfig();
-    const mount = config.mounts.find((item) => item.name === pending.mountName);
-    if (!mount) return;
-    await withMountLock(pending.localPath, async () => {
-      await ensureMountedUnlocked(context, mount, pending.localPath, { config });
-    });
-    await context.globalState.update(pendingOpenKey, {
-      mountName: pending.mountName, localPath: pending.localPath, createdAt: Date.now(), ownsMount: true
-    });
-    workspaceSwitchMountPath = path.resolve(pending.localPath);
-    try {
-      await vscode.commands.executeCommand(
-        'vscode.openFolder',
-        vscode.Uri.file(path.resolve(pending.localPath)),
-        false
-      );
-    } finally {
-      workspaceSwitchMountPath = undefined;
-    }
-    return;
-  }
-}
-
-async function openTerminal(
-  context: vscode.ExtensionContext, mountConfig?: MountConfig, cwd?: string,
-  loadedConfig?: BridgeConfig, forceNew = false
-): Promise<{ terminal: vscode.Terminal; created: boolean } | undefined> {
-  let mount = mountConfig;
-  let config = loadedConfig;
-  if (!mount) {
-    config ??= await readConfig();
-    const currentPath = vscode.window.activeTextEditor?.document.uri.scheme === 'file'
-      ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
-      : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const match = currentPath
-      ? findMountForPath(config.mounts, currentPath, platformAdapter.kind, expandHome)
-      : undefined;
-    mount = match?.mount;
-    cwd = match?.cwd;
-  }
-  let selected;
-  if (!mount) {
-    selected = await selectMount('Select a remote terminal');
-    if (!selected) {
-      return undefined;
-    }
-    mount = selected.mount;
-    config = selected.config;
-  }
-  config ??= await readConfig();
-  const resolved = resolveMount(config, mount);
-  const configuredLocalPath = mount.local_paths?.[platformAdapter.kind] ?? mount.local_path;
-  const localRoot = configuredLocalPath ? expandHome(configuredLocalPath) : undefined;
-  const localCwd = cwd ?? localRoot;
-  const remoteCwd = localRoot && localCwd
-    ? remotePathForLocalPath(mount.remote_path, localRoot, localCwd, platformAdapter.kind)
-    : undefined;
-  const remoteRoot = path.posix.normalize(mount.remote_path);
-  const remoteRelative = remoteCwd ? path.posix.relative(remoteRoot, remoteCwd) : '';
-  const terminalName = remoteRelative
-    ? `SSH: ${mount.name} — ${remoteRelative}`
-    : `SSH: ${mount.name}`;
-  const terminalId = `${mount.name}\0${remoteRelative}`;
-  if (!forceNew) {
-    const existingTerminal = vscode.window.terminals.find((terminal) => {
-      const options = terminal.creationOptions;
-      const identity = 'env' in options ? options.env?.[terminalIdentityEnv] : undefined;
-      return identity === terminalId || terminal.name === terminalName;
-    });
-    if (existingTerminal) {
-      existingTerminal.show();
-      return { terminal: existingTerminal, created: false };
-    }
-  }
-  if (openingTerminalIds.has(terminalId)) return undefined;
-  openingTerminalIds.add(terminalId);
-  try {
-    let credentials: AskpassCredentials | undefined;
-    if (resolved.hostConfig.password) {
-      resolved.hostConfig = await timedPhase(
-        `${mount.name} 终端凭据准备`,
-        () => resolveStoredHostPassword(context, config, resolved.hostConfig)
-      );
-      if (platformUsesAskpass(platformAdapter.kind)) {
-        credentials = await createAskpassCredentials(resolved.hostConfig.password!);
-      }
-    }
-    const plan = platformAdapter.terminal(
-      resolved.hostConfig, remoteCwd, connectionOptions()
-    );
-    const bridgeEnv = await bridgeMasterPasswordEnv(context, resolved.hostConfig);
-    const terminalStartedAt = performance.now();
-    const terminal = vscode.window.createTerminal({
-      name: terminalName,
-      shellPath: plan.command,
-      shellArgs: plan.args,
-      env: {
-        SSH_BRIDGE_MOUNT_NAME: mount.name,
-        [terminalIdentityEnv]: terminalId,
-        ...plan.env,
-        ...bridgeEnv,
-        ...credentials?.env
-      },
-      // The local mount path is only used to calculate remoteCwd above. During
-      // an open-folder window reload VS Code briefly has an empty workspace and
-      // rejects terminal cwd values outside the user home. SSH changes to the
-      // mapped directory remotely, so starting the local client at home is both
-      // sufficient and safe in that transient state.
-      cwd: os.homedir(),
-      isTransient: true
-    });
-    performanceLine(`${mount.name} SSH 终端创建（不含远端握手）`, terminalStartedAt);
-    if (credentials) {
-      const disposable = vscode.window.onDidCloseTerminal((closed) => {
-        if (closed === terminal) {
-          disposable.dispose();
-          void credentials?.cleanup();
-        }
-      });
-      setTimeout(() => {
-        disposable.dispose();
-        void credentials?.cleanup();
-      }, pendingOpenTtlMs);
-    }
-    terminal.show();
-    return { terminal, created: true };
-  } finally {
-    openingTerminalIds.delete(terminalId);
-  }
-}
-
-async function mountAndOpenTerminal(
-  context: vscode.ExtensionContext, config: BridgeConfig,
-  match: { mount: MountConfig; localPath: string; cwd: string }
-): Promise<void> {
-  const host = resolveMount(config, match.mount).hostConfig;
-  const canConnectConcurrently = !connectionOptions().reuseSshConnection
-    && (!host.password || isEncryptedPassword(host.password));
-  if (!canConnectConcurrently) {
-    await ensureMountedUnlocked(context, match.mount, match.localPath, {
-      config, knownUnmounted: true
-    });
-    await openTerminal(context, match.mount, match.cwd, config);
-    return;
-  }
-  const [mountResult, terminalResult] = await Promise.allSettled([
-    ensureMountedUnlocked(context, match.mount, match.localPath, {
-      config, knownUnmounted: true
-    }),
-    openTerminal(context, match.mount, match.cwd, config)
-  ]);
-  if (mountResult.status === 'rejected') {
-    if (terminalResult.status === 'fulfilled' && terminalResult.value?.created) {
-      terminalResult.value.terminal.dispose();
-    }
-    throw mountResult.reason;
-  }
-  if (terminalResult.status === 'rejected') throw terminalResult.reason;
-}
-
-async function autoOpenWorkspaceTerminal(context: vscode.ExtensionContext): Promise<void> {
-  const workspacePaths = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
-  if (workspacePaths.length === 0) return;
-  let config: BridgeConfig;
-  try {
-    config = await timedPhase('自动连接配置读取', () => loadConfig(configPath()));
-  } catch {
-    return;
-  }
-  const activePath = vscode.window.activeTextEditor?.document.uri.scheme === 'file'
-    ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
-    : undefined;
-  const candidates = activePath ? [activePath, ...workspacePaths] : workspacePaths;
-  const match = findMountForPaths(config.mounts, candidates, platformAdapter.kind, expandHome);
-  if (!match) return;
-  return withMountLock(match.localPath, async () => {
-  const openedWorkspacePath = workspacePaths.find((workspacePath) =>
-    findMountForPath(
-      [match.mount], workspacePath, platformAdapter.kind, expandHome
-    )?.localPath === match.localPath
-  );
-  if (openedWorkspacePath) {
-    const resolved = resolveMount(config, match.mount);
-    const mounted = await timedPhase(
-      `${match.mount.name} 启动挂载状态检查`,
-      () => commandSucceeds(platformAdapter.status(resolved, match.localPath))
-    );
-    // An unmounted Windows drive has no directory entry to read, so its
-    // missing drive root is the platform equivalent of an empty mount point.
-    const empty = !mounted && (
-      await isEmptyDirectory(match.localPath, platformAdapter.kind === 'windows')
-      || await isEmptyDirectoryTree(match.localPath)
-    );
-    if (empty) {
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `检测到“${match.mount.name}”挂载已断开，正在重新挂载…`,
-        cancellable: false
-      }, () => mountAndOpenTerminal(context, config, match));
-      return;
-    }
-  }
-  await openTerminal(context, match.mount, match.cwd, config);
-  });
-}
-
-function workspaceCount(): number {
-  return vscode.workspace.workspaceFolders?.length ?? 0;
-}
-
-function workspaceUsesPath(localPath: string): boolean {
-  const mountPath = path.resolve(localPath);
-  return vscode.workspace.workspaceFolders?.some((folder) => {
-    const workspacePath = path.resolve(folder.uri.fsPath);
-    const relative = path.relative(mountPath, workspacePath);
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-  }) ?? false;
-}
-
-async function executeUnmount(mount: MountConfig, localPath: string): Promise<void> {
-  return withMountLock(localPath, async () => {
-  let disposedTaskTerminal = false;
-  for (const terminal of vscode.window.terminals) {
-    if (terminal.name.includes('sshfs-bridge mount ')) {
-      terminal.dispose();
-      disposedTaskTerminal = true;
-    }
-  }
-  if (disposedTaskTerminal) await new Promise((resolve) => setTimeout(resolve, 300));
-  const config = await readConfig();
-  await executePlatformUnmount(resolveMount(config, mount), localPath);
-  nativeSessionMounts.delete(path.resolve(localPath));
-  });
-}
-
-async function executePlatformUnmount(remote: ResolvedMount, localPath: string): Promise<void> {
-  try {
-    await executePlan(platformAdapter.unmount(remote, localPath));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const busy = platformAdapter.kind === 'macos'
-      ? message.includes('Resource busy')
-      : message.includes('Device or resource busy');
-    if ((platformAdapter.kind !== 'linux' && platformAdapter.kind !== 'macos')
-      || !busy || !platformAdapter.lazyUnmount) {
-      throw error;
-    }
-    await executePlan(platformAdapter.lazyUnmount(remote, localPath));
-  }
-}
-
-async function closeRemote(
-  context: vscode.ExtensionContext, requestedMount?: MountConfig
-): Promise<void> {
-  const selected = requestedMount
-    ? { mount: requestedMount, config: await readConfig() }
-    : await selectMount('Select a remote folder to close');
-  if (selected) {
-    const { mount } = selected;
-    const expandedPath = await mountDirectory(mount);
-    if (!expandedPath) return;
-    if (workspaceUsesPath(expandedPath)) {
-      await context.globalState.update(pendingUnmountKey, {
-        mountName: mount.name, localPath: expandedPath, createdAt: Date.now()
-      } satisfies PendingUnmount);
-      await vscode.commands.executeCommand('workbench.action.closeFolder');
-      return;
-    }
-    await executeUnmount(mount, expandedPath);
-    const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
-    enabled.delete(mount.name);
-    await context.globalState.update(aiForwardMountsKey, [...enabled]);
-    if (enabled.size === 0) await agentMcpServer?.stop();
-  }
-}
-
-async function relayStatusLines(): Promise<string[]> {
-  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-  const runtimeRoot = process.env.XDG_RUNTIME_DIR ?? os.tmpdir();
-  const poolPath = path.join(runtimeRoot, `vpn-relay-pool-${uid ?? 'unknown'}`);
-  try {
-    const stateFiles = (await readdir(poolPath)).filter((name) => name.endsWith('.state'));
-    const lines = await Promise.all(stateFiles.map(async (name) => {
-      const [pid, port, host, targetPort] = (await readFile(path.join(poolPath, name), 'utf8')).trim().split('\n');
-      return `  registered: 127.0.0.1:${port} -> ${host}:${targetPort} (Windows PID ${pid})`;
-    }));
-    return lines.length ? lines : ['  no registered relays'];
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' ? ['  no registered relays'] : [`  unavailable: ${String(error)}`];
-  }
-}
-
-async function showStatus(output: vscode.OutputChannel): Promise<void> {
-  const config = await readConfig();
-  output.clear();
-  output.appendLine('Mounts');
-  const lines = await Promise.all(config.mounts.map(async (mount) => {
-    const expandedPath = await mountDirectory(mount);
-    if (!expandedPath) return undefined;
-    const mounted = await commandSucceeds(platformAdapter.status(resolveMount(config, mount), expandedPath));
-    return `  ${mount.name}: ${mounted ? 'mounted' : 'not mounted'} (${expandedPath})`;
-  }));
-  for (const line of lines) if (line !== undefined) output.appendLine(line);
-  if (platformAdapter.kind === 'wsl') {
-    output.appendLine('');
-    output.appendLine('Relay');
-    for (const line of await relayStatusLines()) output.appendLine(line);
-  }
-  output.show(true);
-}
-
-class RemoteFoldersProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  constructor(private readonly context: vscode.ExtensionContext) {}
-  private readonly changed = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
-  readonly onDidChangeTreeData = this.changed.event;
-
-  dispose(): void {
-    this.changed.dispose();
-  }
-
-  refresh(): void {
-    this.changed.fire();
-  }
-
-  getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
-    return item;
-  }
-
-  async getChildren(): Promise<vscode.TreeItem[]> {
-    let config: BridgeConfig;
-    try {
-      config = await readConfig();
-    } catch (error) {
-      await vscode.commands.executeCommand('setContext', 'serverlessRemote.hasNoMounts', false);
-      const message = error instanceof Error ? error.message : String(error);
-      const item = new vscode.TreeItem('Cannot read configuration');
-      item.description = 'Open config to fix';
-      item.iconPath = new vscode.ThemeIcon(
-        'warning', new vscode.ThemeColor('list.warningForeground')
-      );
-      item.tooltip = message;
-      item.command = {
-        command: `${commandPrefix}.openConfig`,
-        title: 'Open Config'
-      };
-      return [item];
-    }
-
-    await vscode.commands.executeCommand(
-      'setContext', 'serverlessRemote.hasNoMounts', config.mounts.length === 0
-    );
-    return Promise.all(config.mounts.map(async (mount) => {
-      const aiForwarded = this.context.globalState
-        .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
-      const localPath = await mountDirectory(mount);
-      const resolved = resolveMount(config, mount);
-      const mounted = localPath
-        ? await commandSucceeds(platformAdapter.status(resolved, localPath))
-        : false;
-      const item = new vscode.TreeItem(
-        mount.name, vscode.TreeItemCollapsibleState.None
-      ) as vscode.TreeItem & RemoteMountTreeItem;
-      item.mountName = mount.name;
-      item.description = `${resolved.hostConfig.user}@${resolved.hostConfig.ip} · ${
-        mounted ? 'mounted' : 'not mounted'
-      }${aiForwarded ? ' · AI forwarding' : ''}`;
-      item.contextValue = mounted
-        ? 'serverlessRemote.mount.mounted'
-        : 'serverlessRemote.mount';
-      item.iconPath = mounted
-        ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('testing.iconPassed'))
-        : new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('descriptionForeground'));
-      item.tooltip = new vscode.MarkdownString([
-        `**${mount.name}**`,
-        '',
-        `${resolved.hostConfig.user}@${resolved.hostConfig.ip}:${resolved.hostConfig.port ?? 22}`,
-        '',
-        `Remote: \`${mount.remote_path}\``,
-        '',
-        `Local: \`${localPath ?? 'Not configured'}\``,
-        '',
-        mounted ? 'Mounted' : 'Not mounted',
-        '',
-        aiForwarded ? '$(sparkle) AI forwarding enabled' : 'AI forwarding disabled'
-      ].join('\n'));
-      item.command = {
-        command: `${commandPrefix}.openFolderItem`,
-        title: '打开远程文件夹',
-        arguments: [item]
-      };
-      return item;
-    }));
-  }
-}
-
-interface RemoteCommandInput {
-  command: string;
-  cwd?: string;
-  mountName?: string;
-}
-
-async function toggleAiForward(
-  context: vscode.ExtensionContext, item: RemoteMountTreeItem
-): Promise<void> {
-  const mount = await configuredMount(item);
-  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
-  const turningOn = !enabled.has(mount.name);
-  if (turningOn) {
-    const config = await readConfig();
-    const localRoot = await mountDirectory(mount);
-    if (!localRoot
-      || !await commandSucceeds(platformAdapter.status(resolveMount(config, mount), localRoot))) {
-      throw new Error('请先挂载远程文件夹，再打开 Agent 转发。');
-    }
-    enabled.add(mount.name);
-  } else {
-    enabled.delete(mount.name);
-  }
-  if (turningOn) {
-    try {
-      const server = await ensureAgentMcpServer(context);
-      await context.globalState.update(aiForwardMountsKey, [...enabled]);
-      await configureDetectedAgents(context, server);
-    } catch (error) {
-      enabled.delete(mount.name);
-      await context.globalState.update(aiForwardMountsKey, [...enabled]);
-      throw error;
-    }
-  } else if (enabled.size === 0) {
-    await context.globalState.update(aiForwardMountsKey, []);
-    await agentMcpServer?.stop();
-  } else {
-    await context.globalState.update(aiForwardMountsKey, [...enabled]);
-  }
-  void vscode.window.showInformationMessage(
-    `“${mount.name}”AI 转发已${turningOn ? '打开' : '关闭'}。${
-      turningOn ? 'Agent 的远程命令会自动映射到相同的远程工作目录。' : ''
-    }`
-  );
-}
-
-async function invokeRemoteCommand(
-  context: vscode.ExtensionContext, input: RemoteCommandInput,
-  token: vscode.CancellationToken
-): Promise<vscode.LanguageModelToolResult> {
-  const result = await executeRemoteCommand(context, input, token);
-  return new vscode.LanguageModelToolResult([
-    new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2))
-  ]);
-}
-
-async function executeRemoteCommand(
-  context: vscode.ExtensionContext, input: RemoteCommandInput,
-  token?: vscode.CancellationToken
-): Promise<Record<string, unknown>> {
-  if (!input.command?.trim()) throw new Error('Remote command must not be empty.');
-  const config = await readConfig();
-  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
-  const enabledMounts = config.mounts.filter((mount) => enabled.has(mount.name));
-  if (enabledMounts.length === 0) {
-    throw new Error('AI forwarding is not enabled. Click the sparkle action on a remote folder first.');
-  }
-  const candidatePath = input.cwd
-    ?? (vscode.window.activeTextEditor?.document.uri.scheme === 'file'
-      ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
-      : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
-  let mount = input.mountName
-    ? enabledMounts.find((candidate) => candidate.name === input.mountName)
-    : undefined;
-  let localRoot: string | undefined;
-  if (!mount && candidatePath) {
-    const match = findMountForPath(enabledMounts, candidatePath, platformAdapter.kind, expandHome);
-    mount = match?.mount;
-    localRoot = match?.localPath;
-  }
-  if (!mount && enabledMounts.length === 1) mount = enabledMounts[0];
-  if (!mount) {
-    throw new Error('More than one AI forwarding target is enabled; provide mountName or a cwd inside one mount.');
-  }
-  localRoot ??= await mountDirectory(mount);
-  if (!localRoot) throw new Error(`No local mount path is available for ${mount.name}.`);
-  const localCwd = candidatePath ?? localRoot;
-  const remoteCwd = remotePathForLocalPath(
-    mount.remote_path, localRoot, localCwd, platformAdapter.kind
-  );
-  if (!remoteCwd) {
-    throw new Error(`cwd must be inside the SSHFS mount ${localRoot}; got ${localCwd}.`);
-  }
-  const resolved = resolveMount(config, mount);
-  let credentials: AskpassCredentials | undefined;
-  try {
-    if (resolved.hostConfig.password) {
-      resolved.hostConfig = await resolveStoredHostPassword(context, config, resolved.hostConfig);
-      if (platformUsesAskpass(platformAdapter.kind)) {
-        credentials = await createAskpassCredentials(resolved.hostConfig.password!);
-      }
-    }
-    const plan = platformAdapter.exec(
-      resolved.hostConfig, remoteCwd, input.command, connectionOptions()
-    );
-    plan.env = {
-      ...plan.env,
-      ...await bridgeMasterPasswordEnv(context, resolved.hostConfig),
-      ...credentials?.env
-    };
-    const controller = new AbortController();
-    const cancellation = token?.onCancellationRequested(() => controller.abort());
-    try {
-      const result = await executeCaptured(plan, controller.signal);
-      return {
-        mountName: mount.name,
-        remoteCwd,
-        command: input.command,
-        ...result
-      };
-    } finally {
-      cancellation?.dispose();
-    }
-  } finally {
-    await credentials?.cleanup();
-  }
-}
-
-async function forwardedMounts(context: vscode.ExtensionContext): Promise<ForwardedMountInfo[]> {
-  const config = await readConfig();
-  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
-  const result: ForwardedMountInfo[] = [];
-  for (const mount of config.mounts) {
-    if (!enabled.has(mount.name)) continue;
-    const localRoot = await mountDirectory(mount);
-    if (!localRoot) continue;
-    const resolved = resolveMount(config, mount);
-    if (!await commandSucceeds(platformAdapter.status(resolved, localRoot))) continue;
-    result.push({
-      name: mount.name,
-      localRoot,
-      remoteRoot: mount.remote_path,
-      host: resolved.hostConfig.name
-    });
-  }
-  return result;
-}
-
-async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<AgentMcpServer> {
-  if (!agentMcpServer) {
-    let token = await context.secrets.get(agentMcpTokenSecret);
-    if (!token) {
-      token = randomBytes(24).toString('hex');
-      await context.secrets.store(agentMcpTokenSecret, token);
-    }
-    agentMcpServer = new AgentMcpServer(
-      settings().get<number>('agentMcpPort', 9848),
-      token,
-      {
-        listMounts: () => forwardedMounts(context),
-        run: (input) => executeRemoteCommand(context, input),
-        log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
-      }
-    );
-    context.subscriptions.push({ dispose: () => void agentMcpServer?.stop() });
-  }
-  await agentMcpServer.start();
-  return agentMcpServer;
-}
-
-async function detectedCodexCommand(): Promise<string | undefined> {
-  if (await commandExists('codex')) return 'codex';
-  const extension = vscode.extensions.getExtension('openai.chatgpt');
-  if (!extension) return undefined;
-  const binRoot = path.join(extension.extensionPath, 'bin');
-  try {
-    const platformDirectories = await readdir(binRoot, { withFileTypes: true });
-    for (const directory of platformDirectories) {
-      if (!directory.isDirectory()) continue;
-      const candidate = path.join(
-        binRoot, directory.name, process.platform === 'win32' ? 'codex.exe' : 'codex'
-      );
-      try {
-        await access(candidate);
-        bridgeOutput?.appendLine(`[Agent MCP] 使用 Codex 扩展内置 CLI：${candidate}`);
-        return candidate;
-      } catch {
-        // Try the next platform directory.
-      }
-    }
-  } catch {
-    // The installed Codex extension does not expose a bundled CLI.
-  }
-  return undefined;
-}
-
-async function detectedClaudeCommand(): Promise<string | undefined> {
-  if (await commandExists('claude')) return 'claude';
-  const extension = vscode.extensions.getExtension('anthropic.claude-code');
-  if (!extension) return undefined;
-  const candidate = path.join(
-    extension.extensionPath, 'resources', 'native-binary',
-    process.platform === 'win32' ? 'claude.exe' : 'claude'
-  );
-  try {
-    await access(candidate);
-    bridgeOutput?.appendLine(`[Agent MCP] 使用 Claude Code 扩展内置 CLI：${candidate}`);
-    return candidate;
-  } catch {
-    return undefined;
-  }
-}
-
-async function configureDetectedAgents(
-  context: vscode.ExtensionContext, server: AgentMcpServer
-): Promise<void> {
-  const saved = context.globalState.get<unknown>(agentSetupCompletedKey);
-  const configured = new Set(Array.isArray(saved) ? saved.filter(
-    (item): item is string => typeof item === 'string'
-  ) : []);
-  const [codexCommand, claudeCommand] = await Promise.all([
-    detectedCodexCommand(), detectedClaudeCommand()
-  ]);
-  bridgeOutput?.appendLine(
-    `[Agent MCP] Agent 检测：Codex ${codexCommand ? '可用' : '未找到'}，Claude Code ${
-      claudeCommand ? '可用' : '未找到'
-    }`
-  );
-  const [codexConfigured, claudeConfigured] = await Promise.all([
-    codexCommand
-      ? commandSucceeds({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
-      : Promise.resolve(false),
-    claudeCommand
-      ? commandSucceeds({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
-      : Promise.resolve(false)
-  ]);
-  if (!codexConfigured) configured.delete('codex');
-  if (!claudeConfigured) configured.delete('claude');
-  bridgeOutput?.appendLine(
-    `[Agent MCP] 注册状态：Codex ${codexConfigured ? '已注册' : '未注册'}，Claude Code ${
-      claudeConfigured ? '已注册' : '未注册'
-    }`
-  );
-  const agents = [
-    ...(codexCommand && !codexConfigured ? ['Codex'] : []),
-    ...(claudeCommand && !claudeConfigured ? ['Claude Code'] : [])
-  ];
-  if (agents.length === 0) {
-    await context.globalState.update(agentSetupCompletedKey, [...configured]);
-    return;
-  }
-  const configureAction = '一键配置';
-  const selected = await vscode.window.showInformationMessage(
-    `检测到 ${agents.join(' 和 ')}。是否注册 Serverless Remote SSH MCP？此操作只需一次。`,
-    { modal: true, detail: `MCP 服务仅监听本机：${server.url.replace(/token=.*/, 'token=<hidden>')}` },
-    configureAction
-  );
-  if (selected !== configureAction) {
-    bridgeOutput?.appendLine('[Agent MCP] 用户取消了 Agent 自动配置');
-    return;
-  }
-  const failures: string[] = [];
-  if (codexCommand && !configured.has('codex')) {
-    const result = await executeCaptured({
-      command: codexCommand,
-      args: ['mcp', 'add', 'serverless-remote', '--url', server.url]
-    });
-    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
-      failures.push(`Codex: ${result.stderr || result.stdout}`);
-    } else {
-      configured.add('codex');
-      bridgeOutput?.appendLine('[Agent MCP] Codex 注册成功');
-    }
-  }
-  if (claudeCommand && !configured.has('claude')) {
-    const result = await executeCaptured({
-      command: claudeCommand,
-      args: [
-        'mcp', 'add', '--transport', 'http', '--scope', 'user',
-        'serverless-remote', server.url
-      ]
-    });
-    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
-      failures.push(`Claude Code: ${result.stderr || result.stdout}`);
-    } else {
-      configured.add('claude');
-      bridgeOutput?.appendLine('[Agent MCP] Claude Code 注册成功');
-    }
-  }
-  await context.globalState.update(agentSetupCompletedKey, [...configured]);
-  if (failures.length > 0) {
-    bridgeOutput?.appendLine(`[Agent MCP] 自动配置失败\n${failures.join('\n')}`);
-    const copyAction = '复制手工配置命令';
-    const choice = await vscode.window.showWarningMessage(
-      '部分 Agent 自动配置失败，详情已写入输出面板。',
-      copyAction
-    );
-    if (choice === copyAction) {
-      await vscode.env.clipboard.writeText([
-        codexCommand ? `codex mcp add serverless-remote --url '${server.url}'` : '',
-        claudeCommand
-          ? `claude mcp add --transport http --scope user serverless-remote '${server.url}'`
-          : ''
-      ].filter(Boolean).join('\n'));
-    }
-    return;
-  }
-  void vscode.window.showInformationMessage(
-    `${agents.join(' 和 ')} 已配置。请重启对应 Agent/扩展以加载 MCP。`
-  );
-}
-
-async function configuredMount(item: RemoteMountTreeItem): Promise<MountConfig> {
-  const config = await readConfig();
-  const mount = config.mounts.find((candidate) => candidate.name === item.mountName);
-  if (!mount) throw new Error(`Remote folder no longer exists: ${item.mountName}`);
-  return mount;
-}
-
-async function deleteRemoteConfig(item: RemoteMountTreeItem): Promise<void> {
-  const config = await readConfig();
-  const mount = config.mounts.find((candidate) => candidate.name === item.mountName);
-  if (!mount) throw new Error(`Remote folder no longer exists: ${item.mountName}`);
-  const localPath = await mountDirectory(mount);
-  const mounted = localPath
-    ? await commandSucceeds(platformAdapter.status(resolveMount(config, mount), localPath))
-    : false;
-  const empty = localPath ? await isEmptyDirectory(localPath) : false;
-  if (mounted || !empty) {
-    await vscode.window.showErrorMessage(
-      '当前目录已被挂载，请先断开连接一段时间，确认为空目录后手动删除。',
-      { modal: true }
-    );
-    return;
-  }
-  const confirmed = await vscode.window.showWarningMessage(
-    `确定删除“${mount.name}”配置吗？`,
-    { modal: true, detail: `本地目录不会被删除：${localPath}` },
-    '删除'
-  );
-  if (confirmed !== '删除') return;
-  removeMountConfig(config, mount.name);
-  await saveConfig(configPath(), config);
-}
-
-async function resumePendingUnmount(context: vscode.ExtensionContext): Promise<void> {
-  const pending = context.globalState.get<PendingUnmount>(pendingUnmountKey);
-  if (!pending) return;
-  if (!pending.createdAt || Date.now() - pending.createdAt > pendingOpenTtlMs) {
-    await context.globalState.update(pendingUnmountKey, undefined);
-    return;
-  }
-  if (workspaceUsesPath(pending.localPath)) return;
-  const config = await readConfig();
-  const mount = config.mounts.find((item) => item.name === pending.mountName);
-  await context.globalState.update(pendingUnmountKey, undefined);
-  // The close-folder operation reloads the extension host. The user may edit
-  // or replace the configuration before that reload finishes; in that case
-  // this is merely stale cleanup state, not a failure of the next connection.
-  if (!mount) return;
-  await executeUnmount(mount, pending.localPath);
-  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
-  enabled.delete(mount.name);
-  await context.globalState.update(aiForwardMountsKey, [...enabled]);
-}
-
-async function openConfig(hostName?: string): Promise<void> {
-  const resolvedPath = await ensureConfigFile(configPath());
-  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolvedPath));
-  const editor = await vscode.window.showTextDocument(document);
-  if (!hostName) return;
-  const offset = passwordValueOffset(document.getText(), hostName);
-  if (offset === undefined) return;
-  const position = document.positionAt(offset);
-  editor.selection = new vscode.Selection(position, position);
-  editor.revealRange(
-    new vscode.Range(position, position),
-    vscode.TextEditorRevealType.InCenterIfOutsideViewport
-  );
-}
-
-interface InputOptions {
-  title: string;
-  prompt: string;
-  value?: string;
-  placeHolder?: string;
-  password?: boolean;
-  validateInput?: (value: string) => string | undefined;
-}
-
-async function input(options: InputOptions): Promise<string | undefined> {
-  return vscode.window.showInputBox({
-    ...options,
     ignoreFocusOut: true,
-    valueSelection: options.value ? [0, options.value.length] : undefined
+    validateInput: (value) => value.length >= 8 ? undefined : '主口令至少需要 8 个字符'
+  });
+  if (!first) throw new Error('未提供主口令');
+  if (creating) {
+    const repeated = await vscode.window.showInputBox({
+      title: '确认配置主口令',
+      prompt: '再次输入相同的主口令',
+      password: true,
+      ignoreFocusOut: true
+    });
+    if (repeated !== first) throw new Error('两次输入的主口令不一致');
+  }
+  await context.secrets.store(masterPasswordSecret, first);
+  return first;
+}
+
+async function resolvedHost(
+  context: vscode.ExtensionContext, hostName: string
+): Promise<HostConfig> {
+  const config = await readConfig();
+  const host = config.hosts.find((candidate) => candidate.name === hostName);
+  if (!host) throw new Error(`SSH 主机不存在：${hostName}`);
+  if (!host.password) return { ...host };
+  if (!isEncryptedPassword(host.password)) return { ...host };
+  return {
+    ...host,
+    password: await decryptPassword(host.password, await promptMasterPassword(context))
+  };
+}
+
+async function selectMount(placeHolder: string): Promise<MountConfig | undefined> {
+  const config = await readConfig();
+  if (config.mounts.length === 0) throw new Error('尚未配置远程文件夹');
+  const picked = await vscode.window.showQuickPick(config.mounts.map((mount) => ({
+    label: mount.name,
+    description: `${mount.host}: ${mount.remote_path}`,
+    mount
+  })), { placeHolder });
+  return picked?.mount;
+}
+
+async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
+  const existing = registry.get(mount.name);
+  if (existing) {
+    await pool.get(existing.hostName);
+    return existing;
+  }
+  const config = await readConfig();
+  const resolved = resolveMount(config, mount);
+  const session = await pool.get(resolved.hostConfig.name);
+  const remoteRoot = await session.realpath(mount.remote_path);
+  const stat = await session.stat(remoteRoot);
+  if (stat.type !== 'directory') throw new Error(`远程路径不是目录：${remoteRoot}`);
+  const folder = { mountName: mount.name, hostName: mount.host, remoteRoot };
+  registry.set(folder);
+  return folder;
+}
+
+async function openRemoteFolder(requested?: MountConfig): Promise<void> {
+  const mount = requested ?? await selectMount('选择要打开的 SFTP 远程文件夹');
+  if (!mount) return;
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `正在连接 ${mount.name}…`,
+    cancellable: false
+  }, async () => {
+    const folder = await ensureFolder(mount);
+    await vscode.commands.executeCommand(
+      'vscode.openFolder',
+      vscode.Uri.parse(remoteUri(folder.mountName, folder.remoteRoot)),
+      true
+    );
   });
 }
 
-const required = (label: string) => (value: string): string | undefined =>
-  value.trim() ? undefined : `${label}不能为空`;
-
-async function editableConfig(): Promise<BridgeConfig> {
-  await ensureConfigFile(configPath());
-  const config = await loadConfig(configPath());
-  config.encrypt_passwords = true;
-  return config;
+function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
+  const active = vscode.window.activeTextEditor?.document.uri;
+  if (active?.scheme === remoteFileSystemScheme) return parseRemoteUri(active.toString());
+  const workspace = vscode.workspace.workspaceFolders?.find(
+    (folder) => folder.uri.scheme === remoteFileSystemScheme
+  );
+  return workspace ? parseRemoteUri(workspace.uri.toString()) : undefined;
 }
 
-async function confirmReplacement(kind: string, name: string, exists: boolean): Promise<boolean> {
-  if (!exists) return true;
-  return await vscode.window.showWarningMessage(
-    `${kind} 配置“${name}”已存在，是否覆盖？`,
-    { modal: true },
-    '覆盖'
-  ) === '覆盖';
+async function openTerminal(requested?: MountConfig): Promise<void> {
+  const config = await readConfig();
+  const location = requested ? undefined : currentRemoteLocation();
+  const mount = requested
+    ?? config.mounts.find((candidate) => candidate.name === location?.mountName)
+    ?? await selectMount('选择要打开终端的 SSH 配置');
+  if (!mount) return;
+  const folder = await ensureFolder(mount);
+  const host = await resolvedHost(vscodeContext, mount.host);
+  const remoteCwd = location?.mountName === mount.name ? location.remotePath : folder.remoteRoot;
+  const plan = platformAdapter.terminal(host, remoteCwd, {
+    reuseSshConnection: settings().get<boolean>('reuseSshConnection', true)
+  });
+  const terminal = vscode.window.createTerminal({
+    name: `SSH: ${mount.name}`,
+    shellPath: plan.command,
+    shellArgs: plan.args,
+    env: plan.env,
+    cwd: os.homedir(),
+    isTransient: true
+  });
+  terminal.show();
+}
+
+async function disconnect(requested?: MountConfig): Promise<void> {
+  const mount = requested ?? await selectMount('选择要断开的 SFTP 连接');
+  if (!mount) return;
+  const current = currentRemoteLocation();
+  if (current?.mountName === mount.name) {
+    await vscode.commands.executeCommand('workbench.action.closeFolder');
+  }
+  registry.delete(mount.name);
+  const config = await readConfig();
+  const shared = registry.values().some((folder) => folder.hostName === mount.host);
+  if (!shared) await pool.disconnect(resolveMount(config, mount).hostConfig.name);
+}
+
+async function openConfig(): Promise<void> {
+  const file = await ensureConfigFile(configPath());
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+  await vscode.window.showTextDocument(document);
+}
+
+async function input(options: vscode.InputBoxOptions): Promise<string | undefined> {
+  return vscode.window.showInputBox({ ...options, ignoreFocusOut: true });
 }
 
 async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
-  const title = 'Add SSH Config';
   const name = await input({
-    title, prompt: '配置名称', value: 'dev', validateInput: required('配置名称')
+    title: '添加 SSH/SFTP 配置',
+    prompt: '配置名称',
+    value: 'dev',
+    validateInput: (value) => value.trim() ? undefined : '配置名称不能为空'
   });
   if (name === undefined) return;
   const loginText = await input({
-    title,
+    title: '添加 SSH/SFTP 配置',
     prompt: 'SSH 登录地址',
     value: `${os.userInfo().username}@10.0.0.1`,
-    placeHolder: 'user@10.0.0.1',
-    validateInput: (value) => parseSshLogin(value) ? undefined : '请输入 user@IP 或 user@主机名'
+    validateInput: (value) => parseSshLogin(value) ? undefined : '请输入 user@主机'
   });
-  if (loginText === undefined) return;
+  if (!loginText) return;
   const login = parseSshLogin(loginText);
-  if (!login) throw new Error('SSH 登录地址格式无效');
+  if (!login) return;
   const password = await input({
-    title,
-    prompt: 'SSH 密码（留空则改用私钥）',
-    placeHolder: '输入密码，或留空后按 Enter',
+    title: '添加 SSH/SFTP 配置',
+    prompt: 'SSH 密码（留空使用私钥）',
     password: true
   });
   if (password === undefined) return;
-  const encryptedPassword = password
-    ? await encryptPassword(password, await promptMasterPassword(context, true))
-    : undefined;
-  let privateKeyPath: string | undefined;
-  if (!password) {
-    privateKeyPath = await input({
-      title,
+  let privateKey: string | undefined;
+  let encrypted: string | undefined;
+  if (password) {
+    encrypted = await encryptPassword(password, await promptMasterPassword(context, true));
+  } else {
+    privateKey = await input({
+      title: '添加 SSH/SFTP 配置',
       prompt: 'SSH 私钥路径',
       value: '~/.ssh/id_ed25519',
-      placeHolder: '例如 ~/.ssh/id_ed25519',
-      validateInput: required('私钥路径')
+      validateInput: (value) => value.trim() ? undefined : '私钥路径不能为空'
     });
-    if (privateKeyPath === undefined) return;
+    if (!privateKey) return;
   }
   let vpn = false;
   if (platformAdapter.kind === 'wsl') {
-    const selectedVpn = await vscode.window.showQuickPick([
+    const selection = await vscode.window.showQuickPick([
       {
-        label: 'No',
-        description: 'false（默认）：不使用外部 VPN 中继',
+        label: '直接连接',
+        description: 'WSL 可直接访问目标服务器',
         value: false
       },
       {
-        label: 'Yes',
-        description: 'true：使用 aTrust 等外部 VPN 时启用中继',
+        label: '通过 Windows VPN 中继',
+        description: '需要安装 wsl-vpn-ssh-bridge',
         value: true
       }
     ], {
-      title,
-      placeHolder: '是否使用外部 VPN（如 aTrust）？',
+      title: '添加 SSH/SFTP 配置',
+      placeHolder: '选择 SFTP 网络路径',
       ignoreFocusOut: true
     });
-    if (!selectedVpn) return;
-    vpn = selectedVpn.value;
+    if (!selection) return;
+    vpn = selection.value;
   }
-
-  const config = await editableConfig();
+  await ensureConfigFile(configPath());
+  const config = await loadConfig(configPath());
   const normalizedName = name.trim();
-  const existingIndex = config.hosts.findIndex((host) => host.name === normalizedName);
-  if (!await confirmReplacement('SSH', normalizedName, existingIndex >= 0)) return;
   const host: HostConfig = {
     name: normalizedName,
     ip: login.host,
     user: login.user,
-    port: 22
+    port: 22,
+    ...(platformAdapter.kind === 'wsl' ? { vpn } : {}),
+    ...(encrypted ? { password: encrypted } : { private_key_path: privateKey!.trim() })
   };
-  if (platformAdapter.kind === 'wsl') host.vpn = vpn;
-  if (privateKeyPath) host.private_key_path = privateKeyPath.trim();
-  if (encryptedPassword) host.password = encryptedPassword;
-  if (existingIndex >= 0) config.hosts[existingIndex] = host;
+  const hostIndex = config.hosts.findIndex((item) => item.name === normalizedName);
+  const mountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
+  if ((hostIndex >= 0 || mountIndex >= 0)
+    && await vscode.window.showWarningMessage(
+      `配置“${normalizedName}”已存在，是否覆盖？`, { modal: true }, '覆盖'
+    ) !== '覆盖') return;
+  if (hostIndex >= 0) config.hosts[hostIndex] = host;
   else config.hosts.push(host);
-
-  const existingMountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
-  // A configured local path is authoritative. Only mounts without one receive a
-  // workspace-based default.
-  const existingMount = existingMountIndex >= 0 ? config.mounts[existingMountIndex] : undefined;
-  const existingPath = existingMount?.local_paths?.[platformAdapter.kind] ?? existingMount?.local_path;
-  const current = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  const localPath = existingPath
-    ? expandHome(existingPath)
-    : defaultMountDirectory(
-        { name: normalizedName, host: normalizedName, remote_path: '.' },
-        current,
-        platformAdapter.kind
-      );
   const mount: MountConfig = {
     name: normalizedName,
     host: normalizedName,
     remote_path: '.',
-    local_path: localPath,
     remote_terminal: 'open'
   };
-  if (platformAdapter.kind === 'windows') mount.local_path = 'R:';
-  if (existingMountIndex >= 0) config.mounts[existingMountIndex] = mount;
+  if (mountIndex >= 0) config.mounts[mountIndex] = mount;
   else config.mounts.push(mount);
   config.encrypt_passwords = true;
   await saveConfig(configPath(), config);
-  if (platformAdapter.kind !== 'windows') await mkdir(localPath, { recursive: true });
-  void vscode.window.showInformationMessage(
-    `已保存“${normalizedName}”；SSH 登录目录将挂载到 ${localPath}`
+  void vscode.window.showInformationMessage(`已保存 SFTP 配置“${normalizedName}”`);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+async function mountAndFolder(mountName: string): Promise<{
+  mount: MountConfig;
+  folder: RemoteFolder;
+}> {
+  const config = await readConfig();
+  const mount = config.mounts.find((candidate) => candidate.name === mountName);
+  if (!mount) throw new Error(`远程文件夹不存在：${mountName}`);
+  return { mount, folder: await ensureFolder(mount) };
+}
+
+function toolPath(folder: RemoteFolder, value = '.'): string {
+  const resolved = value.startsWith('/')
+    ? path.posix.normalize(value)
+    : path.posix.resolve(folder.remoteRoot, value);
+  if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) {
+    throw new Error(`路径超出远程工作区：${value}`);
+  }
+  return resolved;
+}
+
+async function remoteList(input: { mountName: string; path?: string }): Promise<unknown> {
+  const { mount, folder } = await mountAndFolder(input.mountName);
+  const remotePath = toolPath(folder, input.path);
+  const uri = vscode.Uri.parse(remoteUri(folder.mountName, remotePath));
+  return {
+    mountName: mount.name,
+    path: remotePath,
+    entries: (await provider.readDirectory(uri)).map(([name, type]) => ({ name, type }))
+  };
+}
+
+async function remoteRead(input: {
+  mountName: string; path: string; offset?: number; length?: number;
+}): Promise<unknown> {
+  const { mount, folder } = await mountAndFolder(input.mountName);
+  const remotePath = toolPath(folder, input.path);
+  const bytes = await provider.readFile(
+    vscode.Uri.parse(remoteUri(folder.mountName, remotePath))
   );
+  const offset = input.offset ?? 0;
+  const end = input.length ? offset + input.length : bytes.length;
+  const selected = bytes.slice(offset, end);
+  return {
+    mountName: mount.name,
+    path: remotePath,
+    offset,
+    bytes: selected.length,
+    truncated: end < bytes.length,
+    content: new TextDecoder().decode(selected)
+  };
+}
+
+async function remoteWrite(input: {
+  mountName: string; path: string; content: string;
+}): Promise<unknown> {
+  const { folder } = await mountAndFolder(input.mountName);
+  const remotePath = toolPath(folder, input.path);
+  const uri = vscode.Uri.parse(remoteUri(folder.mountName, remotePath));
+  const content = new TextEncoder().encode(input.content);
+  await provider.writeFile(uri, content, { create: true, overwrite: true });
+  return { mountName: input.mountName, path: remotePath, bytes: content.length };
+}
+
+async function runRemote(input: {
+  mountName: string; command: string; remoteCwd?: string;
+}): Promise<unknown> {
+  const { mount, folder } = await mountAndFolder(input.mountName);
+  const requestedCwd = toolPath(folder, input.remoteCwd);
+  const remoteCwd = await (await pool.get(mount.host)).realpath(requestedCwd);
+  if (!isRemotePathInsideRoot(folder.remoteRoot, remoteCwd)) {
+    throw new Error(`远程工作目录通过符号链接超出工作区：${requestedCwd}`);
+  }
+  const host = await resolvedHost(vscodeContext, mount.host);
+  const plan = platformAdapter.exec(host, remoteCwd, input.command, {
+    reuseSshConnection: settings().get<boolean>('reuseSshConnection', true)
+  });
+  return { mountName: mount.name, remoteCwd, ...await executeCaptured(plan) };
+}
+
+async function remoteSearch(input: {
+  mountName: string; query: string; path?: string;
+}): Promise<unknown> {
+  const { mount, folder } = await mountAndFolder(input.mountName);
+  const requestedPath = toolPath(folder, input.path);
+  const searchPath = await (await pool.get(mount.host)).realpath(requestedPath);
+  if (!isRemotePathInsideRoot(folder.remoteRoot, searchPath)) {
+    throw new Error(`搜索路径通过符号链接超出工作区：${requestedPath}`);
+  }
+  return runRemote({
+    mountName: input.mountName,
+    remoteCwd: folder.remoteRoot,
+    command: `grep -rIn --exclude-dir=.git -- ${shellQuote(input.query)} ${
+      shellQuote(searchPath)
+    } | head -n 1000`
+  });
+}
+
+class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
+  private readonly emitter = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this.emitter.event;
+
+  refresh(): void {
+    this.emitter.fire();
+  }
+
+  getTreeItem(mount: MountConfig): vscode.TreeItem {
+    const connected = registry.get(mount.name) !== undefined;
+    const item = new vscode.TreeItem(mount.name);
+    item.description = connected ? '已连接 SFTP' : '未连接';
+    item.contextValue = connected
+      ? 'serverlessRemote.connection.connected'
+      : 'serverlessRemote.connection';
+    item.iconPath = new vscode.ThemeIcon(connected ? 'vm-active' : 'remote');
+    item.command = {
+      command: `${commandPrefix}.openFolderItem`,
+      title: '打开远程文件夹',
+      arguments: [mount]
+    };
+    return item;
+  }
+
+  async getChildren(): Promise<MountConfig[]> {
+    try {
+      const config = await readConfig();
+      await vscode.commands.executeCommand(
+        'setContext', 'serverlessRemote.hasNoMounts', config.mounts.length === 0
+      );
+      return config.mounts;
+    } catch {
+      return [];
+    }
+  }
+}
+
+async function restoreRemoteWorkspaces(): Promise<void> {
+  const folders = vscode.workspace.workspaceFolders?.filter(
+    (folder) => folder.uri.scheme === remoteFileSystemScheme
+  ) ?? [];
+  if (folders.length === 0) return;
+  const config = await readConfig();
+  for (const workspace of folders) {
+    const location = parseRemoteUri(workspace.uri.toString());
+    const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+    if (!mount) continue;
+    const folder = await ensureFolder(mount);
+    if (folder.remoteRoot !== location.remotePath) {
+      output.appendLine(
+        `远程根目录已变化：${location.remotePath} -> ${folder.remoteRoot}`
+      );
+    }
+  }
+}
+
+async function preloadRemoteWorkspaces(): Promise<void> {
+  const workspaces = vscode.workspace.workspaceFolders?.filter(
+    (folder) => folder.uri.scheme === remoteFileSystemScheme
+  ) ?? [];
+  if (workspaces.length === 0) return;
+  const config = await readConfig();
+  for (const workspace of workspaces) {
+    const location = parseRemoteUri(workspace.uri.toString());
+    const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+    if (!mount) continue;
+    registry.set({
+      mountName: mount.name,
+      hostName: mount.host,
+      remoteRoot: location.remotePath
+    });
+  }
+}
+
+async function showStatus(): Promise<void> {
+  const config = await readConfig();
+  output.clear();
+  for (const mount of config.mounts) {
+    const folder = registry.get(mount.name);
+    const state = pool.state(mount.host);
+    output.appendLine(
+      `${mount.name}: ${state}; host=${mount.host}; remote=${
+        folder?.remoteRoot ?? mount.remote_path
+      }${pool.error(mount.host) ? `; error=${pool.error(mount.host)?.message}` : ''}`
+    );
+  }
+  output.show(true);
+}
+
+async function deleteConfig(mount: MountConfig): Promise<void> {
+  if (registry.get(mount.name)) throw new Error('请先断开该 SFTP 连接');
+  if (await vscode.window.showWarningMessage(
+    `确定删除“${mount.name}”配置吗？`, { modal: true }, '删除'
+  ) !== '删除') return;
+  const config = await readConfig();
+  removeMountConfig(config, mount.name);
+  await saveConfig(configPath(), config);
 }
 
 async function guard(action: () => Promise<unknown>): Promise<void> {
@@ -1492,177 +490,133 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
     await action();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof ConfigActionRequiredError) {
-      const selected = await vscode.window.showErrorMessage(
-        `Serverless Remote SSH: ${message}`,
-        ...error.actions
-      );
-      if (selected === openConfigAction) {
-        await vscode.commands.executeCommand(`${commandPrefix}.openConfig`, error.hostName);
-      } else if (selected === addSshConfigAction) {
-        await vscode.commands.executeCommand(`${commandPrefix}.addSshConfig`);
-      }
-      return;
-    }
+    output.appendLine(`[错误] ${message}`);
     await vscode.window.showErrorMessage(`Serverless Remote SSH: ${message}`);
   }
 }
 
-async function showDependencyTips(): Promise<void> {
-  const guide = await createDependencyGuide(platformAdapter.kind);
-  const copyAction = guide.command ? '复制安装命令' : undefined;
-  const linkActions = guide.links ?? (guide.url ? [{ label: '查看安装说明', url: guide.url }] : []);
-  const actions = [copyAction, ...linkActions.map((link) => link.label)]
-    .filter((item): item is string => item !== undefined);
-  const selected = await vscode.window.showWarningMessage(guide.message, ...actions);
-  if (selected === copyAction && guide.command) {
-    await vscode.env.clipboard.writeText(guide.command);
-    void vscode.window.showInformationMessage('安装命令已复制到剪贴板，请在终端中运行。');
-  } else {
-    const link = linkActions.find((item) => item.label === selected);
-    if (link) await vscode.env.openExternal(vscode.Uri.parse(link.url));
-  }
-}
+let vscodeContext: vscode.ExtensionContext;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const statusOutput = vscode.window.createOutputChannel('Serverless Remote SSH Status');
-  bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
-  context.subscriptions.push(statusOutput, bridgeOutput);
-  const remoteFolders = new RemoteFoldersProvider(context);
-  const registrations: Array<[string, () => Promise<void>]> = [
-    ['openFolder', () => guard(() => openRemoteFolder(context))],
-    ['openTerminal', () =>
-      guard(() => openTerminal(context, undefined, undefined, undefined, true))],
-    ['close', () => guard(async () => {
-      await closeRemote(context);
-      remoteFolders.refresh();
-    })],
-    ['status', () => guard(() => showStatus(statusOutput))],
-    ['openConfig', () => guard(() => openConfig())],
-    ['addSshConfig', () => guard(async () => {
-      await addSshConfig(context);
-      remoteFolders.refresh();
-    })],
-    ['installDependenciesTips', () => guard(() => showDependencyTips())]
-  ];
-  for (const [name, handler] of registrations) {
-    context.subscriptions.push(vscode.commands.registerCommand(`${commandPrefix}.${name}`, handler));
-  }
-  context.subscriptions.push(
-    remoteFolders,
-    vscode.window.registerTreeDataProvider(`${commandPrefix}.mounts`, remoteFolders),
-    vscode.commands.registerCommand(`${commandPrefix}.refreshExplorer`, () => {
-      remoteFolders.refresh();
-    }),
-    vscode.commands.registerCommand(
-      `${commandPrefix}.openFolderItem`,
-      (item: RemoteMountTreeItem) => guard(async () => {
-        await openRemoteFolder(context, await configuredMount(item));
-        remoteFolders.refresh();
-      })
-    ),
-    vscode.commands.registerCommand(
-      `${commandPrefix}.openTerminalItem`,
-      (item: RemoteMountTreeItem) => guard(async () => {
-        await openTerminal(
-          context, await configuredMount(item), undefined, undefined, true
-        );
-        remoteFolders.refresh();
-      })
-    ),
-    vscode.commands.registerCommand(
-      `${commandPrefix}.toggleAiForwardItem`,
-      (item: RemoteMountTreeItem) => guard(async () => {
-        await toggleAiForward(context, item);
-        remoteFolders.refresh();
-      })
-    ),
-    vscode.commands.registerCommand(
-      `${commandPrefix}.closeItem`,
-      (item: RemoteMountTreeItem) => guard(async () => {
-        await closeRemote(context, await configuredMount(item));
-        remoteFolders.refresh();
-      })
-    ),
-    vscode.commands.registerCommand(
-      `${commandPrefix}.deleteConfigItem`,
-      (item: RemoteMountTreeItem) => guard(async () => {
-        await deleteRemoteConfig(item);
-        remoteFolders.refresh();
-      })
-    )
+  vscodeContext = context;
+  output = vscode.window.createOutputChannel('Serverless Remote SSH');
+  registry = new RemoteFolderRegistry();
+  pool = new SftpConnectionPool(async (hostName, signal) =>
+    connectSftp(await resolvedHost(context, hostName), platformAdapter.kind === 'wsl', signal)
   );
-  context.subscriptions.push(vscode.lm.registerTool<RemoteCommandInput>(
-    'serverlessRemote_runRemoteCommand',
-    {
-      prepareInvocation: async (options) => ({
-        invocationMessage: '正在通过 Serverless SSH 执行远程命令',
-        confirmationMessages: {
-          title: '执行远程 SSH 命令',
-          message: new vscode.MarkdownString(
-            `是否在远程环境执行？\n\n\`\`\`sh\n${options.input.command}\n\`\`\``
-          )
-        }
-      }),
-      invoke: (options, token) => invokeRemoteCommand(context, options.input, token)
-    }
-  ));
-  context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
-    void suggestReopeningClosedTerminal(terminal);
-  }));
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
-    void guard(() => timedPhase(
-      '工作区变化自动连接总计',
-      () => autoOpenWorkspaceTerminal(context)
+  await guard(preloadRemoteWorkspaces);
+  provider = new SftpFileSystemProvider(
+    pool,
+    registry,
+    settings().get<number>('sftp.cacheTtl', 5) * 1000,
+    settings().get<number>('sftp.watchInterval', 5) * 1000
+  );
+  const tree = new RemoteFoldersProvider();
+  context.subscriptions.push(
+    output,
+    provider,
+    vscode.workspace.registerFileSystemProvider(remoteFileSystemScheme, provider, {
+      isCaseSensitive: true,
+      isReadonly: false
+    }),
+    vscode.window.registerTreeDataProvider(`${commandPrefix}.mounts`, tree),
+    { dispose: () => void pool.close() }
+  );
+
+  const command = (name: string, callback: (...args: never[]) => Promise<unknown>) => {
+    context.subscriptions.push(vscode.commands.registerCommand(
+      `${commandPrefix}.${name}`,
+      (...args: never[]) => guard(() => callback(...args))
     ));
+  };
+  command('openFolder', () => openRemoteFolder());
+  command('openFolderItem', (mount) => openRemoteFolder(mount));
+  command('openTerminal', () => openTerminal());
+  command('openTerminalItem', (mount) => openTerminal(mount));
+  command('close', () => disconnect());
+  command('closeItem', async (mount) => {
+    await disconnect(mount);
+    tree.refresh();
+  });
+  command('status', showStatus);
+  command('openConfig', openConfig);
+  command('addSshConfig', async () => {
+    await addSshConfig(context);
+    tree.refresh();
+  });
+  command('refreshExplorer', async () => tree.refresh());
+  command('deleteConfigItem', async (mount) => {
+    await deleteConfig(mount);
+    tree.refresh();
+  });
+
+  const tool = <T>(
+    name: string,
+    callback: (input: T) => Promise<unknown>,
+    confirmation = false
+  ) => context.subscriptions.push(vscode.lm.registerTool<T>(name, {
+    ...(confirmation ? {
+      prepareInvocation: async () => ({
+        invocationMessage: '正在修改远程 SFTP 文件',
+        confirmationMessages: {
+          title: '修改远程文件',
+          message: new vscode.MarkdownString('是否允许修改远程 SFTP 工作区？')
+        }
+      })
+    } : {}),
+    invoke: async (options) => new vscode.LanguageModelToolResult([
+      new vscode.LanguageModelTextPart(JSON.stringify(await callback(options.input), null, 2))
+    ])
   }));
+  tool('serverlessRemote_listRemoteFiles', remoteList);
+  tool('serverlessRemote_readRemoteFile', remoteRead);
+  tool('serverlessRemote_writeRemoteFile', remoteWrite, true);
+  tool('serverlessRemote_searchRemoteFiles', remoteSearch);
+  tool('serverlessRemote_runRemoteCommand', runRemote, true);
+
+  let token = await context.secrets.get(agentMcpTokenSecret);
+  if (!token) {
+    token = randomBytes(24).toString('hex');
+    await context.secrets.store(agentMcpTokenSecret, token);
+  }
+  mcp = new AgentMcpServer(
+    settings().get<number>('agentMcpPort', 9848),
+    token,
+    {
+      listFolders: async () => {
+        const config = await readConfig();
+        return Promise.all(config.mounts.map(async (mount) => {
+          const folder = await ensureFolder(mount);
+          return {
+            name: mount.name,
+            workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
+            remoteRoot: folder.remoteRoot,
+            host: mount.host
+          };
+        }));
+      },
+      list: remoteList,
+      read: remoteRead,
+      write: remoteWrite,
+      search: remoteSearch,
+      run: runRemote,
+      log: (message) => output.appendLine(`[Agent MCP] ${message}`)
+    }
+  );
+  context.subscriptions.push({ dispose: () => void mcp?.stop() });
+  await guard(() => mcp!.start());
+  await guard(restoreRemoteWorkspaces);
 
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.name = 'Serverless Remote SSH';
-  statusBar.text = '$(remote) Serverless SSH';
-  statusBar.tooltip = 'Open an SSHFS-backed remote folder';
+  statusBar.text = '$(remote) Serverless SFTP';
+  statusBar.tooltip = '打开 SFTP 远程文件夹';
   statusBar.command = `${commandPrefix}.openFolder`;
   statusBar.show();
   context.subscriptions.push(statusBar);
-  await guard(() => resumePendingUnmount(context));
-  await guard(() => resumePendingOpen(context));
-  await guard(() => timedPhase(
-    '启动自动连接总计',
-    () => autoOpenWorkspaceTerminal(context)
-  ));
-  await guard(async () => {
-    if ((await forwardedMounts(context)).length > 0) await ensureAgentMcpServer(context);
-  });
-  const promptShown = context.globalState.get<boolean>(dependencyPromptShownKey, false);
-  const upgradedFromDependencyCheckingVersion =
-    context.globalState.get(`${legacyDependencyCacheKey}.${platformAdapter.kind}`) !== undefined;
-  if (!promptShown && upgradedFromDependencyCheckingVersion) {
-    await context.globalState.update(dependencyPromptShownKey, true);
-  } else if (!promptShown) {
-    await context.globalState.update(dependencyPromptShownKey, true);
-    void guard(() => showDependencyTips());
-  }
 }
 
 export async function deactivate(): Promise<void> {
-  await agentMcpServer?.stop();
-  if (platformAdapter.kind !== 'macos' && platformAdapter.kind !== 'linux') return;
-  const mounts = [...nativeSessionMounts.entries()]
-    .filter(([mountPath]) => mountPath !== workspaceSwitchMountPath)
-    .map(([mountPath, mount]) => ({
-      ...mount,
-      workspacePaths: vscode.workspace.workspaceFolders
-        ?.map((folder) => folder.uri.fsPath)
-        .filter((workspacePath) => {
-          const relative = path.relative(mountPath, path.resolve(workspacePath));
-          return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-        }) ?? []
-    }));
-  nativeSessionMounts.clear();
-  await Promise.allSettled(mounts.map(async ({ remote, localPath, workspacePaths }) => {
-    const statusPlan = platformAdapter.status(remote, localPath);
-    if (!await commandSucceeds(statusPlan)) return;
-    await executePlatformUnmount(remote, localPath);
-    await Promise.all(workspacePaths.map((workspacePath) => mkdir(workspacePath, { recursive: true })));
-  }));
+  await mcp?.stop();
+  await pool?.close();
 }

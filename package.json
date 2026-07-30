@@ -1,7 +1,7 @@
 {
   "name": "vscode-serverless-remote-ssh",
   "displayName": "Serverless Remote SSH",
-  "description": "Edit SSHFS-mounted remote files and open SSH terminals without installing VS Code Server on the target.",
+  "description": "Browse and edit remote files over SFTP and open SSH terminals without installing VS Code Server.",
   "icon": "images/icon.png",
   "version": "1.0.0",
   "publisher": "julyan",
@@ -18,17 +18,24 @@
   ],
   "keywords": [
     "ssh",
-    "sshfs",
+    "sftp",
     "remote",
     "wsl",
     "serverless"
   ],
   "extensionKind": [
-    "workspace"
+    "ui"
   ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "SSH commands and remote file writes require a trusted workspace."
+    }
+  },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "*",
+    "onFileSystem:serverless-sftp",
     "onStartupFinished",
     "onView:serverlessRemote.mounts",
     "onCommand:serverlessRemote.openFolder",
@@ -36,8 +43,7 @@
     "onCommand:serverlessRemote.close",
     "onCommand:serverlessRemote.status",
     "onCommand:serverlessRemote.openConfig",
-    "onCommand:serverlessRemote.addSshConfig",
-    "onCommand:serverlessRemote.installDependenciesTips"
+    "onCommand:serverlessRemote.addSshConfig"
   ],
   "contributes": {
     "commands": [
@@ -53,7 +59,7 @@
       },
       {
         "command": "serverlessRemote.close",
-        "title": "Serverless Remote SSH: 关闭连接"
+        "title": "Serverless Remote SSH: 断开 SFTP 连接"
       },
       {
         "command": "serverlessRemote.status",
@@ -69,10 +75,6 @@
         "icon": "$(add)"
       },
       {
-        "command": "serverlessRemote.installDependenciesTips",
-        "title": "Serverless Remote SSH: 查看依赖安装说明"
-      },
-      {
         "command": "serverlessRemote.refreshExplorer",
         "title": "刷新远程文件夹",
         "icon": "$(refresh)"
@@ -86,11 +88,6 @@
         "command": "serverlessRemote.openTerminalItem",
         "title": "打开远程终端",
         "icon": "$(terminal)"
-      },
-      {
-        "command": "serverlessRemote.toggleAiForwardItem",
-        "title": "打开/关闭 AI 转发",
-        "icon": "$(sparkle)"
       },
       {
         "command": "serverlessRemote.closeItem",
@@ -146,9 +143,6 @@
         },
         {
           "command": "serverlessRemote.addSshConfig"
-        },
-        {
-          "command": "serverlessRemote.installDependenciesTips"
         }
       ],
       "view/title": [
@@ -171,70 +165,55 @@
           "command": "serverlessRemote.status",
           "when": "view == serverlessRemote.mounts",
           "group": "serverlessRemote@2"
-        },
-        {
-          "command": "serverlessRemote.installDependenciesTips",
-          "when": "view == serverlessRemote.mounts",
-          "group": "serverlessRemote@3"
         }
       ],
       "view/item/context": [
         {
           "command": "serverlessRemote.openFolderItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "inline@1"
         },
         {
           "command": "serverlessRemote.openTerminalItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "inline@2"
         },
         {
-          "command": "serverlessRemote.toggleAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
+          "command": "serverlessRemote.closeItem",
+          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
           "group": "inline@3"
         },
         {
-          "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
-          "group": "inline@4"
-        },
-        {
           "command": "serverlessRemote.openFolderItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "serverlessRemote@1"
         },
         {
           "command": "serverlessRemote.openTerminalItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "serverlessRemote@2"
         },
         {
-          "command": "serverlessRemote.toggleAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
+          "command": "serverlessRemote.closeItem",
+          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
           "group": "serverlessRemote@3"
         },
         {
-          "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.mount.mounted",
-          "group": "serverlessRemote@4"
-        },
-        {
           "command": "serverlessRemote.deleteConfigItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.mount/",
-          "group": "serverlessRemote@5"
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
+          "group": "serverlessRemote@4"
         }
       ]
     },
     "languageModelTools": [
       {
         "name": "serverlessRemote_runRemoteCommand",
-        "displayName": "Run Command over Serverless SSH",
+        "displayName": "Run Remote SSH Command",
         "toolReferenceName": "serverlessRemoteRun",
         "canBeReferencedInPrompt": true,
         "icon": "$(terminal)",
         "userDescription": "Run a command in the matching remote SSH directory.",
-        "modelDescription": "Runs a non-interactive shell command on the SSH host whose AI forwarding is enabled. A cwd inside the SSHFS-mounted workspace is automatically translated to the same relative directory under the configured remote_path. When cwd is in that mounted workspace, use this instead of a local shell for OS, kernel, hardware and environment inspection, builds, tests, Git, package managers, processes, services, and any command that depends on the remote machine or its files. Do not use it for genuinely local commands or file edits.",
+        "modelDescription": "Runs a command on a configured SSH host. Remote files are not local; use the dedicated remote list, read, write, and search tools for file operations.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -242,18 +221,83 @@
               "type": "string",
               "description": "Shell command to execute remotely."
             },
-            "cwd": {
-              "type": "string",
-              "description": "Optional absolute path inside the local SSHFS mount. Defaults to the active file or workspace directory."
-            },
             "mountName": {
               "type": "string",
-              "description": "Optional enabled mount name. Auto-detected from cwd/workspace when omitted."
+              "description": "Configured remote folder name."
+            },
+            "remoteCwd": {
+              "type": "string",
+              "description": "Optional remote working directory, constrained to the configured remote root."
             }
           },
           "required": [
-            "command"
+            "command",
+            "mountName"
           ]
+        }
+      },
+      {
+        "name": "serverlessRemote_listRemoteFiles",
+        "displayName": "List Remote Files",
+        "toolReferenceName": "serverlessRemoteList",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Lists a directory directly over SFTP.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "mountName": { "type": "string" },
+            "path": { "type": "string" }
+          },
+          "required": ["mountName"]
+        }
+      },
+      {
+        "name": "serverlessRemote_readRemoteFile",
+        "displayName": "Read Remote File",
+        "toolReferenceName": "serverlessRemoteRead",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Reads a file directly over SFTP. Use this instead of local filesystem tools.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "mountName": { "type": "string" },
+            "path": { "type": "string" },
+            "offset": { "type": "number" },
+            "length": { "type": "number" }
+          },
+          "required": ["mountName", "path"]
+        }
+      },
+      {
+        "name": "serverlessRemote_writeRemoteFile",
+        "displayName": "Write Remote File",
+        "toolReferenceName": "serverlessRemoteWrite",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Creates or replaces a UTF-8 file directly over SFTP.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "mountName": { "type": "string" },
+            "path": { "type": "string" },
+            "content": { "type": "string" }
+          },
+          "required": ["mountName", "path", "content"]
+        }
+      },
+      {
+        "name": "serverlessRemote_searchRemoteFiles",
+        "displayName": "Search Remote Files",
+        "toolReferenceName": "serverlessRemoteSearch",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Searches file contents on a configured remote SSH host.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "mountName": { "type": "string" },
+            "query": { "type": "string" },
+            "path": { "type": "string" }
+          },
+          "required": ["mountName", "query"]
         }
       }
     ],
@@ -277,22 +321,19 @@
         "serverlessRemote.reuseSshConnection": {
           "type": "boolean",
           "default": true,
-          "description": "Reuse one OpenSSH connection between SSHFS and terminals on Linux, macOS, and WSL."
+          "description": "Reuse OpenSSH connections between remote terminals and command executions."
         },
-        "serverlessRemote.sshfsCacheProfile": {
-          "type": "string",
-          "enum": [
-            "fresh",
-            "balanced",
-            "fast"
-          ],
-          "enumDescriptions": [
-            "Disable SSHFS caches where possible so remote changes appear immediately.",
-            "Cache file and directory metadata for a few seconds.",
-            "Use longer metadata and kernel caches for speed; external remote changes may appear later."
-          ],
-          "default": "balanced",
-          "description": "Native Linux/macOS SSHFS cache policy."
+        "serverlessRemote.sftp.cacheTtl": {
+          "type": "number",
+          "minimum": 0,
+          "default": 5,
+          "description": "SFTP metadata and directory cache lifetime in seconds."
+        },
+        "serverlessRemote.sftp.watchInterval": {
+          "type": "number",
+          "minimum": 1,
+          "default": 5,
+          "description": "Remote file polling interval in seconds."
         },
         "serverlessRemote.agentMcpPort": {
           "type": "number",
@@ -309,13 +350,13 @@
     "compile": "npm run check-types && node esbuild.js",
     "package": "npm run check-types && node esbuild.js --production",
     "vscode:prepublish": "npm run package",
-    "vscode:uninstall": "node ./dist/lifecycle.js",
     "test": "npm run check-types && tsx --test test/*.test.ts",
     "vsix": "npx @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",
+    "@types/ssh2": "^1.15.5",
     "@types/vscode": "^1.93.0",
     "@vscode/vsce": "^3.6.2",
     "esbuild": "^0.25.0",
@@ -325,6 +366,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "express": "^5.2.1",
+    "ssh2": "^1.17.0",
     "zod": "^4.4.3"
   }
 }

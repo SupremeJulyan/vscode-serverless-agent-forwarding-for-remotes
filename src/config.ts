@@ -16,8 +16,6 @@ export interface MountConfig {
   name: string;
   host: string;
   remote_path: string;
-  local_path?: string;
-  local_paths?: Partial<Record<'windows' | 'macos' | 'linux' | 'wsl', string>>;
   remote_terminal?: 'open';
 }
 
@@ -25,20 +23,6 @@ export interface BridgeConfig {
   encrypt_passwords?: boolean;
   hosts: HostConfig[];
   mounts: MountConfig[];
-}
-
-export function setMountLocalPath(
-  config: BridgeConfig,
-  mountName: string,
-  localPath: string
-): MountConfig {
-  const mount = config.mounts.find((candidate) => candidate.name === mountName);
-  if (!mount) throw new Error(`Mount '${mountName}' no longer exists`);
-  mount.local_path = localPath;
-  // Config files are platform-specific, so persist one authoritative path.
-  // Remove the legacy per-platform map when a path is changed through the UI.
-  delete mount.local_paths;
-  return mount;
 }
 
 export function removeMountConfig(config: BridgeConfig, mountName: string): MountConfig {
@@ -131,8 +115,6 @@ export function parseConfig(value: unknown): BridgeConfig {
       name: requireString(mount.name, `mounts[${index}].name`),
       host: requireString(mount.host, `mounts[${index}].host`),
       remote_path: requireString(mount.remote_path, `mounts[${index}].remote_path`),
-      local_path: typeof mount.local_path === 'string' ? mount.local_path : undefined,
-      local_paths: typeof mount.local_paths === 'object' && !Array.isArray(mount.local_paths) ? mount.local_paths as Record<string, string> : undefined,
       remote_terminal: 'open'
     } as MountConfig;
   });

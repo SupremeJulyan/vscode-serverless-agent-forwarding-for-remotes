@@ -4,16 +4,20 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 
-export interface ForwardedMountInfo {
+export interface RemoteFolderInfo {
   name: string;
-  localRoot: string;
+  workspaceUri: string;
   remoteRoot: string;
   host: string;
 }
 
 export interface AgentMcpCallbacks {
-  listMounts(): Promise<ForwardedMountInfo[]>;
-  run(input: { command: string; cwd?: string; mountName?: string }): Promise<unknown>;
+  listFolders(): Promise<RemoteFolderInfo[]>;
+  list(input: { mountName: string; path?: string }): Promise<unknown>;
+  read(input: { mountName: string; path: string; offset?: number; length?: number }): Promise<unknown>;
+  write(input: { mountName: string; path: string; content: string }): Promise<unknown>;
+  search(input: { mountName: string; query: string; path?: string }): Promise<unknown>;
+  run(input: { command: string; mountName: string; remoteCwd?: string }): Promise<unknown>;
   log?(message: string): void;
 }
 
@@ -30,85 +34,92 @@ export class AgentMcpServer {
     return `http://127.0.0.1:${this.port}/mcp?token=${encodeURIComponent(this.token)}`;
   }
 
-  get running(): boolean {
-    return this.httpServer !== undefined;
-  }
-
   private createProtocolServer(): McpServer {
     const server = new McpServer(
       { name: 'serverless-remote-ssh', version: '1.0.0' },
       {
         instructions:
-          'IMPORTANT remote-routing rule: first call list_forwarded_mounts when the current working directory may be inside an SSHFS-forwarded folder. When cwd is inside a listed localRoot, you MUST use run_remote_command for every shell command that depends on the remote machine or its files, including operating-system and hardware inspection, environment diagnostics, builds, tests, Git, package managers, and process or service checks. Do not run those commands in the agent host shell. Continue reading and editing mounted files with the agent file tools.'
+          'Remote files are not local files. First call list_remote_folders, then use remote_list, remote_read, remote_write, and remote_search for files. Use run_remote_command for commands on the SSH host. Never assume a local filesystem path exists for a remote workspace.'
       }
     );
+    const result = (value: unknown) => ({
+      content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }]
+    });
     server.registerTool(
-      'list_forwarded_mounts',
+      'list_remote_folders',
       {
-        title: 'List forwarded SSHFS mounts',
-        description:
-          'Lists active SSHFS-forwarded folders and their local-to-remote roots. Call this first to determine whether the agent cwd/workspace is remote-backed before running shell commands or inspecting the operating system/environment.',
+        title: 'List SFTP remote folders',
+        description: 'Lists configured SFTP workspaces and their remote roots.',
         inputSchema: {}
       },
-      async () => {
-        const startedAt = performance.now();
-        const mounts = await this.callbacks.listMounts();
-        this.callbacks.log?.(
-          `工具 list_forwarded_mounts 完成：${mounts.length} 个挂载，${
-            (performance.now() - startedAt).toFixed(1)
-          } ms`
-        );
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify(mounts, null, 2)
-          }]
-        };
-      }
+      async () => result(await this.callbacks.listFolders())
+    );
+    server.registerTool(
+      'remote_list',
+      {
+        title: 'List a remote directory',
+        description: 'Lists files directly over SFTP. Paths are relative to the remote root.',
+        inputSchema: {
+          mountName: z.string().min(1),
+          path: z.string().optional()
+        }
+      },
+      async (input) => result(await this.callbacks.list(input))
+    );
+    server.registerTool(
+      'remote_read',
+      {
+        title: 'Read a remote file',
+        description: 'Reads a UTF-8 file directly over SFTP, optionally by byte range.',
+        inputSchema: {
+          mountName: z.string().min(1),
+          path: z.string(),
+          offset: z.number().int().min(0).optional(),
+          length: z.number().int().min(1).max(1_048_576).optional()
+        }
+      },
+      async (input) => result(await this.callbacks.read(input))
+    );
+    server.registerTool(
+      'remote_write',
+      {
+        title: 'Write a remote file',
+        description: 'Creates or replaces a UTF-8 file directly over SFTP.',
+        annotations: { destructiveHint: true },
+        inputSchema: {
+          mountName: z.string().min(1),
+          path: z.string(),
+          content: z.string()
+        }
+      },
+      async (input) => result(await this.callbacks.write(input))
+    );
+    server.registerTool(
+      'remote_search',
+      {
+        title: 'Search remote files',
+        description: 'Searches file contents on the remote SSH host.',
+        inputSchema: {
+          mountName: z.string().min(1),
+          query: z.string().min(1),
+          path: z.string().optional()
+        }
+      },
+      async (input) => result(await this.callbacks.search(input))
     );
     server.registerTool(
       'run_remote_command',
       {
-        title: 'Run a command in the remote SSH environment',
-        description:
-          'Runs a shell command on the SSH host for a forwarded mount, mapping a local cwd to its remote directory. Use it instead of the local shell for OS/kernel/hardware inspection (for example uname or /etc/os-release), environment diagnostics, builds, tests, Git, package managers, processes, services, and all other commands whose result or side effects belong to the remote machine.',
-        annotations: {
-          destructiveHint: true,
-          openWorldHint: true
-        },
+        title: 'Run a remote SSH command',
+        description: 'Runs a shell command on the selected SSH host.',
+        annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
-          command: z.string().min(1).describe('Shell command to run remotely.'),
-          cwd: z.string().optional().describe('Absolute local cwd inside the SSHFS mount.'),
-          mountName: z.string().optional().describe('Forwarded mount name when cwd is unavailable.')
+          mountName: z.string().min(1),
+          command: z.string().min(1),
+          remoteCwd: z.string().optional()
         }
       },
-      async (input) => {
-        const startedAt = performance.now();
-        this.callbacks.log?.(
-          `工具 run_remote_command 开始：mount=${input.mountName ?? '自动匹配'}${
-            input.cwd ? `，cwd=${input.cwd}` : ''
-          }`
-        );
-        try {
-          const result = await this.callbacks.run(input);
-          this.callbacks.log?.(
-            `工具 run_remote_command 完成：${(performance.now() - startedAt).toFixed(1)} ms`
-          );
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify(result, null, 2)
-            }]
-          };
-        } catch (error) {
-          this.callbacks.log?.(
-            `工具 run_remote_command 失败：${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-          throw error;
-        }
-      }
+      async (input) => result(await this.callbacks.run(input))
     );
     return server;
   }
@@ -116,21 +127,16 @@ export class AgentMcpServer {
   async start(): Promise<void> {
     if (this.httpServer) return;
     const app = express();
-    app.use(express.json({ limit: '1mb' }));
+    app.use(express.json({ limit: '2mb' }));
     app.all('/mcp', async (request, response) => {
       if (request.query.token !== this.token) {
-        this.callbacks.log?.(`拒绝未授权 MCP 请求：${request.method}`);
         response.status(401).json({ error: 'Unauthorized' });
         return;
       }
       if (request.method !== 'POST') {
-        this.callbacks.log?.(`拒绝不支持的 MCP 请求方法：${request.method}`);
         response.status(405).json({ error: 'Method not allowed' });
         return;
       }
-      const method = typeof request.body?.method === 'string' ? request.body.method : 'unknown';
-      const tool = request.body?.params?.name;
-      this.callbacks.log?.(`收到 MCP 请求：${method}${tool ? ` (${tool})` : ''}`);
       const protocol = this.createProtocolServer();
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
@@ -161,7 +167,7 @@ export class AgentMcpServer {
       });
     });
     this.httpServer = server;
-    this.callbacks.log?.(`服务已启动：http://127.0.0.1:${this.port}/mcp?token=<hidden>`);
+    this.callbacks.log?.(`MCP 已启动：http://127.0.0.1:${this.port}/mcp?token=<hidden>`);
   }
 
   async stop(): Promise<void> {
@@ -171,6 +177,5 @@ export class AgentMcpServer {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     });
-    this.callbacks.log?.('服务已停止');
   }
 }

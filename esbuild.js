@@ -4,8 +4,7 @@ const production = process.argv.includes('--production');
 
 esbuild.build({
   entryPoints: {
-    extension: 'src/extension.ts',
-    lifecycle: 'src/lifecycle.ts'
+    extension: 'src/extension.ts'
   },
   bundle: true,
   format: 'cjs',

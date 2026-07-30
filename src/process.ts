@@ -59,15 +59,6 @@ async function resolveExecutable(command: string, env?: NodeJS.ProcessEnv): Prom
   }
 }
 
-export async function isMountpoint(target: string): Promise<boolean> {
-  try {
-    await execFileAsync('mountpoint', ['-q', '--', target]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function commandSucceeds(plan: CommandPlan): Promise<boolean> {
   try {
     await execFileAsync(plan.command, plan.args, {

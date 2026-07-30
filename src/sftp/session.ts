@@ -25,6 +25,7 @@ export interface SftpWriteOptions {
 export interface SftpSession {
   readonly hostName: string;
 
+  isAlive(): boolean;
   realpath(remotePath: string, signal?: AbortSignal): Promise<string>;
   stat(remotePath: string, signal?: AbortSignal): Promise<SftpFileStat>;
   readDirectory(remotePath: string, signal?: AbortSignal): Promise<SftpDirectoryEntry[]>;
