@@ -31,14 +31,20 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
     ? [
         '-o', 'ControlMaster=auto',
         '-o', 'ControlPersist=10m',
-        '-o', 'ControlPath=~/.ssh/serverless-remote-%C'
+        '-o', `ControlPath=${os.homedir()}/.ssh/serverless-remote-%C`
       ]
     : [];
 }
 
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {
   const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
-  args.push(...connectionReuseArgs(options));
+  // Connection reuse conflicts with PTY allocation in interactive terminals:
+  // "getsockname failed: Not a socket" — ssh's multiplexing code expects
+  // a real socket handle but VS Code's terminal passes the SSH process
+  // through a pseudo-terminal, not a raw socket.
+  if (!remoteCwd) {
+    args.push(...connectionReuseArgs(options));
+  }
   if (host.private_key_path) args.push('-i', expandPrivateKey(host.private_key_path));
   if (remoteCwd) args.push('-t');
   args.push(`${host.user}@${host.ip}`);
