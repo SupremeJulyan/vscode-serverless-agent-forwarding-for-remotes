@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.0.5
+
+- 修复跨 Windows、WSL、macOS 和 Linux 环境打开 SSH 终端时，本地启动目录无效的问题。
+
 ## 1.0.4
 
 - 恢复 Linux 和 macOS SSH 终端的 ASKPASS 密码认证。

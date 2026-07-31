@@ -183,7 +183,6 @@ async function openTerminal(requested?: MountConfig): Promise<void> {
     shellPath: plan.command,
     shellArgs: plan.args,
     env: { ...plan.env, ...credentials?.env },
-    cwd: os.homedir(),
     isTransient: true
   });
   if (credentials) {
