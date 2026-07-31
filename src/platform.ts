@@ -64,7 +64,7 @@ class NativeAdapter implements PlatformAdapter {
   constructor(readonly kind: 'windows' | 'macos' | 'linux') {}
 
   terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan {
-    return { command: 'ssh', args: sshArgs(host, remoteCwd, options) };
+    return { command: 'ssh', args: sshArgs(host, remoteCwd, options), cwd: os.homedir() };
   }
 
   exec(
@@ -88,6 +88,7 @@ class WslAdapter implements PlatformAdapter {
     return {
       command: 'ssh-bridge',
       args,
+      cwd: os.homedir(),
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
         ...(options?.bridgeMasterPassword
