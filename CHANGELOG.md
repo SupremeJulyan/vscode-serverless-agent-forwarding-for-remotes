@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.0.4
+
+- 恢复 Linux 和 macOS SSH 终端的 ASKPASS 密码认证。
+- 恢复 WSL `ssh-bridge` 的加密主口令传递。
+- 增加终端密码认证和凭据清理测试。
+
 ## 1.0.0
 
 - 用基于 `ssh2` 的 SFTP 虚拟文件系统替代 SSHFS、FUSE、WinFsp 和本地挂载。

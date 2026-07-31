@@ -13,6 +13,7 @@ export interface CommandPlan {
 
 export interface ConnectionOptions {
   reuseSshConnection?: boolean;
+  bridgeMasterPassword?: string;
 }
 
 export interface PlatformAdapter {
@@ -88,7 +89,10 @@ class WslAdapter implements PlatformAdapter {
       command: 'ssh-bridge',
       args,
       env: {
-        WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1'
+        WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
+        ...(options?.bridgeMasterPassword
+          ? { WSL_VPN_MASTER_PASSWORD: options.bridgeMasterPassword }
+          : {})
       }
     };
   }

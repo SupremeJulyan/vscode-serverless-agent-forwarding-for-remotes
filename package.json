@@ -3,7 +3,7 @@
   "displayName": "Serverless Remote SSH",
   "description": "Browse and edit remote files over SFTP and open SSH terminals without installing VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -88,11 +88,6 @@
         "command": "serverlessRemote.openTerminalItem",
         "title": "打开远程终端",
         "icon": "$(terminal)"
-      },
-      {
-        "command": "serverlessRemote.toggleAgentForwardItem",
-        "title": "打开/关闭 Agent 转发",
-        "icon": "$(sparkle)"
       },
       {
         "command": "serverlessRemote.closeItem",
@@ -184,14 +179,9 @@
           "group": "inline@2"
         },
         {
-          "command": "serverlessRemote.toggleAgentForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
-          "group": "inline@3"
-        },
-        {
           "command": "serverlessRemote.closeItem",
           "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
-          "group": "inline@4"
+          "group": "inline@3"
         },
         {
           "command": "serverlessRemote.openFolderItem",
@@ -204,19 +194,14 @@
           "group": "serverlessRemote@2"
         },
         {
-          "command": "serverlessRemote.toggleAgentForwardItem",
+          "command": "serverlessRemote.closeItem",
           "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
           "group": "serverlessRemote@3"
         },
         {
-          "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
-          "group": "serverlessRemote@4"
-        },
-        {
           "command": "serverlessRemote.deleteConfigItem",
           "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
-          "group": "serverlessRemote@5"
+          "group": "serverlessRemote@4"
         }
       ]
     },

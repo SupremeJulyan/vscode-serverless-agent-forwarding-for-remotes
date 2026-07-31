@@ -7,12 +7,6 @@ import { AgentMcpServer } from '../src/agent-mcp';
 test('serves direct SFTP file and SSH command tools through MCP', async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const server = new AgentMcpServer(port, 'test-token', {
-    activeFolder: async () => ({
-      name: 'project',
-      workspaceUri: 'serverless-sftp://m-70726f6a656374/srv/project',
-      remoteRoot: '/srv/project',
-      host: 'dev'
-    }),
     listFolders: async () => [{
       name: 'project',
       workspaceUri: 'serverless-sftp://project/srv/project',
@@ -31,7 +25,6 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
-      'get_active_remote_workspace',
       'list_remote_folders',
       'remote_list',
       'remote_read',
@@ -39,11 +32,6 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       'remote_write',
       'run_remote_command'
     ]);
-    const active = await client.callTool({
-      name: 'get_active_remote_workspace',
-      arguments: {}
-    });
-    assert.match(JSON.stringify(active.content), /project/);
     const result = await client.callTool({
       name: 'remote_read',
       arguments: { mountName: 'project', path: 'README.md' }

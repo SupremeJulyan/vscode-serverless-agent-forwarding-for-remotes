@@ -41,3 +41,11 @@ test('WSL keeps ssh-bridge for terminals and command execution', () => {
   assert.equal(terminal.args.includes('--tty'), true);
   assert.match(execution.args.at(-1) ?? '', /git status/);
 });
+
+test('WSL passes the master password to ssh-bridge terminal environment only', () => {
+  const plan = createPlatformAdapter('wsl').terminal(host, '/srv/project', {
+    bridgeMasterPassword: 'master secret'
+  });
+  assert.equal(plan.env?.WSL_VPN_MASTER_PASSWORD, 'master secret');
+  assert.equal(plan.args.includes('master secret'), false);
+});
