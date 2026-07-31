@@ -1,6 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { access, readdir } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -11,7 +12,7 @@ import {
   AskpassCredentials, createAskpassCredentials, platformUsesAskpass
 } from './askpass';
 import { createPlatformAdapter } from './platform';
-import { executeCaptured } from './process';
+import { commandExists, commandSucceeds, executeCaptured } from './process';
 import { AgentMcpServer } from './agent-mcp';
 import { connectSftp } from './sftp/client';
 import { SftpConnectionPool } from './sftp/connection-pool';
@@ -28,6 +29,7 @@ const agentMcpTokenSecret = 'serverlessRemote.agentMcpToken';
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
+const agentSetupCompletedKey = 'serverlessRemote.agentSetupCompleted';
 const platformAdapter = createPlatformAdapter();
 let output: vscode.OutputChannel;
 let pool: SftpConnectionPool;
@@ -527,6 +529,201 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
   }
 }
 
+async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<AgentMcpServer> {
+  if (!mcp) {
+    let token = await context.secrets.get(agentMcpTokenSecret);
+    if (!token) {
+      token = randomBytes(24).toString('hex');
+      await context.secrets.store(agentMcpTokenSecret, token);
+    }
+    mcp = new AgentMcpServer(
+      settings().get<number>('agentMcpPort', 9848),
+      token,
+      {
+        listFolders: async () => {
+          const config = await readConfig();
+          return Promise.all(config.mounts.map(async (mount) => {
+            const folder = await ensureFolder(mount);
+            return {
+              name: mount.name,
+              workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
+              remoteRoot: folder.remoteRoot,
+              host: mount.host
+            };
+          }));
+        },
+        currentWorkspace: async () => {
+          const location = currentRemoteLocation();
+          if (!location) return null;
+          const config = await readConfig();
+          const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+          if (!mount) return null;
+          const folder = await ensureFolder(mount);
+          return {
+            name: mount.name,
+            workspaceUri: remoteUri(folder.mountName, location.remotePath),
+            remoteRoot: folder.remoteRoot,
+            host: mount.host
+          };
+        },
+        list: remoteList,
+        read: remoteRead,
+        write: remoteWrite,
+        search: remoteSearch,
+        run: runRemote,
+        log: (message) => output.appendLine(`[Agent MCP] ${message}`)
+      }
+    );
+    context.subscriptions.push({ dispose: () => void mcp?.stop() });
+    await mcp.start();
+  } else if (!mcp.running) {
+    await mcp.start();
+  }
+  return mcp;
+}
+
+async function detectedCodexCommand(): Promise<string | undefined> {
+  if (await commandExists('codex')) return 'codex';
+  const extension = vscode.extensions.getExtension('openai.chatgpt');
+  if (!extension) return undefined;
+  const binRoot = path.join(extension.extensionPath, 'bin');
+  try {
+    const platformDirectories = await readdir(binRoot, { withFileTypes: true });
+    for (const directory of platformDirectories) {
+      if (!directory.isDirectory()) continue;
+      const candidate = path.join(
+        binRoot, directory.name, process.platform === 'win32' ? 'codex.exe' : 'codex'
+      );
+      try {
+        await access(candidate);
+        output.appendLine(`[Agent MCP] 使用 Codex 扩展内置 CLI：${candidate}`);
+        return candidate;
+      } catch {
+        // Try the next platform directory.
+      }
+    }
+  } catch {
+    // The installed Codex extension does not expose a bundled CLI.
+  }
+  return undefined;
+}
+
+async function detectedClaudeCommand(): Promise<string | undefined> {
+  if (await commandExists('claude')) return 'claude';
+  const extension = vscode.extensions.getExtension('anthropic.claude-code');
+  if (!extension) return undefined;
+  const candidate = path.join(
+    extension.extensionPath, 'resources', 'native-binary',
+    process.platform === 'win32' ? 'claude.exe' : 'claude'
+  );
+  try {
+    await access(candidate);
+    output.appendLine(`[Agent MCP] 使用 Claude Code 扩展内置 CLI：${candidate}`);
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
+async function configureDetectedAgents(
+  context: vscode.ExtensionContext, server: AgentMcpServer
+): Promise<void> {
+  const saved = context.globalState.get<unknown>(agentSetupCompletedKey);
+  const configured = new Set(Array.isArray(saved) ? saved.filter(
+    (item): item is string => typeof item === 'string'
+  ) : []);
+  const [codexCommand, claudeCommand] = await Promise.all([
+    detectedCodexCommand(), detectedClaudeCommand()
+  ]);
+  output.appendLine(
+    `[Agent MCP] Agent 检测：Codex ${codexCommand ? '可用' : '未找到'}，Claude Code ${
+      claudeCommand ? '可用' : '未找到'
+    }`
+  );
+  const [codexConfigured, claudeConfigured] = await Promise.all([
+    codexCommand
+      ? commandSucceeds({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
+      : Promise.resolve(false),
+    claudeCommand
+      ? commandSucceeds({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
+      : Promise.resolve(false)
+  ]);
+  if (!codexConfigured) configured.delete('codex');
+  if (!claudeConfigured) configured.delete('claude');
+  output.appendLine(
+    `[Agent MCP] 注册状态：Codex ${codexConfigured ? '已注册' : '未注册'}，Claude Code ${
+      claudeConfigured ? '已注册' : '未注册'
+    }`
+  );
+  const agents = [
+    ...(codexCommand && !codexConfigured ? ['Codex'] : []),
+    ...(claudeCommand && !claudeConfigured ? ['Claude Code'] : [])
+  ];
+  if (agents.length === 0) {
+    await context.globalState.update(agentSetupCompletedKey, [...configured]);
+    return;
+  }
+  const configureAction = '一键配置';
+  const selected = await vscode.window.showInformationMessage(
+    `检测到 ${agents.join(' 和 ')}。是否注册 Serverless Remote SSH MCP？此操作只需一次。`,
+    { modal: true, detail: `MCP 服务仅监听本机：${server.url.replace(/token=.*/, 'token=<hidden>')}` },
+    configureAction
+  );
+  if (selected !== configureAction) {
+    output.appendLine('[Agent MCP] 用户取消了 Agent 自动配置');
+    return;
+  }
+  const failures: string[] = [];
+  if (codexCommand && !configured.has('codex')) {
+    const result = await executeCaptured({
+      command: codexCommand,
+      args: ['mcp', 'add', 'serverless-remote', '--url', server.url]
+    });
+    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
+      failures.push(`Codex: ${result.stderr || result.stdout}`);
+    } else {
+      configured.add('codex');
+      output.appendLine('[Agent MCP] Codex 注册成功');
+    }
+  }
+  if (claudeCommand && !configured.has('claude')) {
+    const result = await executeCaptured({
+      command: claudeCommand,
+      args: [
+        'mcp', 'add', '--transport', 'http', '--scope', 'user',
+        'serverless-remote', server.url
+      ]
+    });
+    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
+      failures.push(`Claude Code: ${result.stderr || result.stdout}`);
+    } else {
+      configured.add('claude');
+      output.appendLine('[Agent MCP] Claude Code 注册成功');
+    }
+  }
+  await context.globalState.update(agentSetupCompletedKey, [...configured]);
+  if (failures.length > 0) {
+    output.appendLine(`[Agent MCP] 自动配置失败\n${failures.join('\n')}`);
+    const copyAction = '复制手工配置命令';
+    const choice = await vscode.window.showWarningMessage(
+      '部分 Agent 自动配置失败，详情已写入输出面板。',
+      copyAction
+    );
+    if (choice === copyAction) {
+      await vscode.env.clipboard.writeText([
+        codexCommand ? `codex mcp add serverless-remote --url '${server.url}'` : '',
+        claudeCommand
+          ? `claude mcp add --transport http --scope user serverless-remote '${server.url}'`
+          : ''
+      ].filter(Boolean).join('\n'));
+    }
+    return;
+  }
+  void vscode.window.showInformationMessage(
+    `${agents.join(' 和 ')} 已配置。请重启对应 Agent/扩展以加载 MCP。`
+  );
+}
+
 let vscodeContext: vscode.ExtensionContext;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -606,37 +803,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   tool('serverlessRemote_searchRemoteFiles', remoteSearch);
   tool('serverlessRemote_runRemoteCommand', runRemote, true);
 
-  let token = await context.secrets.get(agentMcpTokenSecret);
-  if (!token) {
-    token = randomBytes(24).toString('hex');
-    await context.secrets.store(agentMcpTokenSecret, token);
-  }
-  mcp = new AgentMcpServer(
-    settings().get<number>('agentMcpPort', 9848),
-    token,
-    {
-      listFolders: async () => {
-        const config = await readConfig();
-        return Promise.all(config.mounts.map(async (mount) => {
-          const folder = await ensureFolder(mount);
-          return {
-            name: mount.name,
-            workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
-            remoteRoot: folder.remoteRoot,
-            host: mount.host
-          };
-        }));
-      },
-      list: remoteList,
-      read: remoteRead,
-      write: remoteWrite,
-      search: remoteSearch,
-      run: runRemote,
-      log: (message) => output.appendLine(`[Agent MCP] ${message}`)
-    }
-  );
-  context.subscriptions.push({ dispose: () => void mcp?.stop() });
-  await guard(() => mcp!.start());
+  await guard(() => ensureAgentMcpServer(context));
+  await guard(async () => {
+    const server = await ensureAgentMcpServer(context);
+    await configureDetectedAgents(context, server);
+  });
   await guard(restoreRemoteWorkspaces);
 
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

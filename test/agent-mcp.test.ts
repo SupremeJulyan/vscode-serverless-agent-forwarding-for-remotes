@@ -25,6 +25,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
+      'current_remote_workspace',
       'list_remote_folders',
       'remote_list',
       'remote_read',

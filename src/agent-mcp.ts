@@ -13,6 +13,7 @@ export interface RemoteFolderInfo {
 
 export interface AgentMcpCallbacks {
   listFolders(): Promise<RemoteFolderInfo[]>;
+  currentWorkspace(): Promise<RemoteFolderInfo | null>;
   list(input: { mountName: string; path?: string }): Promise<unknown>;
   read(input: { mountName: string; path: string; offset?: number; length?: number }): Promise<unknown>;
   write(input: { mountName: string; path: string; content: string }): Promise<unknown>;
@@ -34,12 +35,18 @@ export class AgentMcpServer {
     return `http://127.0.0.1:${this.port}/mcp?token=${encodeURIComponent(this.token)}`;
   }
 
+  get running(): boolean {
+    return this.httpServer !== undefined;
+  }
+
   private createProtocolServer(): McpServer {
     const server = new McpServer(
       { name: 'serverless-remote-ssh', version: '1.0.0' },
       {
         instructions:
-          'Remote files are not local files. First call list_remote_folders, then use remote_list, remote_read, remote_write, and remote_search for files. Use run_remote_command for commands on the SSH host. Never assume a local filesystem path exists for a remote workspace.'
+          'Remote files are not local files. The remote workspace URI tells you which folder is currently open.\n\n'
+          + 'ALL commands that inspect the remote machine (OS, environment, builds, tests, Git, package managers, processes) MUST use run_remote_command — never the local shell.\n\n'
+          + 'Before any file or command operation: first call current_remote_workspace to discover the active mount and its remote root, then use the mount name in every subsequent call. The remote_list / remote_read / remote_write / remote_search tools work with paths relative to the remote root.'
       }
     );
     const result = (value: unknown) => ({
@@ -53,6 +60,16 @@ export class AgentMcpServer {
         inputSchema: {}
       },
       async () => result(await this.callbacks.listFolders())
+    );
+    server.registerTool(
+      'current_remote_workspace',
+      {
+        title: 'Get the current remote workspace',
+        description:
+          'Returns the remote folder currently open in the VS Code workspace, including its mount name, remote root path, and host. Call this first to discover which remote folder the user is working in. Returns null when no remote workspace is open.',
+        inputSchema: {}
+      },
+      async () => result(await this.callbacks.currentWorkspace())
     );
     server.registerTool(
       'remote_list',
