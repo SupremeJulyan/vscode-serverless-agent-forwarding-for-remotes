@@ -19,6 +19,7 @@ test('detects WSL separately from native Linux', () => {
 test('native SSH opens a login shell in the remote SFTP directory', () => {
   const plan = createPlatformAdapter('linux').terminal(host, "/srv/O'Brien");
   assert.equal(plan.command, 'ssh');
+  assert.equal(plan.cwd, undefined);
   assert.equal(plan.args.some((argument) => argument.endsWith('/.ssh/id_ed25519')), true);
   assert.match(plan.args.at(-1) ?? '', /cd --/);
   assert.match(plan.args.at(-1) ?? '', /O'"'"'Brien/);
@@ -37,6 +38,7 @@ test('WSL keeps ssh-bridge for terminals and command execution', () => {
   const terminal = adapter.terminal(host, '/srv/project');
   const execution = adapter.exec(host, '/srv/project', 'git status');
   assert.equal(terminal.command, 'ssh-bridge');
+  assert.equal(terminal.cwd, undefined);
   assert.equal(execution.command, 'ssh-bridge');
   assert.equal(terminal.args.includes('--tty'), true);
   assert.match(execution.args.at(-1) ?? '', /git status/);

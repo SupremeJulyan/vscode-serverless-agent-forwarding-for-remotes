@@ -9,16 +9,19 @@ export interface RemoteUriLocation {
 
 function encodeMountAuthority(mountName: string): string {
   if (!mountName) throw new Error('Remote folder name must not be empty');
-  return `m-${Buffer.from(mountName, 'utf8').toString('base64url')}`;
+  // URI authorities are case-insensitive and URL parsers normalize hostnames
+  // to lowercase. Use lowercase hexadecimal rather than case-sensitive
+  // base64url so the mount identifier survives that normalization.
+  return `m-${Buffer.from(mountName, 'utf8').toString('hex')}`;
 }
 
 function decodeMountAuthority(authority: string): string {
   if (!authority.startsWith('m-')) throw new Error(`Invalid remote URI authority: ${authority}`);
   const encoded = authority.slice(2);
-  if (!encoded || !/^[a-zA-Z0-9_-]+$/.test(encoded)) {
+  if (!encoded || encoded.length % 2 !== 0 || !/^[0-9a-f]+$/.test(encoded)) {
     throw new Error(`Invalid remote URI authority: ${authority}`);
   }
-  const mountName = Buffer.from(encoded, 'base64url').toString('utf8');
+  const mountName = Buffer.from(encoded, 'hex').toString('utf8');
   if (encodeMountAuthority(mountName) !== authority) {
     throw new Error(`Invalid remote URI authority: ${authority}`);
   }

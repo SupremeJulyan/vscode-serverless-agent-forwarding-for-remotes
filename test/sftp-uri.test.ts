@@ -15,6 +15,15 @@ test('round-trips remote folder names and unusual POSIX paths', () => {
   assert.equal(uri.includes('#'), false);
 });
 
+test('uses a case-insensitive-safe authority for ASCII mount names', () => {
+  const uri = remoteUri('gkn', '/home/alice');
+  assert.equal(uri, 'serverless-sftp://m-676b6e/home/alice');
+  assert.deepEqual(parseRemoteUri(uri), {
+    mountName: 'gkn',
+    remotePath: '/home/alice'
+  });
+});
+
 test('normalizes remote paths with POSIX rules on every local platform', () => {
   assert.equal(normalizeRemotePath('/srv/project/./src/../README.md'), '/srv/project/README.md');
   assert.throws(() => normalizeRemotePath('C:\\srv\\project'), /must be absolute/);

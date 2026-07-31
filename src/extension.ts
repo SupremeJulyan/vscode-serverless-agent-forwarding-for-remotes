@@ -153,7 +153,7 @@ function currentRemoteLocation(): { mountName: string; remotePath: string } | un
   return workspace ? parseRemoteUri(workspace.uri.toString()) : undefined;
 }
 
-async function openTerminal(requested?: MountConfig): Promise<void> {
+async function openTerminal(requested?: MountConfig, requestedRemoteCwd?: string): Promise<void> {
   const config = await readConfig();
   const location = requested ? undefined : currentRemoteLocation();
   const mount = requested
@@ -164,7 +164,8 @@ async function openTerminal(requested?: MountConfig): Promise<void> {
   const configuredHost = config.hosts.find((candidate) => candidate.name === mount.host);
   if (!configuredHost) throw new Error(`SSH 主机不存在：${mount.host}`);
   const host = await resolvedHost(vscodeContext, mount.host);
-  const remoteCwd = location?.mountName === mount.name ? location.remotePath : folder.remoteRoot;
+  const remoteCwd = requestedRemoteCwd
+    ?? (location?.mountName === mount.name ? location.remotePath : folder.remoteRoot);
   let credentials: AskpassCredentials | undefined;
   if (host.password && platformUsesAskpass(platformAdapter.kind)) {
     credentials = await createAskpassCredentials(host.password);
@@ -182,6 +183,7 @@ async function openTerminal(requested?: MountConfig): Promise<void> {
     name: `SSH: ${mount.name}`,
     shellPath: plan.command,
     shellArgs: plan.args,
+    cwd: plan.cwd,
     env: { ...plan.env, ...credentials?.env },
     isTransient: true
   });
@@ -465,6 +467,9 @@ async function restoreRemoteWorkspaces(): Promise<void> {
       output.appendLine(
         `远程根目录已变化：${location.remotePath} -> ${folder.remoteRoot}`
       );
+    }
+    if (mount.remote_terminal === 'open') {
+      await openTerminal(mount, location.remotePath);
     }
   }
 }

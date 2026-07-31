@@ -3,7 +3,7 @@
   "displayName": "Serverless Remote SSH",
   "description": "Browse and edit remote files over SFTP and open SSH terminals without installing VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
