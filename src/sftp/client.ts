@@ -130,9 +130,25 @@ export class Ssh2SftpSession implements SftpSession {
   async rename(
     sourcePath: string,
     targetPath: string,
-    _overwrite: boolean,
+    overwrite: boolean,
     signal?: AbortSignal
   ): Promise<void> {
+    if (overwrite) {
+      // SFTP v3 SSH_FXP_RENAME does not mandate overwrite behaviour — some
+      // servers reject when the target already exists.  Delete the target
+      // first so the rename always succeeds.
+      try {
+        const stat = await this.stat(targetPath, signal);
+        if (stat.type === 'directory') {
+          await this.deleteDirectory(targetPath, signal);
+        } else {
+          await this.deleteFile(targetPath, signal);
+        }
+      } catch (error) {
+        const code = (error as { code?: number | string }).code;
+        if (code !== 2 && code !== 'ENOENT') throw error;
+      }
+    }
     await callback<void>((done) => this.sftp.rename(sourcePath, targetPath, done), signal);
   }
 
