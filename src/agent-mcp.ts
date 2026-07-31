@@ -24,6 +24,7 @@ export interface AgentMcpCallbacks {
 
 export class AgentMcpServer {
   private httpServer: http.Server | undefined;
+  private _portUnavailable = false;
 
   constructor(
     private readonly port: number,
@@ -37,6 +38,10 @@ export class AgentMcpServer {
 
   get running(): boolean {
     return this.httpServer !== undefined;
+  }
+
+  get portUnavailable(): boolean {
+    return this._portUnavailable;
   }
 
   private createProtocolServer(): McpServer {
@@ -176,13 +181,30 @@ export class AgentMcpServer {
       }
     });
     const server = http.createServer(app);
+    this._portUnavailable = false;
     await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
+      server.once('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          this._portUnavailable = true;
+          this.callbacks.log?.(
+            `MCP 端口 ${this.port} 已被其他窗口占用，本窗口将复用已有服务。`
+          );
+          resolve();
+        } else {
+          reject(err);
+        }
+      });
       server.listen(this.port, '127.0.0.1', () => {
         server.off('error', reject);
         resolve();
       });
     });
+    if (this._portUnavailable) {
+      // The port was already in use — the first window's server handles
+      // requests for all windows.  Don't try to bind `httpServer` which
+      // would only wrap the already-closed server handle.
+      return;
+    }
     this.httpServer = server;
     this.callbacks.log?.(`MCP 已启动：http://127.0.0.1:${this.port}/mcp?token=<hidden>`);
   }

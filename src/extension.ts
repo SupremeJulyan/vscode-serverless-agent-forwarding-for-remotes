@@ -30,6 +30,7 @@ const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
 const agentSetupCompletedKey = 'serverlessRemote.agentSetupCompleted';
+const aiForwardMountsKey = 'serverlessRemote.aiForwardMounts';
 const platformAdapter = createPlatformAdapter();
 let output: vscode.OutputChannel;
 let pool: SftpConnectionPool;
@@ -421,18 +422,33 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.emitter.event;
 
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
   refresh(): void {
     this.emitter.fire();
   }
 
   getTreeItem(mount: MountConfig): vscode.TreeItem {
     const connected = registry.get(mount.name) !== undefined;
+    const aiForwarded = this.context.globalState
+      .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
     const item = new vscode.TreeItem(mount.name);
-    item.description = connected ? '已连接 SFTP' : '未连接';
+    item.description = connected
+      ? (aiForwarded ? '已连接 SFTP · AI' : '已连接 SFTP')
+      : (aiForwarded ? 'AI 转发已开启' : '未连接');
     item.contextValue = connected
       ? 'serverlessRemote.connection.connected'
       : 'serverlessRemote.connection';
     item.iconPath = new vscode.ThemeIcon(connected ? 'vm-active' : 'remote');
+    item.tooltip = new vscode.MarkdownString([
+      `**${mount.name}**`,
+      '',
+      `Host: \`${mount.host}\``,
+      `Remote: \`${mount.remote_path}\``,
+      '',
+      connected ? '已连接 SFTP' : '未连接',
+      aiForwarded ? 'AI 转发：已开启' : 'AI 转发：已关闭',
+    ].join('\n'));
     item.command = {
       command: `${commandPrefix}.openFolderItem`,
       title: '打开远程文件夹',
@@ -519,6 +535,37 @@ async function deleteConfig(mount: MountConfig): Promise<void> {
   await saveConfig(configPath(), config);
 }
 
+async function toggleAiForward(mount: MountConfig): Promise<void> {
+  const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
+  const turningOn = !enabled.has(mount.name);
+  if (turningOn) {
+    enabled.add(mount.name);
+  } else {
+    enabled.delete(mount.name);
+  }
+  if (turningOn) {
+    try {
+      const server = await ensureAgentMcpServer(vscodeContext);
+      await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
+      await configureDetectedAgents(vscodeContext, server);
+    } catch (error) {
+      enabled.delete(mount.name);
+      await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
+      throw error;
+    }
+  } else if (enabled.size === 0) {
+    await vscodeContext.globalState.update(aiForwardMountsKey, []);
+    await mcp?.stop();
+  } else {
+    await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
+  }
+  void vscode.window.showInformationMessage(
+    `"${mount.name}" AI 转发已${turningOn ? '打开' : '关闭'}。${
+      turningOn ? 'Agent 的远程命令会自动映射到相同的远程工作目录。' : ''
+    }`
+  );
+}
+
 async function guard(action: () => Promise<unknown>): Promise<void> {
   try {
     await action();
@@ -576,7 +623,8 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
     );
     context.subscriptions.push({ dispose: () => void mcp?.stop() });
     await mcp.start();
-  } else if (!mcp.running) {
+    if (mcp.portUnavailable) return mcp;
+  } else if (!mcp.running && !mcp.portUnavailable) {
     await mcp.start();
   }
   return mcp;
@@ -740,7 +788,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     settings().get<number>('sftp.cacheTtl', 5) * 1000,
     settings().get<number>('sftp.watchInterval', 5) * 1000
   );
-  const tree = new RemoteFoldersProvider();
+  const tree = new RemoteFoldersProvider(context);
   context.subscriptions.push(
     output,
     provider,
@@ -778,6 +826,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await deleteConfig(mount);
     tree.refresh();
   });
+  command('toggleAiForwardItem', async (mount) => {
+    await toggleAiForward(mount);
+    tree.refresh();
+  });
 
   const tool = <T>(
     name: string,
@@ -805,8 +857,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   await guard(() => ensureAgentMcpServer(context));
   await guard(async () => {
-    const server = await ensureAgentMcpServer(context);
-    await configureDetectedAgents(context, server);
+    const server = mcp;
+    if (server && !server.portUnavailable) {
+      await configureDetectedAgents(context, server);
+    }
   });
   await guard(restoreRemoteWorkspaces);
 

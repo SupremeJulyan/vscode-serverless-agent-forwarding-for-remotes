@@ -95,6 +95,11 @@
         "icon": "$(debug-disconnect)"
       },
       {
+        "command": "serverlessRemote.toggleAiForwardItem",
+        "title": "打开/关闭 AI 转发",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "serverlessRemote.deleteConfigItem",
         "title": "删除配置",
         "icon": "$(trash)"
@@ -169,39 +174,49 @@
       ],
       "view/item/context": [
         {
-          "command": "serverlessRemote.openFolderItem",
+          "command": "serverlessRemote.toggleAiForwardItem",
           "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "inline@1"
         },
         {
-          "command": "serverlessRemote.openTerminalItem",
+          "command": "serverlessRemote.openFolderItem",
           "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "inline@2"
         },
         {
-          "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
+          "command": "serverlessRemote.openTerminalItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "inline@3"
         },
         {
-          "command": "serverlessRemote.openFolderItem",
+          "command": "serverlessRemote.closeItem",
+          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
+          "group": "inline@4"
+        },
+        {
+          "command": "serverlessRemote.toggleAiForwardItem",
           "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "serverlessRemote@1"
         },
         {
-          "command": "serverlessRemote.openTerminalItem",
+          "command": "serverlessRemote.openFolderItem",
           "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
           "group": "serverlessRemote@2"
         },
         {
+          "command": "serverlessRemote.openTerminalItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
+          "group": "serverlessRemote@3"
+        },
+        {
           "command": "serverlessRemote.closeItem",
           "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
-          "group": "serverlessRemote@3"
+          "group": "serverlessRemote@4"
         },
         {
           "command": "serverlessRemote.deleteConfigItem",
           "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
-          "group": "serverlessRemote@4"
+          "group": "serverlessRemote@5"
         }
       ]
     },
