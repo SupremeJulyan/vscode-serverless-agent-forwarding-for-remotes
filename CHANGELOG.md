@@ -4,6 +4,9 @@
 
 - **重启版本**：SFTP 直连架构稳定，版本号重置为 2.0.0。
 - WSL 下 `ssh-bridge` 及其 VPN 中继脚本打包进扩展，不再需要单独安装第三方项目。
+- 扩展在 WSL 首次激活时自动检查并安装 `ssh-bridge` 所需的 OpenSSH、Python 和 `flock` 系统包。
+- WSL 与原生 Linux 统一使用临时 `SSH_ASKPASS` 凭据，不再安装或调用第三方 `sshpass`。
+- Windows VPN TCP 中继改为 PowerShell/.NET 实现，不再要求 Windows 主机安装 Python。
 - SSH 远程终端对齐 main 分支：终端身份追踪、`Ssh2Terminal`（Windows 密码）、凭据管理、退出的终端提示重新打开。
 - AI Agent 转发适配纯 SFTP 工作区：MCP 自动识别当前虚拟远程目录、强制远程工具路由，并通过 SFTP 加载远端 AGENTS.md，不再修改本机用户目录。
 - 扩展严格作为 workspace 扩展运行，确保在 Remote-WSL 窗口中安装并运行于 WSL 扩展宿主，而不是 Windows UI 扩展宿主。

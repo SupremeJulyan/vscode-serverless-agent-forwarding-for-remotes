@@ -38,7 +38,7 @@ vpn_hash() {
 vpn_process_valid() {
   local pid="$1" port="$2"
   vpn_powershell -NoProfile -Command \
-    "\$p=Get-CimInstance Win32_Process -Filter 'ProcessId=$pid' -ErrorAction SilentlyContinue; \$l=Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $pid; if(\$p.CommandLine -like '*windows_tcp_relay.py*' -and \$l){'true'}else{'false'}" \
+    "\$p=Get-CimInstance Win32_Process -Filter 'ProcessId=$pid' -ErrorAction SilentlyContinue; \$l=Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $pid; if(\$p.CommandLine -like '*start-vpn-relay.ps1*' -and \$p.CommandLine -like '*-RunRelay*' -and \$l){'true'}else{'false'}" \
     </dev/null 2>/dev/null | tr -d '\r'
 }
 
@@ -46,7 +46,7 @@ vpn_stop_process() {
   local pid="$1"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 0
   vpn_powershell -NoProfile -Command \
-    "\$p=Get-CimInstance Win32_Process -Filter 'ProcessId=$pid' -ErrorAction SilentlyContinue; if(\$p.CommandLine -like '*windows_tcp_relay.py*'){Stop-Process -Id $pid -Force; Wait-Process -Id $pid -Timeout 5 -ErrorAction SilentlyContinue}" \
+    "\$p=Get-CimInstance Win32_Process -Filter 'ProcessId=$pid' -ErrorAction SilentlyContinue; if(\$p.CommandLine -like '*start-vpn-relay.ps1*' -and \$p.CommandLine -like '*-RunRelay*'){Stop-Process -Id $pid -Force; Wait-Process -Id $pid -Timeout 5 -ErrorAction SilentlyContinue}" \
     </dev/null >/dev/null 2>&1 || true
 }
 
@@ -55,7 +55,7 @@ vpn_relay_acquire() {
   local target_host="$1" target_port="$2" holder="$3"
   local key holder_key state_file lease_dir lock_file
   local relay_pid="" local_port="" saved_host="" saved_port="" relay_status="reused"
-  local relay_json relay_win starter_win valid="false"
+  local relay_json starter_win valid="false"
   local lock_fd
 
   for command in python3 powershell.exe wslpath flock stat; do
@@ -89,11 +89,9 @@ vpn_relay_acquire() {
     [[ "$relay_pid" =~ ^[0-9]+$ ]] && vpn_stop_process "$relay_pid"
     rm -f -- "$state_file"
     rm -rf -- "$lease_dir"
-    relay_win="$(wslpath -w "$VPN_TOOLKIT_DIR/windows_tcp_relay.py")"
     starter_win="$(wslpath -w "$VPN_TOOLKIT_DIR/start-vpn-relay.ps1")"
     relay_json="$({
       vpn_powershell -NoProfile -ExecutionPolicy Bypass -File "$starter_win" \
-        -RelayScript "$relay_win" \
         -TargetHost "$target_host" \
         -TargetPort "$target_port" \
         -IdleExitSeconds 30 </dev/null

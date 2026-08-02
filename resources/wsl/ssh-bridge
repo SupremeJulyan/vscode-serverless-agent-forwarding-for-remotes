@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bundled SSH bridge for WSL — used by the Serverless Remote SSH VS Code extension.
-# Password decryption is handled by the TypeScript extension side; the plaintext
-# password is passed via SSH_BRIDGE_PASSWORD environment variable.
+# Password decryption and SSH_ASKPASS credential setup are handled by the
+# TypeScript extension side, matching native Linux authentication.
 # VPN relay is included for aTrust / VPN scenarios.
 
 set -Eeuo pipefail
@@ -42,7 +42,6 @@ usage() {
   ssh-bridge [-t | --tty] name [远程命令...]
 
 环境变量:
-  SSH_BRIDGE_PASSWORD         明文 SSH 密码（由扩展侧解密后传入）
   WSL_VPN_SSH_CONNECTION_REUSE 是否启用 SSH 连接复用 (1/0, 默认 1)
   VPN_TARGET_PORT=22           目标 SSH 端口
 EOF
@@ -116,16 +115,14 @@ PY
   )
 fi
 
-password=""
 private_key_path=""
 use_vpn=true
 if ((${#config_values[@]})); then
   ((${#config_values[@]} == 6)) || die "配置项读取不完整"
   target_host="${config_values[0]}"
   ssh_user="${config_values[1]}"
-  password="${SSH_BRIDGE_PASSWORD:-}"
-  if [[ -z "$password" && -n "${config_values[2]}" ]]; then
-    die "配置密码未由扩展解密"
+  if [[ -n "${config_values[2]}" && -z "${SSH_ASKPASS:-}" ]]; then
+    die "配置包含密码，但扩展未提供 SSH_ASKPASS 凭据"
   fi
   private_key_path="${config_values[3]}"
   target_port="${config_values[4]}"
@@ -172,11 +169,6 @@ if [[ -n "$private_key_path" ]]; then
 fi
 
 ssh_command=(ssh)
-if [[ -n "$password" ]]; then
-  command -v sshpass >/dev/null 2>&1 || die "配置包含密码，请先安装 'sshpass'"
-  ssh_command=(sshpass -e ssh)
-  export SSHPASS="$password"
-fi
 
 # ── Direct connection (no VPN) ───────────────────────────────────────────────
 if [[ "$use_vpn" != true ]]; then

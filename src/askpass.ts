@@ -35,7 +35,8 @@ del /f /q "%~f0" 2>nul
 `;
 
 export function platformUsesAskpass(platform: PlatformKind): boolean {
-  return platform === 'macos' || platform === 'linux' || platform === 'windows';
+  return platform === 'macos' || platform === 'linux'
+    || platform === 'wsl' || platform === 'windows';
 }
 
 export async function createAskpassCredentials(password: string): Promise<AskpassCredentials> {

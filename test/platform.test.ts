@@ -80,3 +80,8 @@ test('WSL passes the master password to ssh-bridge terminal environment only', (
   assert.equal(plan.env?.WSL_VPN_MASTER_PASSWORD, 'master secret');
   assert.equal(plan.args.includes('master secret'), false);
 });
+
+test('WSL never passes the decrypted SSH password through the bridge environment', () => {
+  const plan = createPlatformAdapter('wsl').terminal(host, '/srv/project');
+  assert.equal(plan.env?.SSH_BRIDGE_PASSWORD, undefined);
+});

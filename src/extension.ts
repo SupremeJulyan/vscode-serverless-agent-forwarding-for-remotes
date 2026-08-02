@@ -33,6 +33,9 @@ import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
 } from './sftp/uri';
 import { setWslBundlePath } from './wsl-bridge';
+import {
+  hasRequiredWslDependencies, installWslDependencies
+} from './dependency-installer';
 
 const commandPrefix = 'serverlessRemote';
 const platformAdapter = createPlatformAdapter();
@@ -403,9 +406,6 @@ async function openTerminal(
         `${mount.name} 终端凭据准备`,
         () => resolveStoredHostPassword(context, config, resolved.hostConfig)
       );
-      // An interactive Windows OpenSSH process owns a terminal and reads its
-      // password from that terminal. ASKPASS is suitable for background
-      // commands, but cannot silently replace a PTY password prompt.
       if (platformUsesAskpass(platformAdapter.kind)) {
         credentials = await createAskpassCredentials(resolved.hostConfig.password!);
       }
@@ -413,8 +413,7 @@ async function openTerminal(
     const bridgePasswordEnv = await bridgeMasterPasswordEnv(context, resolved.hostConfig);
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
-      bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
-      decryptedPassword: resolved.hostConfig.password
+      bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD
     });
     const terminalCommand = await resolveExecutable(plan.command, plan.env);
     const terminalStartedAt = performance.now();
@@ -764,8 +763,7 @@ async function executeRemoteCommand(
         }
       } else {
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
-          reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
-          decryptedPassword: resolved.hostConfig.password
+          reuseSshConnection: settings().get<boolean>('reuseSshConnection', true)
         });
         plan.env = {
           ...plan.env,
@@ -1237,6 +1235,46 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
   }
 }
 
+async function ensureSystemDependencies(): Promise<void> {
+  const platform = platformAdapter.kind;
+  if (platform !== 'wsl' || await hasRequiredWslDependencies()) return;
+  const platformName = 'WSL';
+  bridgeOutput?.appendLine(
+    `[${new Date().toLocaleString()}] 检测到 ${platformName} 系统依赖缺失，开始自动安装`
+  );
+  try {
+    await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `Serverless Remote SSH：正在安装 ${platformName} 依赖`,
+      cancellable: false
+    }, async (progress) => {
+      const reporter = {
+        log: (message: string) => {
+          if (!message) return;
+          bridgeOutput?.appendLine(message);
+          const latest = message.trim().split(/\r?\n/).at(-1);
+          if (latest) progress.report({ message: latest.slice(0, 100) });
+        },
+        progress: (message: string, increment?: number) =>
+          progress.report({ message, increment })
+      };
+      await installWslDependencies(reporter);
+    });
+    bridgeOutput?.appendLine(`${platformName} 系统依赖自动安装完成`);
+    void vscode.window.showInformationMessage(
+      `Serverless Remote SSH：${platformName} 依赖安装完成。`
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    bridgeOutput?.appendLine(`[依赖安装失败] ${detail}`);
+    const selected = await vscode.window.showErrorMessage(
+      `Serverless Remote SSH：${platformName} 依赖自动安装失败：${detail}`,
+      '查看输出'
+    );
+    if (selected === '查看输出') bridgeOutput?.show(true);
+  }
+}
+
 // ---- Activate / Deactivate ----
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -1247,6 +1285,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // WSL: point the bundled scripts at resources/wsl/
   setWslBundlePath(vscode.Uri.joinPath(context.extensionUri, 'resources', 'wsl').fsPath);
+  await ensureSystemDependencies();
 
   registry = new RemoteFolderRegistry();
   pool = new SftpConnectionPool(async (hostName, signal) =>
