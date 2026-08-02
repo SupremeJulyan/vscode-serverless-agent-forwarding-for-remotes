@@ -90,12 +90,12 @@ integration does not install a Codex plugin, skill, or hooks. MCP instructions t
 remote tools for `serverless-sftp` workspaces; because MCP cannot intercept a client's
 own local tools, enforcement depends on the agent following those instructions.
 
-The Enable Agent Forwarding action only stores a preference for that mount; it does not
-connect or start MCP immediately. The next time that remote folder opens, its new window
-starts MCP and automatically installs or updates the fixed `serverless-remote` stdio MCP
-for detected Codex and Claude Code installations without additional confirmation dialogs. Disabling forwarding
-leaves normal SFTP/SSH access available while MCP tools reject further access. Restart
-the Agent and start a new conversation after installing or updating MCP.
+Enable Agent Forwarding first installs or updates the fixed `serverless-remote` stdio MCP
+for detected Codex and Claude Code installations. If that remote folder is already open,
+the action also starts its window-scoped dynamic-port MCP service immediately. Disabling
+a mount stops its window service; the extension runs `mcp remove` only after the last
+enabled mount is disabled. Restart the Agent and start a new conversation after installing,
+updating, or removing MCP.
 
 For local development, you can also install it manually with:
 

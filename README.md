@@ -94,11 +94,11 @@ stdio MCP 路由器，并在每次工具调用时找到目标窗口的最新端�
 会要求 Agent 对 `serverless-sftp` 工作区只使用远程
 工具；由于 MCP 无法拦截客户端自身的本地工具，该约束依赖 Agent 遵循工具说明。
 
-“启用 Agent 转发”按钮只保存该挂载的启用标记，不会立即连接或启动 MCP。之后打开该
-远程目录时，新窗口会自动启动 MCP，并为检测到的 Codex 和 Claude Code 安装或更新名为
-`serverless-remote` 的固定 stdio MCP，不再弹出 Agent 转发或一键配置确认框。关闭 Agent
-转发后，该挂载只使用普通 SFTP/SSH 功能，MCP 工具会拒绝继续访问。首次安装或更新 MCP
-后请重启 Agent 并新建对话。
+“启用 Agent 转发”会先为检测到的 Codex 和 Claude Code 安装或更新名为
+`serverless-remote` 的固定 stdio MCP；如果当前已打开该远程目录，还会立即启动该窗口的
+动态端口 MCP 服务。关闭某个挂载的 Agent 转发会停止该窗口服务；只有最后一个已启用挂载
+也被关闭后，扩展才会执行 `mcp remove`。首次安装、更新或移除 MCP 后请重启 Agent 并
+新建对话。
 
 本地开发也可手动安装：
 
