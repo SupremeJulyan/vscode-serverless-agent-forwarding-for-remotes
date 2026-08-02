@@ -75,42 +75,43 @@ VS Code Agent 可使用：
 `resolve_workspace_execution`、`list_remote_folders`、`remote_list`、`remote_read`、`remote_write`、
 `remote_search` 和 `run_remote_command`。
 
-Agent 会在会话开始时通过 `resolve_workspace_execution` 识别当前 SFTP 虚拟工作区。
+Agent 在执行工作区操作前通过 `resolve_workspace_execution` 识别当前 SFTP 虚拟工作区。
 开启转发后，文件工具可省略 `mountName` 并自动绑定当前工作区。所有远程文件访问
 都通过 SFTP 工具完成，构建、测试、Git 和系统检查通过 SSH 远程命令完成；工具被
-限制在已开启转发的 `remote_path` 内。Agent 路由由 Codex 插件及其 hooks 管理，扩展
+限制在已开启转发的 `remote_path` 内。Agent 路由和使用约束由固定 MCP 服务统一管理，扩展
 不会在远端创建或读取 Agent 指引文件。
 
-### Codex 插件（Windows App / CLI / VS Code）
+### 统一 Agent MCP（Codex / Claude Code）
 
-每个开启 Agent 转发的远程 VS Code 窗口会启动独立的动态端口 MCP。Codex 插件提供固定的
-stdio MCP 路由器，并在每次工具调用时按会话绑定找到该窗口的最新端口。窗口服务只能访问
-其绑定挂载，不能通过传入其他 `mountName` 跨窗口访问。
+每个开启 Agent 转发的远程 VS Code 窗口会启动独立的动态端口 MCP。扩展为 Codex 和
+Claude Code 注册同一个固定的
+stdio MCP 路由器，并在每次工具调用时找到目标窗口的最新端口。省略 `mountName` 时使用
+当前获得焦点且状态最新的窗口；显式提供 `mountName` 时选择对应的活动挂载。窗口服务只能
+访问其绑定挂载，不能通过请求参数跨窗口访问。
 
-仓库内的 `plugins/serverless-remote` Codex 插件会为每个新会话发现当前获得焦点的
-Serverless Remote VS Code 窗口。发现远程窗口后，`SessionStart` hook 会把该挂载绑定到
-Codex 会话；`PreToolUse` hook 会为固定 MCP 路由注入会话 ID，并阻止该会话使用本地 shell
-或本地文件编辑工具误操作虚拟工作区。远程窗口断开时工具返回 `REMOTE_DISCONNECTED`；
-相同挂载重连后，原 Codex 对话会自动路由到新端口。
+`resources/agent-mcp` 中的窗口发现、目标选择、动态端口路由、断线判断、挂载校验和远程
+工具说明全部由 MCP 路由器完成，不安装 Codex 插件、Skill 或 hooks。MCP instructions
+会要求 Agent 对 `serverless-sftp` 工作区只使用远程
+工具；由于 MCP 无法拦截客户端自身的本地工具，该约束依赖 Agent 遵循工具说明。
 
 “启用 Agent 转发”按钮只保存该挂载的启用标记，不会立即连接或启动 MCP。之后打开该
-远程目录时，新窗口会自动启动 MCP 并从扩展安装目录安装或更新包含固定 MCP 路由的
-`serverless-remote` Codex 插件，不再弹出 Agent 转发或一键配置确认框。关闭 Agent 转发后，
-该挂载只使用普通 SFTP/SSH 功能，MCP 工具会拒绝继续访问。Codex 首次安装或更新插件后
-仍需审核并信任插件 hooks，然后重启 Codex 并新建对话。
+远程目录时，新窗口会自动启动 MCP，并为检测到的 Codex 和 Claude Code 安装或更新名为
+`serverless-remote` 的固定 stdio MCP，不再弹出 Agent 转发或一键配置确认框。关闭 Agent
+转发后，该挂载只使用普通 SFTP/SSH 功能，MCP 工具会拒绝继续访问。首次安装或更新 MCP
+后请重启 Agent 并新建对话。
 
 本地开发也可手动安装：
 
 ```sh
-codex plugin marketplace add /path/to/vscode-serverless-remote-ssh
-codex plugin add serverless-remote@personal
+codex mcp add serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
+claude mcp add --scope user serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
 ```
 
-安装后在 Codex 中审核并信任插件 hooks，然后重启 Codex 并新建对话。Windows Codex
+安装后重启 Agent 并新建对话。Windows Codex
 原生模式使用 `%USERPROFILE%` 中的窗口发现记录；WSL 模式会同时尝试 WSL home 和
 Windows 用户目录。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
-不会关闭 Agent 转发偏好，重连相同挂载后原对话可继续使用。如果同时
-打开多个远程窗口，创建会话时优先绑定当前获得焦点且状态最新的窗口。设置
+不会关闭 Agent 转发偏好，重连相同挂载后 MCP 会发现新端口。如果同时打开多个远程窗口，
+省略 `mountName` 的工具调用使用当前获得焦点且状态最新的窗口。设置
 `serverlessRemote.agentMcpPort` 应保持为默认值 `0`；配置固定端口会重新引入多窗口端口冲突。
 
 ## 限制
@@ -128,3 +129,6 @@ Windows 用户目录。VS Code 扩展必须保持运行，并为相应挂载开�
 - `serverlessRemote.sftp.cacheTtl`
 - `serverlessRemote.sftp.watchInterval`
 - `serverlessRemote.agentMcpPort`
+- `serverlessRemote.agentForwardingAgents`：选择启用 MCP 转发的 Agent，默认
+  `codex` 和 `claudeCode`。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从
+  对应的 VS Code Agent 扩展安装路径查找内置 CLI。

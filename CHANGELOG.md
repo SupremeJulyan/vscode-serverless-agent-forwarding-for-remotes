@@ -8,13 +8,15 @@
 - WSL 与原生 Linux 统一使用临时 `SSH_ASKPASS` 凭据，不再安装或调用第三方 `sshpass`。
 - Windows VPN TCP 中继改为 PowerShell/.NET 实现，不再要求 Windows 主机安装 Python。
 - SSH 远程终端对齐 main 分支：终端身份追踪、`Ssh2Terminal`（Windows 密码）、凭据管理、退出的终端提示重新打开。
-- AI Agent 转发适配纯 SFTP 工作区：Codex 插件自动绑定当前虚拟远程目录，并通过 MCP 强制远程工具路由，不在远端创建或读取 Agent 指引文件。
+- AI Agent 转发适配纯 SFTP 工作区：固定 MCP 自动发现当前虚拟远程目录并路由远程工具，不在远端创建或读取 Agent 指引文件。
 - Agent 转发开关改为纯偏好标记；启用后在下次打开远程目录时自动启动 MCP 和配置 Agent 集成，关闭后 MCP 工具立即拒绝访问。
+- Agent 集成统一为纯 MCP：移除 Codex 插件、Skill、SessionStart/PreToolUse hooks 和会话绑定文件，Codex 与 Claude Code 共用固定 MCP 路由器完成窗口发现、目标选择、端口路由及工具说明。
+- 新增 `serverlessRemote.agentForwardingAgents` 设置，默认启用 Codex 和 Claude Code；CLI 不在 `PATH` 时自动从对应 VS Code Agent 扩展路径查找。
 - 扩展严格作为 workspace 扩展运行，确保在 Remote-WSL 窗口中安装并运行于 WSL 扩展宿主，而不是 Windows UI 扩展宿主。
 - 恢复 `authentication.ts`、`ssh2-terminal.ts`、`ssh-command.ts`。
 - Windows ASKPASS 支持恢复。
 - 全平台 `exec` 方法统一支持连接复用参数。
-- 57 项测试全部通过。
+- 55 项测试全部通过。
 
 ## 1.0.6
 

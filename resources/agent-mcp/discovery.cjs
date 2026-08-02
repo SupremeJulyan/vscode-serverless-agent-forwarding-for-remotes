@@ -41,7 +41,7 @@ function readRecord(filePath, now = Date.now()) {
   }
 }
 
-function activeWorkspace() {
+function allWorkspaces() {
   const now = Date.now();
   const records = [];
   for (const directory of discoveryDirectories()) {
@@ -58,55 +58,15 @@ function activeWorkspace() {
   records.sort((left, right) =>
     Number(right.focused) - Number(left.focused) || right.updatedAtMs - left.updatedAtMs
   );
-  return records[0] || null;
+  return records;
 }
 
-function workspaceForBinding(binding) {
-  if (!binding?.mountName) return null;
-  const now = Date.now();
-  const records = [];
-  for (const directory of discoveryDirectories()) {
-    try {
-      for (const name of fs.readdirSync(directory)) {
-        if (!name.endsWith('.json')) continue;
-        const record = readRecord(path.join(directory, name), now);
-        if (record?.mountName === binding.mountName) records.push(record);
-      }
-    } catch {
-      // Missing discovery directories mean the bound workspace is offline.
-    }
-  }
-  records.sort((left, right) => right.updatedAtMs - left.updatedAtMs);
-  return records[0] || null;
+function activeWorkspace() {
+  return allWorkspaces()[0] || null;
 }
 
-function bindingPath(sessionId) {
-  const dataDirectory = process.env.PLUGIN_DATA
-    || path.join(os.homedir(), '.serverless-remote-ssh', 'codex-plugin');
-  return path.join(dataDirectory, 'bindings', `${sessionId}.json`);
+function workspaceForMount(mountName) {
+  return allWorkspaces().find((record) => record.mountName === mountName) || null;
 }
 
-function writeBinding(sessionId, workspace) {
-  const filePath = bindingPath(sessionId);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify({
-    version: 1,
-    sessionId,
-    instanceId: workspace.instanceId,
-    workspaceUri: workspace.workspaceUri,
-    mountName: workspace.mountName,
-    remoteRoot: workspace.remoteRoot,
-    mcpServerName: workspace.mcpServerName,
-    boundAt: new Date().toISOString()
-  }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-}
-
-function readBinding(sessionId) {
-  try {
-    return JSON.parse(fs.readFileSync(bindingPath(sessionId), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-module.exports = { activeWorkspace, readBinding, workspaceForBinding, writeBinding };
+module.exports = { activeWorkspace, allWorkspaces, workspaceForMount };

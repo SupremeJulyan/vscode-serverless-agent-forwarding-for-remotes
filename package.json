@@ -371,6 +371,26 @@
           "maximum": 65535,
           "default": 0,
           "description": "Loopback-only Streamable HTTP MCP port. Use 0 (recommended) to allocate an independent port for each remote VS Code window."
+        },
+        "serverlessRemote.agentForwardingAgents": {
+          "type": "array",
+          "default": [
+            "codex",
+            "claudeCode"
+          ],
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "codex",
+              "claudeCode"
+            ],
+            "enumDescriptions": [
+              "OpenAI Codex",
+              "Anthropic Claude Code"
+            ]
+          },
+          "description": "Agents enabled for Serverless Remote MCP forwarding. The extension first looks for each Agent's MCP-capable CLI command in PATH; if it is not found, it looks inside the corresponding installed VS Code extension."
         }
       }
     }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 interface ExtensionManifest {
@@ -42,6 +42,14 @@ test('shows separate Agent forwarding actions for enabled and disabled mounts', 
     && item.when?.includes('aiEnabled')));
 });
 
+test('packages Agent integration as a standalone MCP router without a Codex plugin', async () => {
+  await access(new URL('../resources/agent-mcp/mcp-router.cjs', import.meta.url));
+  await access(new URL('../resources/agent-mcp/discovery.cjs', import.meta.url));
+  await assert.rejects(access(new URL(
+    '../plugins/serverless-remote/.codex-plugin/plugin.json', import.meta.url
+  )));
+});
+
 test('uses the cross-platform config path while retaining legacy schema matches', async () => {
   const manifest = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
@@ -49,6 +57,12 @@ test('uses the cross-platform config path while retaining legacy schema matches'
   assert.equal(
     manifest.contributes?.configuration?.properties?.['serverlessRemote.configPath']?.default,
     '~/.serverless-remote-ssh/config.json'
+  );
+  assert.deepEqual(
+    manifest.contributes?.configuration?.properties?.[
+      'serverlessRemote.agentForwardingAgents'
+    ]?.default,
+    ['codex', 'claudeCode']
   );
   const matches = manifest.contributes?.jsonValidation?.flatMap((item) => item.fileMatch ?? []);
   assert.ok(matches?.includes('**/.serverless-remote-ssh/config.json'));

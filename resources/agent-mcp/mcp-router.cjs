@@ -1,10 +1,14 @@
 const readline = require('node:readline');
-const { readBinding, workspaceForBinding } = require('./discovery.cjs');
+const { activeWorkspace, allWorkspaces, workspaceForMount } = require('./discovery.cjs');
+
+function trace(message) {
+  process.stderr.write(`[Serverless Remote][MCP Router] ${message}\n`);
+}
 
 const tools = [
-  ['resolve_workspace_execution', 'Resolve workspace execution route', 'Resolve the Serverless Remote workspace bound to this Codex conversation.', {}],
-  ['list_remote_folders', 'List SFTP remote folders', 'Lists the remote folder bound to this Codex conversation.', {}],
-  ['current_remote_workspace', 'Get current remote workspace', 'Returns the remote folder bound to this Codex conversation.', {}],
+  ['resolve_workspace_execution', 'Resolve workspace execution route', 'Resolve the active Serverless Remote workspace. Call this before any workspace operation.', {}],
+  ['list_remote_folders', 'List SFTP remote folders', 'Lists active Agent-forwarded remote folders.', {}],
+  ['current_remote_workspace', 'Get current remote workspace', 'Returns the focused active remote folder.', {}],
   ['remote_list', 'List a remote directory', 'Lists files directly over SFTP.', {
     path: { type: 'string' }, mountName: { type: 'string' }
   }],
@@ -27,13 +31,7 @@ const tools = [
   description,
   inputSchema: {
     type: 'object',
-    properties: {
-      ...properties,
-      _sessionId: {
-        type: 'string',
-        description: 'Internal Codex session routing value injected by the plugin hook.'
-      }
-    },
+    properties,
     required
   },
   annotations: {
@@ -72,6 +70,7 @@ async function forward(workspace, name, args, requestId) {
     throw new Error('Refusing to forward to a non-loopback MCP endpoint');
   }
   const downstreamId = `router-${process.pid}-${Date.now()}-${requestId}`;
+  trace(`转发工具 ${name} 到 mount=${workspace.mountName}，port=${url.port}`);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -97,44 +96,35 @@ async function forward(workspace, name, args, requestId) {
 async function callTool(request) {
   const name = request.params?.name;
   const args = { ...(request.params?.arguments || {}) };
-  const sessionId = args._sessionId;
-  delete args._sessionId;
-  if (!sessionId) {
-    return toolError(
-      'SESSION_NOT_BOUND',
-      'The Codex session routing hook did not provide a session id. Review and trust the Serverless Remote plugin hooks, then retry.'
-    );
+  if (name === 'list_remote_folders') {
+    const folders = allWorkspaces().map(({ mcpUrl, discoveryFile, updatedAtMs, ...workspace }) => workspace);
+    trace(`列出 ${folders.length} 个活动远程工作区`);
+    return { content: [{ type: 'text', text: JSON.stringify(folders, null, 2) }] };
   }
-  const binding = readBinding(sessionId);
-  if (!binding) {
-    return toolError(
-      'SESSION_NOT_BOUND',
-      'This Codex conversation is not bound to a Serverless Remote workspace. Focus a connected remote window and start or resume the conversation.'
-    );
-  }
-  const workspace = workspaceForBinding(binding);
+  const workspace = args.mountName
+    ? workspaceForMount(args.mountName)
+    : activeWorkspace();
   if (!workspace) {
+    trace(`拒绝工具 ${name || '<unknown>'}：没有匹配的活动远程窗口`);
     return toolError(
-      'REMOTE_DISCONNECTED',
-      `Serverless Remote mount ${binding.mountName} is disconnected. Reconnect the same mount in VS Code and retry in this conversation.`,
-      { mountName: binding.mountName }
+      'NO_ACTIVE_REMOTE',
+      args.mountName
+        ? `Serverless Remote mount ${args.mountName} is not active. Enable Agent forwarding and open that remote folder in VS Code.`
+        : 'No active Agent-forwarded Serverless Remote window was found. Focus an enabled remote window and retry.',
+      args.mountName ? { mountName: args.mountName } : {}
     );
   }
-  if (args.mountName && args.mountName !== binding.mountName) {
-    return toolError(
-      'MOUNT_MISMATCH',
-      `This conversation is bound to ${binding.mountName}, not ${args.mountName}.`,
-      { mountName: binding.mountName }
-    );
-  }
-  args.mountName = binding.mountName;
+  args.mountName = workspace.mountName;
   try {
-    return await forward(workspace, name, args, request.id);
+    const result = await forward(workspace, name, args, request.id);
+    trace(`工具 ${name} 完成，mount=${workspace.mountName}`);
+    return result;
   } catch (error) {
+    trace(`工具 ${name || '<unknown>'} 失败，mount=${workspace.mountName}：${error.message}`);
     return toolError(
       'REMOTE_UNAVAILABLE',
-      `Serverless Remote mount ${binding.mountName} is currently unavailable: ${error.message}`,
-      { mountName: binding.mountName }
+      `Serverless Remote mount ${workspace.mountName} is currently unavailable: ${error.message}`,
+      { mountName: workspace.mountName }
     );
   }
 }
@@ -143,16 +133,26 @@ async function handle(request) {
   if (!request || request.jsonrpc !== '2.0' || typeof request.method !== 'string') return;
   if (request.method.startsWith('notifications/')) return;
   if (request.method === 'initialize') {
+    trace('Codex 已初始化固定 MCP 路由器');
     return {
       protocolVersion: request.params?.protocolVersion || '2025-06-18',
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'serverless-remote-router', version: '0.1.0' },
-      instructions: 'Routes each Codex conversation to its bound Serverless Remote SSH window. Calls survive window disconnects and dynamic-port changes.'
+      instructions: [
+        'This MCP server is the complete integration for Serverless Remote SSH virtual workspaces.',
+        'Before reading files, editing, searching, running shell commands, using Git, builds, tests, or inferring the OS, call resolve_workspace_execution.',
+        'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, and run_remote_command for that workspace.',
+        'Never use local shell or local filesystem tools for a serverless-sftp workspace because its files do not exist locally.',
+        'Omit mountName to use the currently focused Agent-forwarded VS Code window, or pass mountName explicitly to select an active forwarded mount.'
+      ].join(' ')
     };
   }
   if (request.method === 'ping') return {};
   if (request.method === 'tools/list') return { tools };
-  if (request.method === 'tools/call') return callTool(request);
+  if (request.method === 'tools/call') {
+    trace(`收到工具调用 ${request.params?.name || '<unknown>'}`);
+    return callTool(request);
+  }
   throw Object.assign(new Error(`Method not found: ${request.method}`), { code: -32601 });
 }
 

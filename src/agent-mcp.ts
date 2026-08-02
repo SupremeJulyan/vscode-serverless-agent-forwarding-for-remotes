@@ -242,7 +242,9 @@ export class AgentMcpServer {
       return;
     }
     this.httpServer = server;
-    this.callbacks.log?.(`MCP 已启动：http://127.0.0.1:${this.port}/mcp?token=<hidden>`);
+    this.callbacks.log?.(
+      `MCP 已启动：http://127.0.0.1:${this.listeningPort ?? this.port}/mcp?token=<hidden>`
+    );
   }
 
   async stop(): Promise<void> {
@@ -250,8 +252,10 @@ export class AgentMcpServer {
     this.httpServer = undefined;
     this.listeningPort = undefined;
     if (!server) return;
+    this.callbacks.log?.('正在停止 MCP');
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     });
+    this.callbacks.log?.('MCP 已停止');
   }
 }

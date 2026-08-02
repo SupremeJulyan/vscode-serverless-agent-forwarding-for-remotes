@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { access, readFile, readdir } from 'node:fs/promises';
+import { access, readdir } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -48,7 +48,6 @@ const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const agentMcpTokenSecret = platformStateKey('agentMcpToken');
 const agentSetupCompletedKey = platformStateKey('agentSetupCompleted');
 const aiForwardMountsKey = platformStateKey('aiForwardMounts');
-const codexPluginSelector = 'serverless-remote@personal';
 const defaultConfigPath = '~/.serverless-remote-ssh/config.json';
 const legacyNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const legacyWslConfigPath = '~/.wsl-vpn-ssh/config.json';
@@ -66,6 +65,7 @@ let registry: RemoteFolderRegistry;
 let provider: SftpFileSystemProvider;
 const agentWorkspacePublisher = new AgentWorkspacePublisher(randomBytes(12).toString('hex'));
 let agentWorkspaceHeartbeat: NodeJS.Timeout | undefined;
+let lastAgentDiscoveryState = '';
 const openingTerminalIds = new Set<string>();
 
 class ConfigActionRequiredError extends Error {
@@ -80,6 +80,12 @@ class ConfigActionRequiredError extends Error {
 
 function settings(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('serverlessRemote');
+}
+
+function agentTrace(stage: string, message: string): void {
+  bridgeOutput?.appendLine(
+    `[${new Date().toISOString()}] [Agent trace] [${stage}] ${message}`
+  );
 }
 
 function agentMcpServerName(mountName: string): string {
@@ -273,9 +279,11 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
 async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   const existing = registry.get(mount.name);
   if (existing) {
+    agentTrace('SFTP', `复用挂载 ${mount.name}，remoteRoot=${existing.remoteRoot}`);
     await pool.get(existing.hostName);
     return existing;
   }
+  agentTrace('SFTP', `开始连接挂载 ${mount.name}，host=${mount.host}`);
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
   const session = await pool.get(resolved.hostConfig.name);
@@ -284,12 +292,16 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   if (stat.type !== 'directory') throw new Error(`远程路径不是目录：${remoteRoot}`);
   const folder = { mountName: mount.name, hostName: mount.host, remoteRoot };
   registry.set(folder);
+  agentTrace('SFTP', `挂载 ${mount.name} 验证完成，remoteRoot=${remoteRoot}`);
   return folder;
 }
 
 async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   const mount = requested ?? await selectMount('选择要打开的 SFTP 远程文件夹');
   if (!mount) return;
+  const forwarding = vscodeContext.globalState
+    .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
+  agentTrace('Open', `准备打开 ${mount.name}，Agent 转发=${forwarding ? '启用' : '关闭'}`);
   await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: `正在连接 ${mount.name}…`,
@@ -297,6 +309,7 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   }, async (progress) => {
     progress.report({ message: '正在验证远程目录…' });
     const folder = await ensureFolder(mount);
+    agentTrace('Open', `创建新窗口，workspace=${remoteUri(folder.mountName, folder.remoteRoot)}`);
     progress.report({ message: '正在打开工作区…' });
     await vscode.commands.executeCommand(
       'vscode.openFolder',
@@ -451,7 +464,7 @@ async function disconnect(requested?: MountConfig): Promise<void> {
   if (!shared) await pool.disconnect(resolveMount(config, mount).hostConfig.name);
 
   // Keep the Agent-forwarding preference so reconnecting this mount can
-  // restore existing Codex conversations through the stable plugin router.
+  // restore Agent access through the stable MCP router.
   // Only the explicit toggle command clears the preference.
   await mcp?.stop();
   await agentWorkspacePublisher.remove();
@@ -951,6 +964,7 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
     const location = currentRemoteLocation();
     if (!location) throw new Error('当前窗口不是 Serverless Remote 工作区');
     const boundMountName = location.mountName;
+    agentTrace('MCP', `创建窗口级 MCP，绑定挂载 ${boundMountName}`);
     mcp = new AgentMcpServer(
       settings().get<number>('agentMcpPort', 0),
       token,
@@ -994,7 +1008,11 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
     );
     context.subscriptions.push({ dispose: () => void mcp?.stop() });
   }
+  agentTrace('MCP', `启动窗口级 MCP，configuredPort=${settings().get<number>('agentMcpPort', 0)}`);
   await mcp.start();
+  agentTrace('MCP', mcp.portUnavailable
+    ? 'MCP 启动失败：端口不可用'
+    : `MCP 已运行，port=${new URL(mcp.url).port}`);
   return mcp;
 }
 
@@ -1004,6 +1022,13 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
   if (!location || !enabled.has(location.mountName) || !mcp?.running || mcp.portUnavailable) {
     if (location && !enabled.has(location.mountName)) await mcp?.stop();
     await agentWorkspacePublisher.remove();
+    const reason = !location ? '非远程工作区'
+      : !enabled.has(location.mountName) ? `挂载 ${location.mountName} 未启用 Agent 转发`
+        : !mcp?.running ? 'MCP 未运行' : 'MCP 端口不可用';
+    if (lastAgentDiscoveryState !== `removed:${reason}`) {
+      lastAgentDiscoveryState = `removed:${reason}`;
+      agentTrace('Discovery', `未发布工作区记录：${reason}`);
+    }
     return;
   }
   const config = await readConfig();
@@ -1023,6 +1048,14 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
     mcpServerName: agentMcpServerName(mount.name),
     mcpUrl: mcp.url
   });
+  const state = `published:${mount.name}:${mcp.url}:${vscode.window.state.focused}`;
+  if (lastAgentDiscoveryState !== state) {
+    lastAgentDiscoveryState = state;
+    agentTrace(
+      'Discovery',
+      `已发布挂载 ${mount.name}，focused=${vscode.window.state.focused}，port=${new URL(mcp.url).port}`
+    );
+  }
 }
 
 function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
@@ -1089,137 +1122,177 @@ async function detectedClaudeCommand(): Promise<string | undefined> {
 }
 
 async function configureDetectedAgents(
-  context: vscode.ExtensionContext, server: AgentMcpServer, serverName: string
+  context: vscode.ExtensionContext, legacyServerName: string
 ): Promise<void> {
   const saved = context.globalState.get<unknown>(agentSetupCompletedKey);
   const configured = new Set(Array.isArray(saved) ? saved.filter(
     (item): item is string => typeof item === 'string'
   ) : []);
+  const forwardingAgents = new Set(settings().get<string[]>(
+    'agentForwardingAgents', ['codex', 'claudeCode']
+  ));
+  const codexEnabled = forwardingAgents.has('codex');
+  const claudeEnabled = forwardingAgents.has('claudeCode');
   const [codexCommand, claudeCommand] = await Promise.all([
     detectedCodexCommand(), detectedClaudeCommand()
   ]);
   bridgeOutput?.appendLine(
-    `[Agent MCP] Agent 检测：Codex ${codexCommand ? '可用' : '未找到'}，Claude Code ${
-      claudeCommand ? '可用' : '未找到'
+    `[Agent MCP] 转发目标：${[...forwardingAgents].join(', ') || '<empty>'}；Agent 检测：Codex ${
+      codexCommand ? '可用' : '未找到'
+    }，Claude Code ${claudeCommand ? '可用' : '未找到'
     }`
   );
-  const [legacyClaudeStatus, codexPluginStatus] = await Promise.all([
-    claudeCommand
-      ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
+  const routerPath = path.join(
+    context.extensionPath, 'resources', 'agent-mcp', 'mcp-router.cjs'
+  );
+  const [
+    codexFixedStatus, codexLegacyStatus, codexPluginStatus,
+    claudeFixedStatus, claudeLegacyStatus
+  ] = await Promise.all([
+    codexCommand
+      ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
+      : Promise.resolve(undefined),
+    codexCommand
+      ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', legacyServerName] })
       : Promise.resolve(undefined),
     codexCommand
       ? executeAgentMcpCommand({ command: codexCommand, args: ['plugin', 'list'] })
-      : Promise.resolve(undefined)
-  ]);
-  await Promise.all([
-    claudeCommand && legacyClaudeStatus?.exitCode === 0
-      ? executeAgentMcpCommand({
-          command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
-        })
-      : Promise.resolve(undefined)
-  ]);
-  const [codexStatus, claudeStatus] = await Promise.all([
-    codexCommand
-      ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', serverName] })
       : Promise.resolve(undefined),
     claudeCommand
-      ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', serverName] })
+      ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
+      : Promise.resolve(undefined),
+    claudeCommand
+      ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', legacyServerName] })
       : Promise.resolve(undefined)
   ]);
   const commandOutput = (result: Awaited<ReturnType<typeof executeAgentMcpCommand>> | undefined) =>
     `${result?.stdout ?? ''}\n${result?.stderr ?? ''}`;
-  const codexExists = codexStatus?.exitCode === 0;
-  const claudeExists = claudeStatus?.exitCode === 0;
-  const claudeConfigured = claudeExists && commandOutput(claudeStatus).includes(server.url);
-  const installedPluginMatch = /^serverless-remote@personal\s+installed(?:, enabled)?\s+(\S+)/im
-    .exec(commandOutput(codexPluginStatus));
-  const codexPluginInstalled = Boolean(installedPluginMatch);
-  let bundledPluginVersion: string | undefined;
-  try {
-    const manifest = JSON.parse(await readFile(path.join(
-      context.extensionPath, 'plugins', 'serverless-remote', '.codex-plugin', 'plugin.json'
-    ), 'utf8')) as { version?: unknown };
-    if (typeof manifest.version === 'string') bundledPluginVersion = manifest.version;
-  } catch {
-    // Plugin installation below will report the actionable packaging failure.
-  }
-  const codexPluginCurrent = codexPluginInstalled
-    && Boolean(bundledPluginVersion && installedPluginMatch?.[1] === bundledPluginVersion);
-  const claudeKey = `claude:${serverName}`;
-  const codexPluginKey = `codex-plugin:${codexPluginSelector}`;
-  configured.delete(`codex:${serverName}`);
-  if (!claudeConfigured) configured.delete(claudeKey);
-  if (!codexPluginCurrent) configured.delete(codexPluginKey);
+  const codexFixedExists = codexFixedStatus?.exitCode === 0;
+  const codexLegacyExists = codexLegacyStatus?.exitCode === 0;
+  const codexConfigured = codexFixedExists && commandOutput(codexFixedStatus).includes(routerPath);
+  const legacyCodexPluginInstalled = /^serverless-remote@personal\s+installed/im
+    .test(commandOutput(codexPluginStatus));
+  const claudeFixedExists = claudeFixedStatus?.exitCode === 0;
+  const claudeLegacyExists = claudeLegacyStatus?.exitCode === 0;
+  const claudeConfigured = claudeFixedExists
+    && commandOutput(claudeFixedStatus).includes(routerPath);
+  const codexKey = 'codex:serverless-remote';
+  const claudeKey = 'claude:serverless-remote';
+  configured.delete(`codex:${legacyServerName}`);
+  configured.delete(`claude:${legacyServerName}`);
+  if (!codexEnabled || !codexConfigured) configured.delete(codexKey);
+  if (!claudeEnabled || !claudeConfigured) configured.delete(claudeKey);
   bridgeOutput?.appendLine(
-    `[Agent MCP] 注册状态：Codex 动态 MCP ${codexExists ? '待移除' : '无需注册'}，Claude Code ${
-      claudeConfigured ? '已注册' : '未注册'
-    }；Codex 插件 ${codexPluginCurrent ? '已是当前版本' : codexPluginInstalled ? '待更新' : '未安装'}`
+    `[Agent MCP] 注册状态：Codex ${codexConfigured ? '固定 MCP 已注册' : codexFixedExists ? '固定 MCP 待更新' : '固定 MCP 未注册'}${
+      codexLegacyExists ? `，旧动态 MCP ${legacyServerName} 待移除` : ''
+    }${legacyCodexPluginInstalled ? '，旧 Codex 插件待移除' : ''}；Claude Code ${
+      claudeConfigured ? '固定 MCP 已注册' : claudeFixedExists ? '固定 MCP 待更新' : '固定 MCP 未注册'
+    }${claudeLegacyExists ? `，旧动态 MCP ${legacyServerName} 待移除` : ''}`
+  );
+  const needsCodexSetup = Boolean(
+    codexCommand && codexEnabled
+      && (!codexConfigured || codexLegacyExists || legacyCodexPluginInstalled)
+  );
+  const needsClaudeSetup = Boolean(
+    claudeCommand && claudeEnabled && (!claudeConfigured || claudeLegacyExists)
+  );
+  const needsCodexDisable = Boolean(
+    codexCommand && !codexEnabled
+      && (codexFixedExists || codexLegacyExists || legacyCodexPluginInstalled)
+  );
+  const needsClaudeDisable = Boolean(
+    claudeCommand && !claudeEnabled && (claudeFixedExists || claudeLegacyExists)
   );
   const agents = [
-    ...(claudeCommand && !claudeConfigured ? ['Claude Code'] : [])
+    ...(needsCodexSetup ? ['Codex'] : []),
+    ...(needsClaudeSetup ? ['Claude Code'] : [])
   ];
-  const needsCodexPlugin = Boolean(codexCommand && !codexPluginCurrent);
-  const needsCodexMcpCleanup = Boolean(codexCommand && codexExists);
-  if (agents.length === 0 && !needsCodexPlugin && !needsCodexMcpCleanup) {
+  if (agents.length === 0 && !needsCodexDisable && !needsClaudeDisable) {
     await context.globalState.update(agentSetupCompletedKey, [...configured]);
     return;
   }
   bridgeOutput?.appendLine([
-    '[Agent MCP] Agent 转发已启用，开始自动配置集成。',
-    agents.length > 0 ? `注册 ${agents.join(' 和 ')} MCP。` : '',
-    needsCodexPlugin ? '安装或更新 Codex 插件。' : '',
-    needsCodexMcpCleanup ? `移除旧的 Codex 动态 MCP 配置 ${serverName}。` : ''
+    '[Agent MCP] Agent 转发已启用，开始自动配置统一 MCP。',
+    agents.length > 0 ? `配置 ${agents.join(' 和 ')}。` : '',
+    needsCodexDisable ? '移除未启用的 Codex MCP。' : '',
+    needsClaudeDisable ? '移除未启用的 Claude Code MCP。' : '',
+    `router=${routerPath}`
   ].filter(Boolean).join(' '));
   const failures: string[] = [];
-  if (codexCommand && needsCodexPlugin) {
-    const marketplace = await executeAgentMcpCommand({
-      command: codexCommand,
-      args: ['plugin', 'marketplace', 'add', context.extensionPath]
-    });
-    const marketplaceOutput = `${marketplace.stdout}\n${marketplace.stderr}`;
-    if (marketplace.exitCode !== 0 && !/already (?:exists|added|configured)/i.test(marketplaceOutput)) {
-      failures.push(`Codex marketplace: ${marketplace.stderr || marketplace.stdout}`);
-    } else {
-      const plugin = await executeAgentMcpCommand({
-        command: codexCommand, args: ['plugin', 'add', codexPluginSelector]
+  if (codexCommand && needsCodexDisable) {
+    if (legacyCodexPluginInstalled) {
+      await executeAgentMcpCommand({
+        command: codexCommand, args: ['plugin', 'remove', 'serverless-remote@personal']
       });
-      const pluginOutput = `${plugin.stdout}\n${plugin.stderr}`;
-      if (plugin.exitCode !== 0 && !/already installed/i.test(pluginOutput)) {
-        failures.push(`Codex 插件: ${plugin.stderr || plugin.stdout}`);
+    }
+    for (const name of [legacyServerName, 'serverless-remote']) {
+      await executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'remove', name] });
+    }
+    configured.delete(codexKey);
+    bridgeOutput?.appendLine('[Agent MCP] Codex 未被设置启用，已移除其 MCP 转发入口');
+  }
+  if (codexCommand && needsCodexSetup) {
+    if (legacyCodexPluginInstalled) {
+      const result = await executeAgentMcpCommand({
+        command: codexCommand, args: ['plugin', 'remove', 'serverless-remote@personal']
+      });
+      if (result.exitCode !== 0) {
+        failures.push(`Codex 旧插件清理: ${result.stderr || result.stdout}`);
       } else {
-        configured.add(codexPluginKey);
-        bridgeOutput?.appendLine('[Agent MCP] Codex 插件安装成功');
+        bridgeOutput?.appendLine('[Agent MCP] 已移除旧 Codex 插件 serverless-remote@personal');
       }
     }
-  }
-  if (codexCommand && needsCodexMcpCleanup) {
+    if (codexLegacyExists) {
+      await executeAgentMcpCommand({
+        command: codexCommand, args: ['mcp', 'remove', legacyServerName]
+      });
+    }
+    if (codexFixedExists && !codexConfigured) {
+      await executeAgentMcpCommand({
+        command: codexCommand, args: ['mcp', 'remove', 'serverless-remote']
+      });
+    }
     const result = await executeAgentMcpCommand({
-      command: codexCommand, args: ['mcp', 'remove', serverName]
+      command: codexCommand,
+      args: ['mcp', 'add', 'serverless-remote', '--', 'node', routerPath]
     });
-    if (result.exitCode !== 0) {
-      failures.push(`Codex 旧 MCP 清理: ${result.stderr || result.stdout}`);
+    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
+      failures.push(`Codex MCP: ${result.stderr || result.stdout}`);
     } else {
-      bridgeOutput?.appendLine(`[Agent MCP] 已移除 Codex 旧动态 MCP：${serverName}`);
+      configured.add(codexKey);
+      bridgeOutput?.appendLine('[Agent MCP] Codex 固定 MCP 路由注册成功');
     }
   }
-  if (claudeCommand && !configured.has(claudeKey)) {
-    if (claudeExists) {
+  if (claudeCommand && needsClaudeDisable) {
+    for (const name of [legacyServerName, 'serverless-remote']) {
+      await executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'remove', name] });
+    }
+    configured.delete(claudeKey);
+    bridgeOutput?.appendLine('[Agent MCP] Claude Code 未被设置启用，已移除其 MCP 转发入口');
+  }
+  if (claudeCommand && needsClaudeSetup) {
+    if (claudeLegacyExists) {
       await executeAgentMcpCommand({
-        command: claudeCommand, args: ['mcp', 'remove', serverName]
+        command: claudeCommand, args: ['mcp', 'remove', legacyServerName]
+      });
+    }
+    if (claudeFixedExists && !claudeConfigured) {
+      await executeAgentMcpCommand({
+        command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
       });
     }
     const result = await executeAgentMcpCommand({
       command: claudeCommand,
       args: [
-        'mcp', 'add', '--transport', 'http', '--scope', 'user',
-        serverName, server.url
+        'mcp', 'add', '--scope', 'user', 'serverless-remote',
+        '--', 'node', routerPath
       ]
     });
     if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
       failures.push(`Claude Code: ${result.stderr || result.stdout}`);
     } else {
       configured.add(claudeKey);
-      bridgeOutput?.appendLine('[Agent MCP] Claude Code 注册成功');
+      bridgeOutput?.appendLine('[Agent MCP] Claude Code 固定 MCP 路由注册成功');
     }
   }
   await context.globalState.update(agentSetupCompletedKey, [...configured]);
@@ -1232,18 +1305,18 @@ async function configureDetectedAgents(
     );
     if (choice === copyAction) {
       await vscode.env.clipboard.writeText([
-        codexCommand && needsCodexPlugin
-          ? `codex plugin marketplace add '${context.extensionPath}'\ncodex plugin add ${codexPluginSelector}`
+        codexCommand && codexEnabled
+          ? `codex mcp add serverless-remote -- node '${routerPath}'`
           : '',
-        claudeCommand
-          ? `claude mcp add --transport http --scope user ${serverName} '${server.url}'`
+        claudeCommand && claudeEnabled
+          ? `claude mcp add --scope user serverless-remote -- node '${routerPath}'`
           : ''
       ].filter(Boolean).join('\n'));
     }
     return;
   }
   bridgeOutput?.appendLine(
-    '[Agent MCP] Agent 集成已自动配置；Codex 使用插件内置的固定 MCP 路由。'
+    '[Agent MCP] Agent 集成已自动配置；已检测的 Agent 使用统一固定 MCP 路由。'
   );
 }
 
@@ -1252,8 +1325,13 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
   if (enabledValue) enabled.add(mount.name);
   else enabled.delete(mount.name);
   await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
+  agentTrace(
+    'Preference',
+    `挂载 ${mount.name} Agent 转发标记已设为${enabledValue ? '启用' : '关闭'}；未启动连接或 MCP`
+  );
   const current = currentRemoteLocation();
   if (!enabledValue && current?.mountName === mount.name) {
+    agentTrace('Preference', `当前窗口绑定 ${mount.name}，正在停止 MCP 并移除发现记录`);
     await mcp?.stop();
     await agentWorkspacePublisher.remove();
   }
@@ -1343,6 +1421,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   output = vscode.window.createOutputChannel('Serverless Remote SSH');
   bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
   context.subscriptions.push(output, bridgeOutput);
+  agentTrace('Activate', `扩展激活，workspace=${
+    vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString()).join(', ') || '<none>'
+  }`);
 
   // WSL: point the bundled scripts at resources/wsl/
   setWslBundlePath(vscode.Uri.joinPath(context.extensionUri, 'resources', 'wsl').fsPath);
@@ -1471,12 +1552,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await guard(async () => {
     const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
     const current = currentRemoteLocation();
+    agentTrace(
+      'Activate',
+      `当前远程挂载=${current?.mountName ?? '<none>'}，启用列表=${[...enabled].join(',') || '<empty>'}`
+    );
     if (current && enabled.has(current.mountName)) {
+      agentTrace('Activate', `挂载 ${current.mountName} 已启用，开始启动 MCP 和自动配置 Agent`);
       const server = await ensureAgentMcpServer(context);
       if (!server.portUnavailable) {
-        await configureDetectedAgents(context, server, agentMcpServerName(current.mountName));
+        await configureDetectedAgents(context, agentMcpServerName(current.mountName));
         await publishAgentWorkspace(context);
       }
+    } else {
+      agentTrace('Activate', '不启动 Agent MCP：当前窗口没有已启用的远程挂载');
     }
   });
   startAgentWorkspacePublishing(context);
@@ -1492,6 +1580,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
+  agentTrace('Deactivate', '扩展停用，清理发现记录、MCP 和连接池');
   if (agentWorkspaceHeartbeat) clearInterval(agentWorkspaceHeartbeat);
   await agentWorkspacePublisher.remove();
   await mcp?.stop();

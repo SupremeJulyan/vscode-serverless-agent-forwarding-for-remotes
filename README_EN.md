@@ -72,46 +72,44 @@ active SFTP virtual workspace. Once forwarding is enabled, tools may omit
 `mountName` and bind to the active workspace automatically. Remote URIs are not
 local paths: agents use SFTP tools for files and SSH execution for builds, tests,
 Git, and operating-system inspection. Tools are restricted to forwarding-enabled
-remote roots. Agent routing is managed by the Codex plugin and its hooks; the
+remote roots. Agent routing and tool guidance are managed by the fixed MCP service; the
 extension does not create or read Agent guidance files on the remote host.
 
-### Codex plugin (Windows app / CLI / VS Code)
+### Unified Agent MCP (Codex / Claude Code)
 
 Each Agent-forwarded remote VS Code window starts an MCP server on an independent
-dynamically allocated port. The Codex plugin provides a stable stdio MCP router
-that resolves the latest window port from the conversation's mount binding on every call.
-Each window service is restricted to its bound mount and rejects another `mountName`.
+dynamically allocated port. The extension registers the same stable stdio MCP router
+for Codex and Claude Code. The router resolves the target window's latest port on every
+call. Calls without `mountName`
+use the focused, most recently updated window; an explicit `mountName` selects that active
+mount. Each window service remains restricted to its own mount.
 
-The `plugins/serverless-remote` Codex plugin discovers the focused Serverless
-Remote VS Code window for each new session. Its `SessionStart` hook binds that
-mount to the Codex session. Its `PreToolUse` hook injects the session ID into
-router calls and prevents that bound session from accidentally using local shell
-or local file-editing tools for the virtual workspace. Tools return
-`REMOTE_DISCONNECTED` while the window is offline and automatically follow the
-new port when the same mount reconnects.
+Window discovery, target selection, dynamic-port routing, disconnect detection,
+mount validation, and remote-tool guidance all live in `resources/agent-mcp`. The
+integration does not install a Codex plugin, skill, or hooks. MCP instructions tell agents to use only
+remote tools for `serverless-sftp` workspaces; because MCP cannot intercept a client's
+own local tools, enforcement depends on the agent following those instructions.
 
 The Enable Agent Forwarding action only stores a preference for that mount; it does not
 connect or start MCP immediately. The next time that remote folder opens, its new window
-starts MCP and automatically installs or updates the bundled `serverless-remote` Codex
-plugin without additional forwarding or setup confirmation dialogs. Disabling forwarding
-leaves normal SFTP/SSH access available while MCP tools reject further access. Codex still
-asks you to review and trust newly installed or updated plugin hooks; then restart Codex
-and start a new conversation.
+starts MCP and automatically installs or updates the fixed `serverless-remote` stdio MCP
+for detected Codex and Claude Code installations without additional confirmation dialogs. Disabling forwarding
+leaves normal SFTP/SSH access available while MCP tools reject further access. Restart
+the Agent and start a new conversation after installing or updating MCP.
 
 For local development, you can also install it manually with:
 
 ```sh
-codex plugin marketplace add /path/to/vscode-serverless-remote-ssh
-codex plugin add serverless-remote@personal
+codex mcp add serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
+claude mcp add --scope user serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
 ```
 
-Review and trust the plugin hooks in Codex, restart Codex, and start a new
-conversation. Native Windows Codex reads window discovery records from
+Restart Codex and start a new conversation. Native Windows Codex reads window discovery records from
 `%USERPROFILE%`; WSL mode checks both the WSL home and the Windows user profile.
 The VS Code extension must remain running with Agent forwarding enabled for the
-mount. Disconnecting SFTP preserves that preference, so the same conversation resumes after the
-mount reconnects. If multiple remote windows are open, a new session prefers the focused,
-most recently updated window. Keep `serverlessRemote.agentMcpPort` at its
+mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
+the mount reconnects. If multiple remote windows are open, calls without `mountName` use
+the focused, most recently updated window. Keep `serverlessRemote.agentMcpPort` at its
 default value of `0`; configuring a fixed port reintroduces multi-window port
 collisions.
 
@@ -123,3 +121,10 @@ collisions.
 - WSL configurations with `vpn: true` reuse the Windows TCP relay supplied by
   `wsl-vpn-ssh-bridge`; install the bridge before using that mode. With
   `vpn: false`, SFTP connects directly.
+
+## Settings
+
+- `serverlessRemote.agentForwardingAgents`: selects Agents enabled for MCP forwarding;
+  defaults to `codex` and `claudeCode`. The extension first searches `PATH` for a CLI
+  with MCP commands, then falls back to the corresponding installed VS Code Agent
+  extension's bundled CLI.

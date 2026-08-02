@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import test from 'node:test';
 import { AgentMcpServer } from '../src/agent-mcp';
 
-const routerPath = path.resolve('plugins/serverless-remote/scripts/mcp-router.cjs');
+const routerPath = path.resolve('resources/agent-mcp/mcp-router.cjs');
 
 function callbacks(label: string) {
   return {
@@ -22,18 +22,13 @@ function callbacks(label: string) {
   };
 }
 
-test('stdio router reports disconnects and follows a reconnected mount to its new port', async () => {
+test('stdio router discovers the active window and follows a reconnected mount to its new port', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'serverless-router-'));
-  const pluginData = path.join(home, 'plugin-data');
   const discovery = path.join(home, '.serverless-remote-ssh', 'agent-workspaces');
-  await mkdir(path.join(pluginData, 'bindings'), { recursive: true });
   await mkdir(discovery, { recursive: true });
-  await writeFile(path.join(pluginData, 'bindings', 'session-a.json'), JSON.stringify({
-    version: 1, sessionId: 'session-a', instanceId: 'old-a', mountName: 'A'
-  }));
 
   const child = spawn(process.execPath, [routerPath], {
-    env: { ...process.env, HOME: home, USERPROFILE: '', PLUGIN_DATA: pluginData },
+    env: { ...process.env, HOME: home, USERPROFILE: '' },
     stdio: ['pipe', 'pipe', 'pipe']
   });
   child.stdout.setEncoding('utf8');
@@ -72,22 +67,22 @@ test('stdio router reports disconnects and follows a reconnected mount to its ne
     await first.start();
     await writeRecord('old-a', first.url);
     const connected = await request('tools/call', {
-      name: 'remote_read', arguments: { _sessionId: 'session-a', path: 'README.md' }
+      name: 'remote_read', arguments: { path: 'README.md' }
     });
     assert.equal(JSON.parse(connected.result.content[0].text).label, 'first');
 
     await first.stop();
     await rm(path.join(discovery, 'old-a.json'));
     const disconnected = await request('tools/call', {
-      name: 'remote_read', arguments: { _sessionId: 'session-a', path: 'README.md' }
+      name: 'remote_read', arguments: { path: 'README.md' }
     });
     assert.equal(disconnected.result.isError, true);
-    assert.equal(JSON.parse(disconnected.result.content[0].text).code, 'REMOTE_DISCONNECTED');
+    assert.equal(JSON.parse(disconnected.result.content[0].text).code, 'NO_ACTIVE_REMOTE');
 
     await second.start();
     await writeRecord('new-a', second.url);
     const reconnected = await request('tools/call', {
-      name: 'remote_read', arguments: { _sessionId: 'session-a', path: 'README.md' }
+      name: 'remote_read', arguments: { path: 'README.md' }
     });
     assert.equal(JSON.parse(reconnected.result.content[0].text).label, 'second');
   } finally {
