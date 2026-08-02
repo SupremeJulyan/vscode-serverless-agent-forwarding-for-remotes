@@ -24,7 +24,7 @@
     "serverless"
   ],
   "extensionKind": [
-    "ui"
+    "workspace"
   ],
   "capabilities": {
     "virtualWorkspaces": true,
@@ -246,8 +246,7 @@
             }
           },
           "required": [
-            "command",
-            "mountName"
+            "command"
           ]
         }
       },
@@ -263,7 +262,7 @@
             "mountName": { "type": "string" },
             "path": { "type": "string" }
           },
-          "required": ["mountName"]
+          "required": []
         }
       },
       {
@@ -280,7 +279,7 @@
             "offset": { "type": "number" },
             "length": { "type": "number" }
           },
-          "required": ["mountName", "path"]
+          "required": ["path"]
         }
       },
       {
@@ -296,7 +295,7 @@
             "path": { "type": "string" },
             "content": { "type": "string" }
           },
-          "required": ["mountName", "path", "content"]
+          "required": ["path", "content"]
         }
       },
       {
@@ -312,7 +311,7 @@
             "query": { "type": "string" },
             "path": { "type": "string" }
           },
-          "required": ["mountName", "query"]
+          "required": ["query"]
         }
       }
     ],

@@ -9,16 +9,17 @@ export interface RemoteFolderInfo {
   workspaceUri: string;
   remoteRoot: string;
   host: string;
+  remoteInstructions?: string;
 }
 
 export interface AgentMcpCallbacks {
   listFolders(): Promise<RemoteFolderInfo[]>;
   currentWorkspace(): Promise<RemoteFolderInfo | null>;
-  list(input: { mountName: string; path?: string }): Promise<unknown>;
-  read(input: { mountName: string; path: string; offset?: number; length?: number }): Promise<unknown>;
-  write(input: { mountName: string; path: string; content: string }): Promise<unknown>;
-  search(input: { mountName: string; query: string; path?: string }): Promise<unknown>;
-  run(input: { command: string; mountName: string; remoteCwd?: string }): Promise<unknown>;
+  list(input: { mountName?: string; path?: string }): Promise<unknown>;
+  read(input: { mountName?: string; path: string; offset?: number; length?: number }): Promise<unknown>;
+  write(input: { mountName?: string; path: string; content: string }): Promise<unknown>;
+  search(input: { mountName?: string; query: string; path?: string }): Promise<unknown>;
+  run(input: { command: string; mountName?: string; remoteCwd?: string }): Promise<unknown>;
   log?(message: string): void;
 }
 
@@ -49,19 +50,47 @@ export class AgentMcpServer {
       { name: 'serverless-remote-ssh', version: '2.0.0' },
       {
         instructions:
-          'Remote files are not local files. The remote workspace URI tells you which folder is currently open.\n\n'
-          + 'ALL commands that inspect the remote machine (OS, environment, builds, tests, Git, package managers, processes) MUST use run_remote_command — never the local shell.\n\n'
-          + 'Before any file or command operation: first call current_remote_workspace to discover the active mount and its remote root, then use the mount name in every subsequent call. The remote_list / remote_read / remote_write / remote_search tools work with paths relative to the remote root.'
+          'This VS Code workspace may use the serverless-sftp virtual filesystem. Virtual remote files are NOT present in the agent host filesystem. '
+          + 'At the start of every conversation, call resolve_workspace_execution before reading files, running shell commands, inferring the OS, or using Git/build/test/package tools. '
+          + 'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, and run_remote_command for workspace operations. Never substitute the local filesystem or local shell. '
+          + 'mountName may be omitted to target the active forwarded remote workspace. Project instructions returned as remoteInstructions apply to the remote workspace.'
       }
     );
     const result = (value: unknown) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }]
     });
     server.registerTool(
+      'resolve_workspace_execution',
+      {
+        title: 'Resolve workspace execution route',
+        description:
+          'MANDATORY first step in every conversation. Detects whether the active VS Code workspace is a forwarded SFTP workspace and returns its remote root, tool routing, and remote project instructions.',
+        _meta: { 'anthropic/alwaysLoad': true },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        inputSchema: {}
+      },
+      async () => {
+        const workspace = await this.callbacks.currentWorkspace();
+        return result(workspace ? {
+          execution: 'remote',
+          workspace,
+          fileTools: ['remote_list', 'remote_read', 'remote_write', 'remote_search'],
+          commandTool: 'run_remote_command',
+          localFilesystemAllowed: false,
+          localShellAllowed: false
+        } : {
+          execution: 'local',
+          workspace: null
+        });
+      }
+    );
+    server.registerTool(
       'list_remote_folders',
       {
         title: 'List SFTP remote folders',
         description: 'Lists configured SFTP workspaces and their remote roots.',
+        _meta: { 'anthropic/alwaysLoad': true },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },
       async () => result(await this.callbacks.listFolders())
@@ -82,7 +111,7 @@ export class AgentMcpServer {
         title: 'List a remote directory',
         description: 'Lists files directly over SFTP. Paths are relative to the remote root.',
         inputSchema: {
-          mountName: z.string().min(1),
+          mountName: z.string().min(1).optional(),
           path: z.string().optional()
         }
       },
@@ -94,7 +123,7 @@ export class AgentMcpServer {
         title: 'Read a remote file',
         description: 'Reads a UTF-8 file directly over SFTP, optionally by byte range.',
         inputSchema: {
-          mountName: z.string().min(1),
+          mountName: z.string().min(1).optional(),
           path: z.string(),
           offset: z.number().int().min(0).optional(),
           length: z.number().int().min(1).max(1_048_576).optional()
@@ -109,7 +138,7 @@ export class AgentMcpServer {
         description: 'Creates or replaces a UTF-8 file directly over SFTP.',
         annotations: { destructiveHint: true },
         inputSchema: {
-          mountName: z.string().min(1),
+          mountName: z.string().min(1).optional(),
           path: z.string(),
           content: z.string()
         }
@@ -122,7 +151,7 @@ export class AgentMcpServer {
         title: 'Search remote files',
         description: 'Searches file contents on the remote SSH host.',
         inputSchema: {
-          mountName: z.string().min(1),
+          mountName: z.string().min(1).optional(),
           query: z.string().min(1),
           path: z.string().optional()
         }
@@ -136,7 +165,7 @@ export class AgentMcpServer {
         description: 'Runs a shell command on the selected SSH host.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
-          mountName: z.string().min(1),
+          mountName: z.string().min(1).optional(),
           command: z.string().min(1),
           remoteCwd: z.string().optional()
         }

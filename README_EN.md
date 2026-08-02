@@ -63,12 +63,16 @@ VS Code tools: `#serverlessRemoteList`, `#serverlessRemoteRead`,
 `#serverlessRemoteRun`.
 
 The loopback-only, token-protected MCP service exposes
-`list_remote_folders`, `remote_list`, `remote_read`, `remote_write`,
+`resolve_workspace_execution`, `list_remote_folders`, `remote_list`, `remote_read`, `remote_write`,
 `remote_search`, and `run_remote_command`.
 
-Remote URIs are not local paths. Agents must use the SFTP tools for files and
-SSH remote execution for builds, tests, Git, and operating-system inspection.
-File operations are constrained to the configured remote root.
+Agents call `resolve_workspace_execution` at conversation start to recognize the
+active SFTP virtual workspace. Once forwarding is enabled, tools may omit
+`mountName` and bind to the active workspace automatically. Remote URIs are not
+local paths: agents use SFTP tools for files and SSH execution for builds, tests,
+Git, and operating-system inspection. Tools are restricted to forwarding-enabled
+remote roots. A root `AGENTS.override.md` or `AGENTS.md` is returned as workspace
+guidance without writing instructions into the local home directory.
 
 ## Limitations
 

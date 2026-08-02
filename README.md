@@ -73,12 +73,14 @@ VS Code Agent 可使用：
 - `#serverlessRemoteRun`
 
 扩展还在 `127.0.0.1` 上提供令牌保护的 Streamable HTTP MCP 服务，工具包括
-`list_remote_folders`、`remote_list`、`remote_read`、`remote_write`、
+`resolve_workspace_execution`、`list_remote_folders`、`remote_list`、`remote_read`、`remote_write`、
 `remote_search` 和 `run_remote_command`。
 
-Agent 不应把远程 URI 当作本地路径。所有远程文件访问都通过 SFTP 工具完成，
-构建、测试、Git 和系统检查通过 SSH 远程命令完成。文件工具被限制在配置的
-`remote_path` 内。
+Agent 会在会话开始时通过 `resolve_workspace_execution` 识别当前 SFTP 虚拟工作区。
+开启转发后，文件工具可省略 `mountName` 并自动绑定当前工作区。所有远程文件访问
+都通过 SFTP 工具完成，构建、测试、Git 和系统检查通过 SSH 远程命令完成；工具被
+限制在已开启转发的 `remote_path` 内。远端根目录的 `AGENTS.override.md` 或
+`AGENTS.md` 会作为工作区指引随路由结果提供给 Agent，不会写入本机用户目录。
 
 ## 限制
 

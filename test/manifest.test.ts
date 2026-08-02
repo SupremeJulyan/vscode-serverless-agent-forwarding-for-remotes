@@ -5,6 +5,7 @@ import test from 'node:test';
 interface ExtensionManifest {
   version: string;
   activationEvents?: string[];
+  extensionKind?: string[];
 }
 
 test('extension declares the SFTP filesystem activation event', async () => {
@@ -15,4 +16,5 @@ test('extension declares the SFTP filesystem activation event', async () => {
   assert.equal(manifest.version, '2.0.0');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:serverless-sftp'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
+  assert.deepEqual(manifest.extensionKind, ['workspace']);
 });

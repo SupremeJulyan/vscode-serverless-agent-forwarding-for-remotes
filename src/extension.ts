@@ -24,7 +24,6 @@ import {
   passwordValueOffset
 } from './authentication';
 import { AgentMcpServer } from './agent-mcp';
-import { maintainAgentGuidance } from './agent-guidance';
 import { connectSftp } from './sftp/client';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import {
@@ -588,6 +587,36 @@ async function mountAndFolder(mountName: string): Promise<{
   return { mount, folder: await ensureFolder(mount) };
 }
 
+async function forwardedMountName(requested?: string): Promise<string> {
+  const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
+  if (requested) {
+    if (!enabled.has(requested)) throw new Error(`AI 转发未开启：${requested}`);
+    return requested;
+  }
+  const current = currentRemoteLocation()?.mountName;
+  if (current && enabled.has(current)) return current;
+  if (enabled.size === 1) return [...enabled][0];
+  if (enabled.size === 0) throw new Error('AI 转发未开启');
+  throw new Error('有多个 AI 转发目标，请提供 mountName');
+}
+
+async function readRemoteAgentInstructions(mountName: string): Promise<string | undefined> {
+  for (const name of ['AGENTS.override.md', 'AGENTS.md']) {
+    try {
+      const value = await remoteRead({ mountName, path: name, length: 64 * 1024 }) as {
+        content: string;
+      };
+      if (value.content.trim()) return value.content;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== 'FileNotFound' && !/not found/i.test(String(error))) {
+        bridgeOutput?.appendLine(`[Agent MCP] 读取远端 ${name} 失败：${String(error)}`);
+      }
+    }
+  }
+  return undefined;
+}
+
 function toolPath(folder: RemoteFolder, value = '.'): string {
   const resolved = value.startsWith('/')
     ? path.posix.normalize(value)
@@ -896,22 +925,27 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
         currentWorkspace: async () => {
           const location = currentRemoteLocation();
           if (!location) return null;
+          const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+          if (!enabled.has(location.mountName)) return null;
           const config = await readConfig();
           const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
           if (!mount) return null;
           const folder = await ensureFolder(mount);
           return {
             name: mount.name,
-            workspaceUri: remoteUri(folder.mountName, location.remotePath),
+            workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
             remoteRoot: folder.remoteRoot,
-            host: mount.host
+            host: mount.host,
+            remoteInstructions: await readRemoteAgentInstructions(mount.name)
           };
         },
-        list: remoteList,
-        read: remoteRead,
-        write: remoteWrite,
-        search: remoteSearch,
-        run: (input) => executeRemoteCommand(context, input),
+        list: async (input) => remoteList({ ...input, mountName: await forwardedMountName(input.mountName) }),
+        read: async (input) => remoteRead({ ...input, mountName: await forwardedMountName(input.mountName) }),
+        write: async (input) => remoteWrite({ ...input, mountName: await forwardedMountName(input.mountName) }),
+        search: async (input) => remoteSearch({ ...input, mountName: await forwardedMountName(input.mountName) }),
+        run: async (input) => executeRemoteCommand(context, {
+          ...input, mountName: await forwardedMountName(input.mountName)
+        }),
         log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
       }
     );
@@ -987,8 +1021,12 @@ async function configureDetectedAgents(
       ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
       : Promise.resolve(undefined)
   ]);
-  const codexConfigured = codexStatus?.exitCode === 0;
-  const claudeConfigured = claudeStatus?.exitCode === 0;
+  const commandOutput = (result: Awaited<ReturnType<typeof executeAgentMcpCommand>> | undefined) =>
+    `${result?.stdout ?? ''}\n${result?.stderr ?? ''}`;
+  const codexExists = codexStatus?.exitCode === 0;
+  const claudeExists = claudeStatus?.exitCode === 0;
+  const codexConfigured = codexExists && commandOutput(codexStatus).includes(server.url);
+  const claudeConfigured = claudeExists && commandOutput(claudeStatus).includes(server.url);
   if (!codexConfigured) configured.delete('codex');
   if (!claudeConfigured) configured.delete('claude');
   bridgeOutput?.appendLine(
@@ -1016,6 +1054,11 @@ async function configureDetectedAgents(
   }
   const failures: string[] = [];
   if (codexCommand && !configured.has('codex')) {
+    if (codexExists) {
+      await executeAgentMcpCommand({
+        command: codexCommand, args: ['mcp', 'remove', 'serverless-remote']
+      });
+    }
     const result = await executeAgentMcpCommand({
       command: codexCommand,
       args: ['mcp', 'add', 'serverless-remote', '--url', server.url]
@@ -1028,6 +1071,11 @@ async function configureDetectedAgents(
     }
   }
   if (claudeCommand && !configured.has('claude')) {
+    if (claudeExists) {
+      await executeAgentMcpCommand({
+        command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
+      });
+    }
     const result = await executeAgentMcpCommand({
       command: claudeCommand,
       args: [
@@ -1065,33 +1113,6 @@ async function configureDetectedAgents(
   );
 }
 
-async function maintainAgentGuidanceForMount(): Promise<void> {
-  // For SFTP-backed workspaces, maintain guidance in the first remote workspace.
-  const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
-  if (enabled.size === 0) return;
-  const config = await readConfig();
-  for (const mount of config.mounts) {
-    if (!enabled.has(mount.name)) continue;
-    // Ensure the folder is reachable (side effect: initializes connection).
-    await ensureFolder(mount);
-    // Use the workspace URI from VS Code workspace state; if none open, skip.
-    const workspace = vscode.workspace.workspaceFolders?.find(
-      (f) => f.uri.scheme === remoteFileSystemScheme
-    );
-    if (!workspace) continue;
-    const location = parseRemoteUri(workspace.uri.toString());
-    if (location.mountName !== mount.name) continue;
-    // In the SFTP model, guidance is maintained at the workspace level via agent-guidance.ts.
-    // There is no local mount path for guidance injection. We use a home-directory
-    // placeholder to detect the presence of AGENTS.md.
-    const result = await maintainAgentGuidance(os.homedir());
-    bridgeOutput?.appendLine(
-      `[Agent MCP] ${result.changed ? '已更新' : '已确认'} Agent 指引：${result.filePath}`
-    );
-    return;
-  }
-}
-
 async function toggleAiForward(mount: MountConfig): Promise<void> {
   const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
   const turningOn = !enabled.has(mount.name);
@@ -1107,7 +1128,6 @@ async function toggleAiForward(mount: MountConfig): Promise<void> {
       const server = await ensureAgentMcpServer(vscodeContext);
       await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
       await configureDetectedAgents(vscodeContext, server);
-      await maintainAgentGuidanceForMount();
     } catch (error) {
       enabled.delete(mount.name);
       await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
@@ -1246,11 +1266,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       new vscode.LanguageModelTextPart(JSON.stringify(await callback(options.input), null, 2))
     ])
   }));
-  tool('serverlessRemote_listRemoteFiles', remoteList);
-  tool('serverlessRemote_readRemoteFile', remoteRead);
-  tool('serverlessRemote_writeRemoteFile', remoteWrite, true);
-  tool('serverlessRemote_searchRemoteFiles', remoteSearch);
-  tool('serverlessRemote_runRemoteCommand', runRemote, true);
+  tool<{ mountName?: string; path?: string }>('serverlessRemote_listRemoteFiles', async (input) =>
+    remoteList({ ...input, mountName: await forwardedMountName(input.mountName) }));
+  tool<{ mountName?: string; path: string; offset?: number; length?: number }>(
+    'serverlessRemote_readRemoteFile', async (input) =>
+      remoteRead({ ...input, mountName: await forwardedMountName(input.mountName) })
+  );
+  tool<{ mountName?: string; path: string; content: string }>(
+    'serverlessRemote_writeRemoteFile', async (input) =>
+      remoteWrite({ ...input, mountName: await forwardedMountName(input.mountName) }), true
+  );
+  tool<{ mountName?: string; query: string; path?: string }>(
+    'serverlessRemote_searchRemoteFiles', async (input) =>
+      remoteSearch({ ...input, mountName: await forwardedMountName(input.mountName) })
+  );
+  tool<{ mountName?: string; command: string; remoteCwd?: string }>(
+    'serverlessRemote_runRemoteCommand', async (input) =>
+      runRemote({ ...input, mountName: await forwardedMountName(input.mountName) }), true
+  );
 
   // Terminal lifecycle
   context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
@@ -1268,7 +1301,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!server.portUnavailable) {
         await configureDetectedAgents(context, server);
       }
-      await maintainAgentGuidanceForMount();
     }
   });
 

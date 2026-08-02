@@ -13,6 +13,13 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       remoteRoot: '/srv/project',
       host: 'dev'
     }],
+    currentWorkspace: async () => ({
+      name: 'project',
+      workspaceUri: 'serverless-sftp://project/srv/project',
+      remoteRoot: '/srv/project',
+      host: 'dev',
+      remoteInstructions: 'Use npm test.'
+    }),
     list: async (input) => ({ ...input, entries: [] }),
     read: async (input) => ({ ...input, content: 'hello' }),
     write: async (input) => ({ ...input, bytes: input.content.length }),
@@ -31,6 +38,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       'remote_read',
       'remote_search',
       'remote_write',
+      'resolve_workspace_execution',
       'run_remote_command'
     ]);
     const result = await client.callTool({
@@ -39,6 +47,24 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     });
     const text = (result.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
     assert.equal(JSON.parse(text).content, 'hello');
+    const route = await client.callTool({
+      name: 'resolve_workspace_execution', arguments: {}
+    });
+    const routeText = (route.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+    assert.deepEqual(JSON.parse(routeText), {
+      execution: 'remote',
+      workspace: {
+        name: 'project',
+        workspaceUri: 'serverless-sftp://project/srv/project',
+        remoteRoot: '/srv/project',
+        host: 'dev',
+        remoteInstructions: 'Use npm test.'
+      },
+      fileTools: ['remote_list', 'remote_read', 'remote_write', 'remote_search'],
+      commandTool: 'run_remote_command',
+      localFilesystemAllowed: false,
+      localShellAllowed: false
+    });
   } finally {
     await client.close();
     await server.stop();
