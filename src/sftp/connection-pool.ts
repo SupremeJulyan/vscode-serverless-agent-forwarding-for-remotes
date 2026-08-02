@@ -13,10 +13,15 @@ export type SftpConnector = (hostName: string, signal?: AbortSignal) => Promise<
 export class SftpConnectionPool {
   private readonly entries = new Map<string, PoolEntry>();
 
-  constructor(private readonly connector: SftpConnector) {}
+  constructor(
+    private readonly connector: SftpConnector,
+    private readonly stateChanged: (hostName: string) => void = () => undefined
+  ) {}
 
   state(hostName: string): SftpConnectionState {
-    return this.entries.get(hostName)?.state ?? 'disconnected';
+    const entry = this.entries.get(hostName);
+    if (entry?.state === 'connected' && !entry.session?.isAlive()) return 'disconnected';
+    return entry?.state ?? 'disconnected';
   }
 
   error(hostName: string): Error | undefined {
@@ -36,6 +41,7 @@ export class SftpConnectionPool {
     if (entry?.connecting) return entry.connecting;
     entry = { state: entry ? 'reconnecting' : 'connecting', lastUsed: Date.now() };
     this.entries.set(hostName, entry);
+    this.stateChanged(hostName);
     entry.connecting = this.connector(hostName, signal).then(
       (session) => {
         entry!.session = session;
@@ -43,12 +49,14 @@ export class SftpConnectionPool {
         entry!.state = 'connected';
         entry!.error = undefined;
         entry!.lastUsed = Date.now();
+        this.stateChanged(hostName);
         return session;
       },
       (error: unknown) => {
         entry!.connecting = undefined;
         entry!.state = 'error';
         entry!.error = error instanceof Error ? error : new Error(String(error));
+        this.stateChanged(hostName);
         throw error;
       }
     );
@@ -58,6 +66,7 @@ export class SftpConnectionPool {
   async disconnect(hostName: string): Promise<void> {
     const entry = this.entries.get(hostName);
     this.entries.delete(hostName);
+    this.stateChanged(hostName);
     const session = entry?.session ?? await entry?.connecting?.catch(() => undefined);
     await session?.close();
   }

@@ -96,7 +96,7 @@
       },
       {
         "command": "serverlessRemote.toggleAiForwardItem",
-        "title": "打开/关闭 AI 转发",
+        "title": "打开/关闭 Agent 转发",
         "icon": "$(sparkle)"
       },
       {
@@ -190,7 +190,7 @@
         },
         {
           "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection\\.connected/",
           "group": "inline@4"
         },
         {
@@ -210,7 +210,7 @@
         },
         {
           "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem == serverlessRemote.connection.connected",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection\\.connected/",
           "group": "serverlessRemote@4"
         },
         {
@@ -318,6 +318,7 @@
     "jsonValidation": [
       {
         "fileMatch": [
+          "**/.serverless-remote-ssh/config.json",
           "**/serverless-remote-ssh/config.json",
           "**/.wsl-vpn-ssh/config.json"
         ],
@@ -329,8 +330,8 @@
       "properties": {
         "serverlessRemote.configPath": {
           "type": "string",
-          "default": "~/serverless-remote-ssh/config.json",
-          "description": "Native default: ~/serverless-remote-ssh/config.json. WSL default: ~/.wsl-vpn-ssh/config.json. An explicit value overrides the platform default."
+          "default": "~/.serverless-remote-ssh/config.json",
+          "description": "Default on all platforms: ~/.serverless-remote-ssh/config.json. Legacy paths remain supported. An explicit value overrides automatic path selection."
         },
         "serverlessRemote.reuseSshConnection": {
           "type": "boolean",

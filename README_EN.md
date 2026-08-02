@@ -30,8 +30,9 @@ code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
 
 ## Configuration
 
-The native default is `~/serverless-remote-ssh/config.json`; WSL keeps
-`~/.wsl-vpn-ssh/config.json` for configuration compatibility.
+The new default on every platform is `~/.serverless-remote-ssh/config.json`. The legacy
+`~/serverless-remote-ssh/config.json` path and WSL's `~/.wsl-vpn-ssh/config.json` remain supported,
+so existing configurations do not need to be migrated.
 
 ```json
 {
@@ -88,7 +89,12 @@ that window's exact MCP server first.
 Its `PreToolUse` hook prevents that bound session from accidentally using local
 shell or local file-editing tools for the virtual workspace.
 
-For local development, install it with:
+After you enable AI forwarding and confirm one-click setup, the extension automatically registers
+the MCP server and installs the `serverless-remote` Codex plugin from the extension directory.
+Codex will ask you to review and trust the plugin hooks; restart Codex and start a new conversation
+after installation.
+
+For local development, you can also install it manually with:
 
 ```sh
 codex plugin marketplace add /path/to/vscode-serverless-remote-ssh

@@ -69,8 +69,17 @@ source "$bundle_root/vpn-relay-pool.sh"
 bridge_performance_now bridge_started_at
 
 # ── Config resolution ───────────────────────────────────────────────────────
-config_dir="${HOME:?}/.wsl-vpn-ssh"
-config_file="$config_dir/config.json"
+config_file="${WSL_VPN_SSH_CONFIG:-${HOME:?}/.serverless-remote-ssh/config.json}"
+if [[ ! -r "$config_file" ]]; then
+  for legacy_config_file in \
+    "${HOME:?}/.wsl-vpn-ssh/config.json" \
+    "${HOME:?}/serverless-remote-ssh/config.json"; do
+    if [[ -r "$legacy_config_file" ]]; then
+      config_file="$legacy_config_file"
+      break
+    fi
+  done
+fi
 
 for command in ssh python3 flock; do
   command -v "$command" >/dev/null 2>&1 || die "缺少命令 '$command'"

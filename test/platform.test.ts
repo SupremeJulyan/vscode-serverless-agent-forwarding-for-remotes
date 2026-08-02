@@ -65,6 +65,19 @@ test('WSL enables connection reuse only for background commands', () => {
   assert.equal(execution.env?.WSL_VPN_SSH_CONNECTION_REUSE, '1');
 });
 
+test('WSL passes the selected config path to terminal and command bridges', () => {
+  const adapter = createPlatformAdapter('wsl');
+  const options = { bridgeConfigPath: '/home/alice/.serverless-remote-ssh/config.json' };
+  assert.equal(
+    adapter.terminal(host, '/srv/project', options).env?.WSL_VPN_SSH_CONFIG,
+    options.bridgeConfigPath
+  );
+  assert.equal(
+    adapter.exec(host, '/srv/project', 'pwd', options).env?.WSL_VPN_SSH_CONFIG,
+    options.bridgeConfigPath
+  );
+});
+
 test('WSL resolves the VPN relay pool helper from the extension bundle', async () => {
   const { vpnRelayPoolPath } = await import('../src/wsl-bridge');
   assert.equal(

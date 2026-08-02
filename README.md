@@ -31,10 +31,9 @@ code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
 
 ## 配置
 
-默认配置文件：
-
-- Windows、macOS、Linux：`~/serverless-remote-ssh/config.json`
-- WSL：`~/.wsl-vpn-ssh/config.json`
+所有平台的新默认配置文件均为 `~/.serverless-remote-ssh/config.json`。
+旧路径 `~/serverless-remote-ssh/config.json` 和 WSL 的 `~/.wsl-vpn-ssh/config.json`
+仍会自动识别；已有配置无需迁移。
 
 ```json
 {
@@ -84,7 +83,7 @@ Agent 会在会话开始时通过 `resolve_workspace_execution` 识别当前 SFT
 
 ### Codex 插件（Windows App / CLI / VS Code）
 
-每个开启 AI 转发的远程 VS Code 窗口会启动独立的动态端口 MCP，并按挂载注册为
+每个开启 Agent 转发的远程 VS Code 窗口会启动独立的动态端口 MCP，并按挂载注册为
 `serverless-remote-<mountName>`。例如 `dev1`、`dev2`、`dev3` 分别注册三个互不复用的
 服务，每个服务只能访问其绑定挂载，不能通过传入其他 `mountName` 跨窗口访问。
 
@@ -93,7 +92,11 @@ Serverless Remote VS Code 窗口。发现远程窗口后，`SessionStart` hook �
 Codex 会话，并要求调用该窗口精确 MCP 服务的 `resolve_workspace_execution`；`PreToolUse` hook 会阻止该会话
 使用本地 shell 或本地文件编辑工具误操作虚拟工作区。
 
-本地开发安装：
+启用“Agent 转发”并确认“一键配置”后，扩展会自动注册 MCP，并从扩展安装目录安装
+`serverless-remote` Codex 插件。Codex 会要求审核并信任插件 hooks；安装后请重启 Codex
+并新建对话。
+
+本地开发也可手动安装：
 
 ```sh
 codex plugin marketplace add /path/to/vscode-serverless-remote-ssh
@@ -102,7 +105,7 @@ codex plugin add serverless-remote@personal
 
 安装后在 Codex 中审核并信任插件 hooks，然后重启 Codex 并新建对话。Windows Codex
 原生模式使用 `%USERPROFILE%` 中的窗口发现记录；WSL 模式会同时尝试 WSL home 和
-Windows 用户目录。VS Code 扩展必须保持运行，并为相应挂载开启“AI 转发”。如果同时
+Windows 用户目录。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。如果同时
 打开多个远程窗口，创建会话时优先绑定当前获得焦点且状态最新的窗口。设置
 `serverlessRemote.agentMcpPort` 应保持为默认值 `0`；配置固定端口会重新引入多窗口端口冲突。
 

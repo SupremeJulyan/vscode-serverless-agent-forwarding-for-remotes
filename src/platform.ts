@@ -28,6 +28,7 @@ export interface CommandPlan {
 export interface ConnectionOptions {
   reuseSshConnection?: boolean;
   bridgeMasterPassword?: string;
+  bridgeConfigPath?: string;
 }
 
 export interface PlatformAdapter {
@@ -108,6 +109,9 @@ class WslAdapter implements PlatformAdapter {
         // "getsockname failed: Not a socket"). Keep reuse for background
         // commands, but never for an interactive remote terminal.
         WSL_VPN_SSH_CONNECTION_REUSE: '0',
+        ...(options?.bridgeConfigPath
+          ? { WSL_VPN_SSH_CONFIG: options.bridgeConfigPath }
+          : {}),
         ...(options?.bridgeMasterPassword
           ? { WSL_VPN_MASTER_PASSWORD: options.bridgeMasterPassword }
           : {}),
@@ -121,6 +125,9 @@ class WslAdapter implements PlatformAdapter {
       args: [host.name, remoteExecCommand(remoteCwd, command)],
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
+        ...(options?.bridgeConfigPath
+          ? { WSL_VPN_SSH_CONFIG: options.bridgeConfigPath }
+          : {}),
       }
     };
   }

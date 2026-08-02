@@ -71,6 +71,29 @@ test('records connection errors and permits a retry', async () => {
   assert.equal(pool.state('dev'), 'connected');
 });
 
+test('reports a dead connected session as disconnected', async () => {
+  let alive = true;
+  const pool = new SftpConnectionPool(async (hostName) =>
+    fakeSession(hostName, () => undefined, () => alive)
+  );
+  await pool.get('dev');
+  assert.equal(pool.state('dev'), 'connected');
+  alive = false;
+  assert.equal(pool.state('dev'), 'disconnected');
+});
+
+test('notifies when connection state changes', async () => {
+  const states: string[] = [];
+  let pool!: SftpConnectionPool;
+  pool = new SftpConnectionPool(
+    async (hostName) => fakeSession(hostName, () => undefined),
+    (hostName) => states.push(`${hostName}:${pool.state(hostName)}`)
+  );
+  await pool.get('dev');
+  await pool.disconnect('dev');
+  assert.deepEqual(states, ['dev:connecting', 'dev:connected', 'dev:disconnected']);
+});
+
 test('reconnects after an established session becomes disconnected', async () => {
   let alive = true;
   let attempts = 0;
