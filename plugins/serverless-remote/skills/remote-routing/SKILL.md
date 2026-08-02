@@ -6,7 +6,7 @@ description: Route code reading, editing, Git, build, test, package, process, an
 # Serverless Remote routing
 
 1. Call the `serverless-remote` MCP tool `resolve_workspace_execution` before inspecting or changing the workspace.
-2. When it returns `execution: "remote"`, treat its `workspace.remoteRoot` as the project root and follow any returned `remoteInstructions`.
+2. When it returns `execution: "remote"`, treat its `workspace.remoteRoot` as the project root.
 3. Use only `remote_list`, `remote_read`, `remote_search`, and `remote_write` for workspace files.
 4. Use only `run_remote_command` for Git, builds, tests, package managers, processes, services, and shell commands.
 5. Never substitute local shell commands, `apply_patch`, Edit, Write, or local filesystem tools for a remote workspace.

@@ -78,8 +78,8 @@ VS Code Agent 可使用：
 Agent 会在会话开始时通过 `resolve_workspace_execution` 识别当前 SFTP 虚拟工作区。
 开启转发后，文件工具可省略 `mountName` 并自动绑定当前工作区。所有远程文件访问
 都通过 SFTP 工具完成，构建、测试、Git 和系统检查通过 SSH 远程命令完成；工具被
-限制在已开启转发的 `remote_path` 内。远端根目录的 `AGENTS.override.md` 或
-`AGENTS.md` 会作为工作区指引随路由结果提供给 Agent，不会写入本机用户目录。
+限制在已开启转发的 `remote_path` 内。Agent 路由由 Codex 插件及其 hooks 管理，扩展
+不会在远端创建或读取 Agent 指引文件。
 
 ### Codex 插件（Windows App / CLI / VS Code）
 
@@ -93,9 +93,11 @@ Codex 会话；`PreToolUse` hook 会为固定 MCP 路由注入会话 ID，并阻
 或本地文件编辑工具误操作虚拟工作区。远程窗口断开时工具返回 `REMOTE_DISCONNECTED`；
 相同挂载重连后，原 Codex 对话会自动路由到新端口。
 
-启用“Agent 转发”并确认“一键配置”后，扩展会从扩展安装目录安装包含固定 MCP 路由的
-`serverless-remote` Codex 插件。Codex 会要求审核并信任插件 hooks；安装后请重启 Codex
-并新建对话。
+“启用 Agent 转发”按钮只保存该挂载的启用标记，不会立即连接或启动 MCP。之后打开该
+远程目录时，新窗口会自动启动 MCP 并从扩展安装目录安装或更新包含固定 MCP 路由的
+`serverless-remote` Codex 插件，不再弹出 Agent 转发或一键配置确认框。关闭 Agent 转发后，
+该挂载只使用普通 SFTP/SSH 功能，MCP 工具会拒绝继续访问。Codex 首次安装或更新插件后
+仍需审核并信任插件 hooks，然后重启 Codex 并新建对话。
 
 本地开发也可手动安装：
 

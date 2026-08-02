@@ -48,7 +48,6 @@ const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const agentMcpTokenSecret = platformStateKey('agentMcpToken');
 const agentSetupCompletedKey = platformStateKey('agentSetupCompleted');
 const aiForwardMountsKey = platformStateKey('aiForwardMounts');
-const aiForwardPromptDismissedKey = platformStateKey('aiForwardPromptDismissed');
 const codexPluginSelector = 'serverless-remote@personal';
 const defaultConfigPath = '~/.serverless-remote-ssh/config.json';
 const legacyNativeConfigPath = '~/serverless-remote-ssh/config.json';
@@ -288,41 +287,6 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   return folder;
 }
 
-async function offerAgentForwardBeforeOpen(
-  context: vscode.ExtensionContext, mount: MountConfig
-): Promise<void> {
-  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
-  if (enabled.has(mount.name)) {
-    // The target folder opens in a new VS Code window.  Starting MCP here
-    // would bind its workspace callbacks to the source window instead.
-    if (!currentRemoteLocation()) await mcp?.stop();
-    return;
-  }
-  const dismissed = new Set(
-    context.globalState.get<string[]>(aiForwardPromptDismissedKey, [])
-  );
-  if (dismissed.has(mount.name)) return;
-  const enableAction = '打开 Agent 转发';
-  const choice = await vscode.window.showInformationMessage(
-    `是否为“${mount.name}”打开 Agent 转发？`,
-    {
-      modal: true,
-      detail: '新的远程工作区窗口将启动 MCP，使 Agent 可以加载远程工具。'
-    },
-    enableAction
-  );
-  if (choice !== enableAction) {
-    dismissed.add(mount.name);
-    await context.globalState.update(aiForwardPromptDismissedKey, [...dismissed]);
-    return;
-  }
-  enabled.add(mount.name);
-  await context.globalState.update(aiForwardMountsKey, [...enabled]);
-  // A local source window may still own the fixed MCP port from an earlier
-  // session.  Release it so the new remote workspace window can own MCP.
-  if (!currentRemoteLocation()) await mcp?.stop();
-}
-
 async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   const mount = requested ?? await selectMount('选择要打开的 SFTP 远程文件夹');
   if (!mount) return;
@@ -333,8 +297,6 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   }, async (progress) => {
     progress.report({ message: '正在验证远程目录…' });
     const folder = await ensureFolder(mount);
-    progress.report({ message: '正在配置 Agent 转发…' });
-    await offerAgentForwardBeforeOpen(vscodeContext, mount);
     progress.report({ message: '正在打开工作区…' });
     await vscode.commands.executeCommand(
       'vscode.openFolder',
@@ -667,21 +629,12 @@ function windowBoundMountName(boundMountName: string, requested?: string): strin
   return boundMountName;
 }
 
-async function readRemoteAgentInstructions(mountName: string): Promise<string | undefined> {
-  for (const name of ['AGENTS.override.md', 'AGENTS.md']) {
-    try {
-      const value = await remoteRead({ mountName, path: name, length: 64 * 1024 }) as {
-        content: string;
-      };
-      if (value.content.trim()) return value.content;
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      if (code !== 'FileNotFound' && !/not found/i.test(String(error))) {
-        bridgeOutput?.appendLine(`[Agent MCP] 读取远端 ${name} 失败：${String(error)}`);
-      }
-    }
-  }
-  return undefined;
+function forwardedWindowMountName(
+  context: vscode.ExtensionContext, boundMountName: string, requested?: string
+): string {
+  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  if (!enabled.has(boundMountName)) throw new Error(`Agent 转发未开启：${boundMountName}`);
+  return windowBoundMountName(boundMountName, requested);
 }
 
 function toolPath(folder: RemoteFolder, value = '.'): string {
@@ -961,11 +914,11 @@ async function deleteConfig(mount: MountConfig): Promise<void> {
   const config = await readConfig();
   removeMountConfig(config, mount.name);
   await saveConfig(configPath(), config);
-  const dismissed = new Set(
-    vscodeContext.globalState.get<string[]>(aiForwardPromptDismissedKey, [])
+  const enabled = new Set(
+    vscodeContext.globalState.get<string[]>(aiForwardMountsKey, [])
   );
-  if (dismissed.delete(mount.name)) {
-    await vscodeContext.globalState.update(aiForwardPromptDismissedKey, [...dismissed]);
+  if (enabled.delete(mount.name)) {
+    await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
   }
 }
 
@@ -1018,24 +971,23 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
             name: mount.name,
             workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
             remoteRoot: folder.remoteRoot,
-            host: mount.host,
-            remoteInstructions: await readRemoteAgentInstructions(mount.name)
+            host: mount.host
           };
         },
         list: async (input) => remoteList({
-          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         read: async (input) => remoteRead({
-          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         write: async (input) => remoteWrite({
-          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         search: async (input) => remoteSearch({
-          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         run: async (input) => executeRemoteCommand(context, {
-          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
       }
@@ -1050,6 +1002,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
   const location = currentRemoteLocation();
   const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
   if (!location || !enabled.has(location.mountName) || !mcp?.running || mcp.portUnavailable) {
+    if (location && !enabled.has(location.mountName)) await mcp?.stop();
     await agentWorkspacePublisher.remove();
     return;
   }
@@ -1211,26 +1164,12 @@ async function configureDetectedAgents(
     await context.globalState.update(agentSetupCompletedKey, [...configured]);
     return;
   }
-  const configureAction = '一键配置';
-  const selected = await vscode.window.showInformationMessage(
-    `是否一键配置 Serverless Remote SSH 的 Agent 集成？`,
-    {
-      modal: true,
-      detail: [
-        agents.length > 0 ? `注册 ${agents.join(' 和 ')} MCP。` : '',
-        needsCodexPlugin
-          ? '安装 Codex 插件；插件提供固定 MCP 路由、会话发现和本地工具防误操作 hooks，Codex 会要求审核并信任。'
-          : '',
-        needsCodexMcpCleanup ? `移除旧的 Codex 动态 MCP 配置 ${serverName}。` : '',
-        `MCP 服务仅监听本机：${server.url.replace(/token=.*/, 'token=<hidden>')}`
-      ].filter(Boolean).join('\n')
-    },
-    configureAction
-  );
-  if (selected !== configureAction) {
-    bridgeOutput?.appendLine('[Agent MCP] 用户取消了 Agent 自动配置');
-    return;
-  }
+  bridgeOutput?.appendLine([
+    '[Agent MCP] Agent 转发已启用，开始自动配置集成。',
+    agents.length > 0 ? `注册 ${agents.join(' 和 ')} MCP。` : '',
+    needsCodexPlugin ? '安装或更新 Codex 插件。' : '',
+    needsCodexMcpCleanup ? `移除旧的 Codex 动态 MCP 配置 ${serverName}。` : ''
+  ].filter(Boolean).join(' '));
   const failures: string[] = [];
   if (codexCommand && needsCodexPlugin) {
     const marketplace = await executeAgentMcpCommand({
@@ -1303,45 +1242,25 @@ async function configureDetectedAgents(
     }
     return;
   }
-  void vscode.window.showInformationMessage(
-    `Agent 集成已配置。Codex 使用插件内置的固定 MCP 路由；首次安装或更新插件后，请重启 Codex 并新建一次对话。`
+  bridgeOutput?.appendLine(
+    '[Agent MCP] Agent 集成已自动配置；Codex 使用插件内置的固定 MCP 路由。'
   );
 }
 
-async function toggleAiForward(mount: MountConfig): Promise<void> {
+async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): Promise<void> {
   const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
-  const turningOn = !enabled.has(mount.name);
-  if (turningOn) {
-    // Ensure the folder is connected before enabling forwarding
-    await ensureFolder(mount);
-    enabled.add(mount.name);
-    const dismissed = new Set(
-      vscodeContext.globalState.get<string[]>(aiForwardPromptDismissedKey, [])
-    );
-    if (dismissed.delete(mount.name)) {
-      await vscodeContext.globalState.update(aiForwardPromptDismissedKey, [...dismissed]);
-    }
-  } else {
-    enabled.delete(mount.name);
-  }
+  if (enabledValue) enabled.add(mount.name);
+  else enabled.delete(mount.name);
   await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
   const current = currentRemoteLocation();
-  if (turningOn && current?.mountName === mount.name) {
-    try {
-      const server = await ensureAgentMcpServer(vscodeContext);
-      await configureDetectedAgents(vscodeContext, server, agentMcpServerName(mount.name));
-    } catch (error) {
-      enabled.delete(mount.name);
-      await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
-      throw error;
-    }
-  } else if (!turningOn && current?.mountName === mount.name) {
+  if (!enabledValue && current?.mountName === mount.name) {
     await mcp?.stop();
+    await agentWorkspacePublisher.remove();
   }
   void vscode.window.showInformationMessage(
-    `"${mount.name}" Agent 转发已${turningOn ? '打开' : '关闭'}。${
-      turningOn ? 'Agent 的远程命令会自动映射到相同的远程工作目录。' : ''
-    }`
+    `"${mount.name}" Agent 转发已${enabledValue ? '启用' : '关闭'}。${enabledValue
+      ? '下次打开该远程目录时将自动启动并配置 Agent 集成。'
+      : '之后打开该远程目录时只启用普通 SFTP/SSH 功能。'}`
   );
 }
 
@@ -1492,8 +1411,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await deleteConfig(mount);
     tree.refresh();
   });
-  command('toggleAiForwardItem', async (mount) => {
-    await toggleAiForward(mount);
+  command('enableAiForwardItem', async (mount) => {
+    await setAiForwardEnabled(mount, true);
+    tree.refresh();
+  });
+  command('disableAiForwardItem', async (mount) => {
+    await setAiForwardEnabled(mount, false);
     tree.refresh();
   });
 

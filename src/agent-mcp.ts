@@ -9,7 +9,6 @@ export interface RemoteFolderInfo {
   workspaceUri: string;
   remoteRoot: string;
   host: string;
-  remoteInstructions?: string;
 }
 
 export interface AgentMcpCallbacks {
@@ -55,7 +54,7 @@ export class AgentMcpServer {
           'This VS Code workspace may use the serverless-sftp virtual filesystem. Virtual remote files are NOT present in the agent host filesystem. '
           + 'At the start of every conversation, call resolve_workspace_execution before reading files, running shell commands, inferring the OS, or using Git/build/test/package tools. '
           + 'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, and run_remote_command for workspace operations. Never substitute the local filesystem or local shell. '
-          + 'mountName may be omitted to target the active forwarded remote workspace. Project instructions returned as remoteInstructions apply to the remote workspace.'
+          + 'mountName may be omitted to target the active forwarded remote workspace.'
       }
     );
     const result = (value: unknown) => ({
@@ -66,7 +65,7 @@ export class AgentMcpServer {
       {
         title: 'Resolve workspace execution route',
         description:
-          'MANDATORY first step in every conversation. Detects whether the active VS Code workspace is a forwarded SFTP workspace and returns its remote root, tool routing, and remote project instructions.',
+          'MANDATORY first step in every conversation. Detects whether the active VS Code workspace is a forwarded SFTP workspace and returns its remote root and tool routing.',
         _meta: { 'anthropic/alwaysLoad': true },
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}

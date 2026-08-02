@@ -72,8 +72,8 @@ active SFTP virtual workspace. Once forwarding is enabled, tools may omit
 `mountName` and bind to the active workspace automatically. Remote URIs are not
 local paths: agents use SFTP tools for files and SSH execution for builds, tests,
 Git, and operating-system inspection. Tools are restricted to forwarding-enabled
-remote roots. A root `AGENTS.override.md` or `AGENTS.md` is returned as workspace
-guidance without writing instructions into the local home directory.
+remote roots. Agent routing is managed by the Codex plugin and its hooks; the
+extension does not create or read Agent guidance files on the remote host.
 
 ### Codex plugin (Windows app / CLI / VS Code)
 
@@ -90,10 +90,13 @@ or local file-editing tools for the virtual workspace. Tools return
 `REMOTE_DISCONNECTED` while the window is offline and automatically follow the
 new port when the same mount reconnects.
 
-After you enable Agent forwarding and confirm one-click setup, the extension installs the
-`serverless-remote` Codex plugin and its stable MCP router from the extension directory.
-Codex will ask you to review and trust the plugin hooks; restart Codex and start a new conversation
-after installation.
+The Enable Agent Forwarding action only stores a preference for that mount; it does not
+connect or start MCP immediately. The next time that remote folder opens, its new window
+starts MCP and automatically installs or updates the bundled `serverless-remote` Codex
+plugin without additional forwarding or setup confirmation dialogs. Disabling forwarding
+leaves normal SFTP/SSH access available while MCP tools reject further access. Codex still
+asks you to review and trust newly installed or updated plugin hooks; then restart Codex
+and start a new conversation.
 
 For local development, you can also install it manually with:
 

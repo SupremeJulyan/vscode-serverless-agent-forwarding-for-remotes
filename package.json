@@ -95,9 +95,14 @@
         "icon": "$(debug-disconnect)"
       },
       {
-        "command": "serverlessRemote.toggleAiForwardItem",
-        "title": "打开/关闭 Agent 转发",
+        "command": "serverlessRemote.enableAiForwardItem",
+        "title": "启用 Agent 转发",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "serverlessRemote.disableAiForwardItem",
+        "title": "关闭 Agent 转发",
+        "icon": "$(circle-slash)"
       },
       {
         "command": "serverlessRemote.deleteConfigItem",
@@ -174,8 +179,13 @@
       ],
       "view/item/context": [
         {
-          "command": "serverlessRemote.toggleAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
+          "command": "serverlessRemote.enableAiForwardItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiDisabled/",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverlessRemote.disableAiForwardItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiEnabled/",
           "group": "inline@1"
         },
         {
@@ -194,8 +204,13 @@
           "group": "inline@4"
         },
         {
-          "command": "serverlessRemote.toggleAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
+          "command": "serverlessRemote.enableAiForwardItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiDisabled/",
+          "group": "serverlessRemote@1"
+        },
+        {
+          "command": "serverlessRemote.disableAiForwardItem",
+          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiEnabled/",
           "group": "serverlessRemote@1"
         },
         {

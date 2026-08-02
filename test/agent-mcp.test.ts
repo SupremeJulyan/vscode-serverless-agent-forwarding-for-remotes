@@ -17,8 +17,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       name: 'project',
       workspaceUri: 'serverless-sftp://project/srv/project',
       remoteRoot: '/srv/project',
-      host: 'dev',
-      remoteInstructions: 'Use npm test.'
+      host: 'dev'
     }),
     list: async (input) => ({ ...input, entries: [] }),
     read: async (input) => ({ ...input, content: 'hello' }),
@@ -57,8 +56,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
         name: 'project',
         workspaceUri: 'serverless-sftp://project/srv/project',
         remoteRoot: '/srv/project',
-        host: 'dev',
-        remoteInstructions: 'Use npm test.'
+        host: 'dev'
       },
       fileTools: ['remote_list', 'remote_read', 'remote_write', 'remote_search'],
       commandTool: 'run_remote_command',
