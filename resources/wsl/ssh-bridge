@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bundled SSH bridge for WSL — used by the Serverless Remote SSH VS Code extension.
-# This is a trimmed-down version that removes the sshfs-bridge dependency and
-# only handles terminal (ssh-bridge) and exec (command) functionality.
+# Password decryption is handled by the TypeScript extension side; the plaintext
+# password is passed via SSH_BRIDGE_PASSWORD environment variable.
 # VPN relay + SSH control-pool are included for aTrust / VPN scenarios.
 
 set -Eeuo pipefail
@@ -42,7 +42,9 @@ usage() {
   ssh-bridge [-t | --tty] name [远程命令...]
 
 环境变量:
-  VPN_TARGET_PORT=22   目标 SSH 端口
+  SSH_BRIDGE_PASSWORD         明文 SSH 密码（由扩展侧解密后传入）
+  WSL_VPN_SSH_CONNECTION_REUSE 是否启用 SSH 连接复用 (1/0, 默认 1)
+  VPN_TARGET_PORT=22           目标 SSH 端口
 EOF
 }
 
@@ -122,10 +124,21 @@ if ((${#config_values[@]})); then
   ((${#config_values[@]} == 6)) || die "配置项读取不完整"
   target_host="${config_values[0]}"
   ssh_user="${config_values[1]}"
-  password="${config_values[2]}"
-  if [[ -n "$password" ]]; then
-    password="$(python3 "$bundle_root/password_crypto.py" "$config_file" hosts "$requested_destination")" \
-      || die "配置密码处理失败"
+  # Password decryption is now handled by the TypeScript extension side.
+  # The plaintext password is passed via SSH_BRIDGE_PASSWORD env var.
+  password="${SSH_BRIDGE_PASSWORD:-}"
+  # Fallback: if no SSH_BRIDGE_PASSWORD but config has an encrypted password,
+  # try the legacy password_crypto.py path (backward compat).
+  if [[ -z "$password" ]]; then
+    config_password="${config_values[2]}"
+    if [[ -n "$config_password" ]]; then
+      if [[ -x "$bundle_root/password_crypto.py" ]]; then
+        password="$(python3 "$bundle_root/password_crypto.py" "$config_file" hosts "$requested_destination")" \
+          || die "配置密码处理失败"
+      else
+        die "配置包含密码但无法解密（扩展版本过旧）；请升级扩展。"
+      fi
+    fi
   fi
   private_key_path="${config_values[3]}"
   target_port="${config_values[4]}"

@@ -28,6 +28,8 @@ export interface CommandPlan {
 export interface ConnectionOptions {
   reuseSshConnection?: boolean;
   bridgeMasterPassword?: string;
+  /** Plaintext SSH password — passed to ssh-bridge as SSH_BRIDGE_PASSWORD env var. */
+  decryptedPassword?: string;
 }
 
 export interface PlatformAdapter {
@@ -106,6 +108,9 @@ class WslAdapter implements PlatformAdapter {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
         ...(options?.bridgeMasterPassword
           ? { WSL_VPN_MASTER_PASSWORD: options.bridgeMasterPassword }
+          : {}),
+        ...(options?.decryptedPassword
+          ? { SSH_BRIDGE_PASSWORD: options.decryptedPassword }
           : {})
       }
     };
@@ -116,7 +121,10 @@ class WslAdapter implements PlatformAdapter {
       command: sshBridgePath(),
       args: [host.name, remoteExecCommand(remoteCwd, command)],
       env: {
-        WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1'
+        WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
+        ...(options?.decryptedPassword
+          ? { SSH_BRIDGE_PASSWORD: options.decryptedPassword }
+          : {})
       }
     };
   }

@@ -367,7 +367,8 @@ async function openTerminal(
     const bridgePasswordEnv = await bridgeMasterPasswordEnv(context, resolved.hostConfig);
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
-      bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD
+      bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
+      decryptedPassword: resolved.hostConfig.password
     });
     const terminalCommand = await resolveExecutable(plan.command, plan.env);
     const terminalStartedAt = performance.now();
@@ -687,7 +688,8 @@ async function executeRemoteCommand(
         }
       } else {
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
-          reuseSshConnection: settings().get<boolean>('reuseSshConnection', true)
+          reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
+          decryptedPassword: resolved.hostConfig.password
         });
         plan.env = {
           ...plan.env,
