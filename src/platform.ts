@@ -105,7 +105,11 @@ class WslAdapter implements PlatformAdapter {
       command: sshBridgePath(),
       args,
       env: {
-        WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
+        // OpenSSH multiplexing is unreliable when an interactive connection
+        // is attached to VS Code's pseudo-terminal (for example,
+        // "getsockname failed: Not a socket"). Keep reuse for background
+        // commands, but never for an interactive remote terminal.
+        WSL_VPN_SSH_CONNECTION_REUSE: '0',
         ...(options?.bridgeMasterPassword
           ? { WSL_VPN_MASTER_PASSWORD: options.bridgeMasterPassword }
           : {}),

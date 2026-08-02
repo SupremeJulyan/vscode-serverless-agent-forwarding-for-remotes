@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Client, ConnectConfig, FileEntryWithStats, SFTPWrapper, Stats } from 'ssh2';
 import { expandHome, HostConfig } from '../config';
+import { vpnRelayPoolPath } from '../wsl-bridge';
 import {
   SftpDirectoryEntry, SftpFileStat, SftpFileType, SftpSession, SftpWriteOptions
 } from './session';
@@ -161,15 +162,13 @@ export class Ssh2SftpSession implements SftpSession {
 }
 
 async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
-  const script = expandHome(
-    '~/.local/share/wsl-vpn-ssh-bridge/libexec/vpn-relay-pool.sh'
-  );
+  const script = vpnRelayPoolPath();
   const targetPort = host.port ?? 22;
   const holder = `vscode-sftp-${process.pid}-${host.name}`;
   const command = [
     'source "$1"',
     'vpn_relay_acquire "$2" "$3" "$4"'
-  ].join('; ');
+  ].join(' && ');
   const { stdout } = await execFileAsync(
     'bash',
     ['-c', command, 'serverless-sftp-relay', script, host.ip, String(targetPort), holder],
@@ -188,7 +187,7 @@ async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
         'bash',
         [
           '-c',
-          'source "$1"; vpn_relay_release "$2" "$3" "$4"',
+          'source "$1" && vpn_relay_release "$2" "$3" "$4"',
           'serverless-sftp-relay',
           script,
           host.ip,

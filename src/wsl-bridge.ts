@@ -4,7 +4,7 @@ let bundleRoot: string | undefined;
 
 /**
  * Set the absolute filesystem path to the directory that contains the bundled
- * WSL helper scripts (ssh-bridge, vpn-relay-pool.sh, …).
+ * Bundled WSL bridge and VPN relay scripts.
  *
  * Call once during activation with
  * `vscode.Uri.joinPath(context.extensionUri, 'resources', 'wsl').fsPath`.
@@ -19,4 +19,12 @@ export function setWslBundlePath(resolvedPath: string): void {
 export function sshBridgePath(): string {
   if (!bundleRoot) throw new Error('WSL bundle path not initialised');
   return path.join(bundleRoot, 'ssh-bridge');
+}
+
+/**
+ * Returns the absolute path to the bundled VPN relay pool helper.
+ */
+export function vpnRelayPoolPath(): string {
+  if (!bundleRoot) throw new Error('WSL bundle path not initialised');
+  return path.join(bundleRoot, 'vpn-relay-pool.sh');
 }

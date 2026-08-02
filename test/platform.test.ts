@@ -53,7 +53,24 @@ test('WSL uses bundled ssh-bridge for terminals and command execution', () => {
   assert.equal(terminal.cwd, undefined);
   assert.equal(execution.command, path.join(bundlePath, 'resources', 'wsl', 'ssh-bridge'));
   assert.equal(terminal.args.includes('--tty'), true);
+  assert.equal(terminal.env?.WSL_VPN_SSH_CONNECTION_REUSE, '0');
   assert.match(execution.args.at(-1) ?? '', /git status/);
+});
+
+test('WSL enables connection reuse only for background commands', () => {
+  const adapter = createPlatformAdapter('wsl');
+  const terminal = adapter.terminal(host, '/srv/project', { reuseSshConnection: true });
+  const execution = adapter.exec(host, '/srv/project', 'pwd', { reuseSshConnection: true });
+  assert.equal(terminal.env?.WSL_VPN_SSH_CONNECTION_REUSE, '0');
+  assert.equal(execution.env?.WSL_VPN_SSH_CONNECTION_REUSE, '1');
+});
+
+test('WSL resolves the VPN relay pool helper from the extension bundle', async () => {
+  const { vpnRelayPoolPath } = await import('../src/wsl-bridge');
+  assert.equal(
+    vpnRelayPoolPath(),
+    path.join(bundlePath, 'resources', 'wsl', 'vpn-relay-pool.sh')
+  );
 });
 
 test('WSL passes the master password to ssh-bridge terminal environment only', () => {

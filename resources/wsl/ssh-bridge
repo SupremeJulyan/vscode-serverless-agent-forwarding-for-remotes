@@ -2,7 +2,7 @@
 # Bundled SSH bridge for WSL — used by the Serverless Remote SSH VS Code extension.
 # Password decryption is handled by the TypeScript extension side; the plaintext
 # password is passed via SSH_BRIDGE_PASSWORD environment variable.
-# VPN relay + SSH control-pool are included for aTrust / VPN scenarios.
+# VPN relay is included for aTrust / VPN scenarios.
 
 set -Eeuo pipefail
 
@@ -66,7 +66,6 @@ shift
 remote_args=("$@")
 
 # ── Load helper modules ──────────────────────────────────────────────────────
-source "$bundle_root/ssh-control-pool.sh"
 source "$bundle_root/vpn-relay-pool.sh"
 bridge_performance_now bridge_started_at
 
@@ -124,21 +123,9 @@ if ((${#config_values[@]})); then
   ((${#config_values[@]} == 6)) || die "配置项读取不完整"
   target_host="${config_values[0]}"
   ssh_user="${config_values[1]}"
-  # Password decryption is now handled by the TypeScript extension side.
-  # The plaintext password is passed via SSH_BRIDGE_PASSWORD env var.
   password="${SSH_BRIDGE_PASSWORD:-}"
-  # Fallback: if no SSH_BRIDGE_PASSWORD but config has an encrypted password,
-  # try the legacy password_crypto.py path (backward compat).
-  if [[ -z "$password" ]]; then
-    config_password="${config_values[2]}"
-    if [[ -n "$config_password" ]]; then
-      if [[ -x "$bundle_root/password_crypto.py" ]]; then
-        password="$(python3 "$bundle_root/password_crypto.py" "$config_file" hosts "$requested_destination")" \
-          || die "配置密码处理失败"
-      else
-        die "配置包含密码但无法解密（扩展版本过旧）；请升级扩展。"
-      fi
-    fi
+  if [[ -z "$password" && -n "${config_values[2]}" ]]; then
+    die "配置密码未由扩展解密"
   fi
   private_key_path="${config_values[3]}"
   target_port="${config_values[4]}"
@@ -168,8 +155,13 @@ target_port="${VPN_TARGET_PORT:-$target_port}"
 
 # ── SSH options ──────────────────────────────────────────────────────────────
 ssh_options=(-o StrictHostKeyChecking=accept-new)
-ssh_control_prepare || die "SSH 控制连接池初始化失败"
-ssh_options+=("${SSH_CONTROL_OPTIONS[@]}")
+if [[ "${WSL_VPN_SSH_CONNECTION_REUSE:-1}" != 0 ]]; then
+  ssh_options+=(
+    -o ControlMaster=auto
+    -o ControlPersist=10m
+    -o "ControlPath=${HOME:?}/.ssh/serverless-remote-%C"
+  )
+fi
 
 if [[ "$force_tty" == true ]] || [[ -n "${SSH_BRIDGE_MOUNT_NAME:-}" && ${#remote_args[@]} -gt 0 ]]; then
   ssh_options+=(-t)
@@ -188,10 +180,6 @@ fi
 
 # ── Direct connection (no VPN) ───────────────────────────────────────────────
 if [[ "$use_vpn" != true ]]; then
-  bridge_performance_now control_check_started_at
-  control_status="$(ssh_control_status "$local_destination" "$target_port")"
-  bridge_performance_log "SSH 控制连接检查" "$control_check_started_at"
-  printf 'SSH 连接池: %s\n' "$(ssh_control_status_label "$control_status")" >&2
   bridge_performance_log "SSH 连接派发前准备总计" "$bridge_started_at"
   exec "${ssh_command[@]}" "${ssh_options[@]}" -p "$target_port" -- "$local_destination" "${remote_args[@]}"
 fi
@@ -219,13 +207,6 @@ host_key_alias="$target_host"
 if [[ "$target_port" != 22 ]]; then
   host_key_alias="[$target_host]:$target_port"
 fi
-
-bridge_performance_now control_check_started_at
-control_status="$(ssh_control_status \
-  "$tunnel_destination" "$local_port" \
-  -o "HostKeyAlias=$host_key_alias" -o CheckHostIP=no)"
-bridge_performance_log "SSH 控制连接检查" "$control_check_started_at"
-printf 'SSH 连接池: %s\n' "$(ssh_control_status_label "$control_status")" >&2
 
 bridge_performance_log "SSH 连接派发前准备总计" "$bridge_started_at"
 "${ssh_command[@]}" \

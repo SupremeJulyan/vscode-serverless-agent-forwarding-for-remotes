@@ -44,6 +44,7 @@ const masterPasswordSecret = 'serverlessRemote.masterPassword';
 const agentMcpTokenSecret = platformStateKey('agentMcpToken');
 const agentSetupCompletedKey = platformStateKey('agentSetupCompleted');
 const aiForwardMountsKey = platformStateKey('aiForwardMounts');
+const aiForwardPromptDismissedKey = platformStateKey('aiForwardPromptDismissed');
 const defaultNativeConfigPath = '~/serverless-remote-ssh/config.json';
 const defaultWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const openConfigAction = 'Open Config';
@@ -269,6 +270,45 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   return folder;
 }
 
+async function offerAgentForwardBeforeOpen(
+  context: vscode.ExtensionContext, mount: MountConfig
+): Promise<void> {
+  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  if (enabled.has(mount.name)) {
+    const server = await ensureAgentMcpServer(context);
+    await configureDetectedAgents(context, server);
+    return;
+  }
+  const dismissed = new Set(
+    context.globalState.get<string[]>(aiForwardPromptDismissedKey, [])
+  );
+  if (dismissed.has(mount.name)) return;
+  const enableAction = '打开 Agent 转发';
+  const choice = await vscode.window.showInformationMessage(
+    `是否为“${mount.name}”打开 Agent 转发？`,
+    {
+      modal: true,
+      detail: '在进入远程目录前完成 MCP 注册，使新窗口中的 Agent 可以在首次启动时加载远程工具。'
+    },
+    enableAction
+  );
+  if (choice !== enableAction) {
+    dismissed.add(mount.name);
+    await context.globalState.update(aiForwardPromptDismissedKey, [...dismissed]);
+    return;
+  }
+  enabled.add(mount.name);
+  try {
+    const server = await ensureAgentMcpServer(context);
+    await context.globalState.update(aiForwardMountsKey, [...enabled]);
+    await configureDetectedAgents(context, server);
+  } catch (error) {
+    enabled.delete(mount.name);
+    await context.globalState.update(aiForwardMountsKey, [...enabled]);
+    throw error;
+  }
+}
+
 async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   const mount = requested ?? await selectMount('选择要打开的 SFTP 远程文件夹');
   if (!mount) return;
@@ -276,8 +316,12 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
     location: vscode.ProgressLocation.Notification,
     title: `正在连接 ${mount.name}…`,
     cancellable: false
-  }, async () => {
+  }, async (progress) => {
+    progress.report({ message: '正在验证远程目录…' });
     const folder = await ensureFolder(mount);
+    progress.report({ message: '正在配置 Agent 转发…' });
+    await offerAgentForwardBeforeOpen(vscodeContext, mount);
+    progress.report({ message: '正在打开工作区…' });
     await vscode.commands.executeCommand(
       'vscode.openFolder',
       vscode.Uri.parse(remoteUri(folder.mountName, folder.remoteRoot)),
@@ -327,7 +371,10 @@ async function openTerminal(
     ?? await selectMount('Select a remote terminal');
   if (!mount) return undefined;
   const folder = await ensureFolder(mount);
-  const remoteRoot = path.posix.normalize(mount.remote_path);
+  // Use the server-resolved root. Configured roots such as "." are relative
+  // to the SSH login directory and cannot be compared directly with the
+  // absolute paths stored in remote workspace URIs.
+  const remoteRoot = folder.remoteRoot;
   const remoteCwd = requestedRemoteCwd
     ?? (location?.mountName === mount.name ? location.remotePath : folder.remoteRoot);
   const remoteRelative = remoteCwd ? path.posix.relative(remoteRoot, remoteCwd) : '';
@@ -888,6 +935,12 @@ async function deleteConfig(mount: MountConfig): Promise<void> {
   const config = await readConfig();
   removeMountConfig(config, mount.name);
   await saveConfig(configPath(), config);
+  const dismissed = new Set(
+    vscodeContext.globalState.get<string[]>(aiForwardPromptDismissedKey, [])
+  );
+  if (dismissed.delete(mount.name)) {
+    await vscodeContext.globalState.update(aiForwardPromptDismissedKey, [...dismissed]);
+  }
 }
 
 // ---- AI Agent Forwarding (aligned with main) ----
@@ -1120,6 +1173,12 @@ async function toggleAiForward(mount: MountConfig): Promise<void> {
     // Ensure the folder is connected before enabling forwarding
     await ensureFolder(mount);
     enabled.add(mount.name);
+    const dismissed = new Set(
+      vscodeContext.globalState.get<string[]>(aiForwardPromptDismissedKey, [])
+    );
+    if (dismissed.delete(mount.name)) {
+      await vscodeContext.globalState.update(aiForwardPromptDismissedKey, [...dismissed]);
+    }
   } else {
     enabled.delete(mount.name);
   }
