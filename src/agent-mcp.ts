@@ -46,7 +46,7 @@ export class AgentMcpServer {
 
   private createProtocolServer(): McpServer {
     const server = new McpServer(
-      { name: 'serverless-remote-ssh', version: '1.0.0' },
+      { name: 'serverless-remote-ssh', version: '2.0.0' },
       {
         instructions:
           'Remote files are not local files. The remote workspace URI tells you which folder is currently open.\n\n'
@@ -149,16 +149,21 @@ export class AgentMcpServer {
   async start(): Promise<void> {
     if (this.httpServer) return;
     const app = express();
-    app.use(express.json({ limit: '2mb' }));
+    app.use(express.json({ limit: '1mb' }));
     app.all('/mcp', async (request, response) => {
       if (request.query.token !== this.token) {
+        this.callbacks.log?.(`拒绝未授权 MCP 请求：${request.method}`);
         response.status(401).json({ error: 'Unauthorized' });
         return;
       }
       if (request.method !== 'POST') {
+        this.callbacks.log?.(`拒绝不支持的 MCP 请求方法：${request.method}`);
         response.status(405).json({ error: 'Method not allowed' });
         return;
       }
+      const method = typeof request.body?.method === 'string' ? request.body.method : 'unknown';
+      const tool = request.body?.params?.name;
+      this.callbacks.log?.(`收到 MCP 请求：${method}${tool ? ` (${tool})` : ''}`);
       const protocol = this.createProtocolServer();
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {

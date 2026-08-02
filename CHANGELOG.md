@@ -1,5 +1,16 @@
 # Change Log
 
+## 2.0.0
+
+- **重启版本**：SFTP 直连架构稳定，版本号重置为 2.0.0。
+- WSL 下 `ssh-bridge` 及其 VPN 中继脚本打包进扩展，不再需要单独安装第三方项目。
+- SSH 远程终端对齐 main 分支：终端身份追踪、`Ssh2Terminal`（Windows 密码）、凭据管理、退出的终端提示重新打开。
+- AI Agent 转发对齐 main 分支：平台隔离状态键、`agent-guidance.ts` 管理 AGENTS.md、`executeAgentMcpCommand` 日志流。
+- 恢复 `authentication.ts`、`ssh2-terminal.ts`、`ssh-command.ts`、`agent-guidance.ts`。
+- Windows ASKPASS 支持恢复。
+- 全平台 `exec` 方法统一支持连接复用参数。
+- 44 项测试全部通过。
+
 ## 1.0.6
 
 - 恢复打开或重载 SFTP 远程工作区时自动创建匹配的 SSH 终端。

@@ -1,8 +1,19 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync } from 'node:fs';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import test from 'node:test';
 import { HostConfig } from '../src/config';
 import { createPlatformAdapter, detectPlatform } from '../src/platform';
+
+// Stub WSL bundle path so platform.ts resolves ssh-bridge without a VS Code
+// extension context. Uses dynamic import to avoid compile-time vscode dep.
+let bundlePath: string;
+test.before(async () => {
+  const { setWslBundlePath } = await import('../src/wsl-bridge');
+  bundlePath = mkdtempSync(path.join(os.tmpdir(), 'serverless-test-wsl-'));
+  setWslBundlePath(path.join(bundlePath, 'resources', 'wsl'));
+});
 
 const host: HostConfig = {
   name: 'dev',
@@ -20,7 +31,7 @@ test('detects WSL separately from native Linux', () => {
 test('native SSH opens a login shell in the remote SFTP directory', () => {
   const plan = createPlatformAdapter('linux').terminal(host, "/srv/O'Brien");
   assert.equal(plan.command, 'ssh');
-  assert.equal(plan.cwd, os.homedir());
+  assert.equal(plan.cwd, undefined);
   assert.equal(plan.args.some((argument) => argument.endsWith('/.ssh/id_ed25519')), true);
   assert.match(plan.args.at(-1) ?? '', /cd --/);
   assert.match(plan.args.at(-1) ?? '', /O'"'"'Brien/);
@@ -34,13 +45,13 @@ test('native remote execution supports OpenSSH connection reuse', () => {
   assert.match(plan.args.at(-1) ?? '', /npm test/);
 });
 
-test('WSL keeps ssh-bridge for terminals and command execution', () => {
+test('WSL uses bundled ssh-bridge for terminals and command execution', () => {
   const adapter = createPlatformAdapter('wsl');
   const terminal = adapter.terminal(host, '/srv/project');
   const execution = adapter.exec(host, '/srv/project', 'git status');
-  assert.equal(terminal.command, 'ssh-bridge');
-  assert.equal(terminal.cwd, os.homedir());
-  assert.equal(execution.command, 'ssh-bridge');
+  assert.equal(terminal.command, path.join(bundlePath, 'resources', 'wsl', 'ssh-bridge'));
+  assert.equal(terminal.cwd, undefined);
+  assert.equal(execution.command, path.join(bundlePath, 'resources', 'wsl', 'ssh-bridge'));
   assert.equal(terminal.args.includes('--tty'), true);
   assert.match(execution.args.at(-1) ?? '', /git status/);
 });

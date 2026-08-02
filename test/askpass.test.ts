@@ -7,10 +7,10 @@ import { createAskpassCredentials, platformUsesAskpass } from '../src/askpass';
 
 const execFileAsync = promisify(execFile);
 
-test('native macOS and Linux use ASKPASS, while Windows and WSL keep their own flows', () => {
+test('native macOS and Linux and Windows use ASKPASS, while WSL keeps its own flow', () => {
   assert.equal(platformUsesAskpass('macos'), true);
   assert.equal(platformUsesAskpass('linux'), true);
-  assert.equal(platformUsesAskpass('windows'), false);
+  assert.equal(platformUsesAskpass('windows'), true);
   assert.equal(platformUsesAskpass('wsl'), false);
 });
 

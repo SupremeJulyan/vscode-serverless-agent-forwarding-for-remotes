@@ -6,6 +6,17 @@ import { CommandPlan } from './platform';
 
 const execFileAsync = promisify(execFile);
 
+export function missingExecutableName(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    const nodeError = error as NodeJS.ErrnoException & { path?: string; syscall?: string };
+    if (nodeError.code === 'ENOENT' && nodeError.syscall?.startsWith('spawn')) {
+      return nodeError.path || /^spawn\s+(.+?)\s+ENOENT$/i.exec(error.message)?.[1];
+    }
+    return /(?:^|:\s*)spawn\s+(.+?)\s+ENOENT(?:$|\s)/i.exec(error.message)?.[1];
+  }
+  return /(?:^|:\s*)spawn\s+(.+?)\s+ENOENT(?:$|\s)/i.exec(String(error))?.[1];
+}
+
 export function commandSearchPath(
   home = os.homedir(), inheritedPath = process.env.PATH
 ): string {
@@ -31,11 +42,12 @@ export async function commandExists(command: string): Promise<boolean> {
 
 const resolvedCache = new Map<string, string>();
 
-async function resolveExecutable(command: string, env?: NodeJS.ProcessEnv): Promise<string> {
-  if (process.platform === 'win32' || command.includes('/')) return command;
+export async function resolveExecutable(command: string, env?: NodeJS.ProcessEnv): Promise<string> {
+  if (command.includes('/') || command.includes('\\')) return command;
   const cacheKey = JSON.stringify({ command, path: env?.PATH });
   const cached = resolvedCache.get(cacheKey);
   if (cached !== undefined) return cached;
+  if (process.platform === 'win32') return command;
   try {
     const { stdout } = await execFileAsync(
       'sh', ['-lc', 'command -v "$1"', 'sh', command],
@@ -83,7 +95,8 @@ export interface CapturedProcessResult {
 }
 
 export async function executeCaptured(
-  plan: CommandPlan, signal?: AbortSignal, maxOutputBytes = 1024 * 1024
+  plan: CommandPlan, signal?: AbortSignal, maxOutputBytes = 1024 * 1024,
+  handlers: ProcessOutputHandlers = {}
 ): Promise<CapturedProcessResult> {
   const command = await resolveExecutable(plan.command, plan.env);
   return new Promise<CapturedProcessResult>((resolve, reject) => {
@@ -106,8 +119,14 @@ export async function executeCaptured(
       }
       if (chunk.length > remaining) truncated = true;
     };
-    child.stdout.on('data', (chunk: Buffer) => capture(stdout, chunk));
-    child.stderr.on('data', (chunk: Buffer) => capture(stderr, chunk));
+    child.stdout.on('data', (chunk: Buffer) => {
+      capture(stdout, chunk);
+      handlers.stdout?.(chunk.toString());
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      capture(stderr, chunk);
+      handlers.stderr?.(chunk.toString());
+    });
     const abort = () => child.kill();
     signal?.addEventListener('abort', abort, { once: true });
     child.once('error', reject);

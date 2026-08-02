@@ -1,7 +1,21 @@
 import * as os from 'node:os';
 import { HostConfig } from './config';
+import { sshBridgePath } from './wsl-bridge';
 
 export type PlatformKind = 'windows' | 'macos' | 'linux' | 'wsl';
+
+export function defaultAgentMcpPort(platform: PlatformKind): number {
+  switch (platform) {
+    case 'windows': return 9848;
+    case 'wsl': return 9849;
+    case 'linux': return 9850;
+    case 'macos': return 9851;
+  }
+}
+
+export function platformExtensionStateKey(name: string, platform: PlatformKind): string {
+  return `serverlessRemote.${name}.${platform}`;
+}
 
 export interface CommandPlan {
   command: string;
@@ -31,7 +45,7 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
     ? [
         '-o', 'ControlMaster=auto',
         '-o', 'ControlPersist=10m',
-        '-o', `ControlPath=${os.homedir()}/.ssh/serverless-remote-%C`
+        '-o', 'ControlPath=~/.ssh/serverless-remote-%C'
       ]
     : [];
 }
@@ -45,7 +59,9 @@ function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptio
   if (!remoteCwd) {
     args.push(...connectionReuseArgs(options));
   }
-  if (host.private_key_path) args.push('-i', expandPrivateKey(host.private_key_path));
+  if (host.private_key_path) {
+    args.push('-i', host.private_key_path);
+  }
   if (remoteCwd) args.push('-t');
   args.push(`${host.user}@${host.ip}`);
   if (remoteCwd) {
@@ -54,30 +70,24 @@ function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptio
   return args;
 }
 
-function expandPrivateKey(value: string): string {
-  if (value === '~') return os.homedir();
-  if (value.startsWith('~/')) return `${os.homedir()}/${value.slice(2)}`;
-  return value;
+function remoteLoginCommand(remoteCwd: string): string {
+  return `cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`;
 }
 
-function remoteCommand(remoteCwd: string, command: string): string {
-  return `cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -lc ${
-    shellQuote(command)
-  }`;
+function remoteExecCommand(remoteCwd: string, command: string): string {
+  return `cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -lc ${shellQuote(command)}`;
 }
 
-class NativeAdapter implements PlatformAdapter {
-  constructor(readonly kind: 'windows' | 'macos' | 'linux') {}
+class UnixAdapter implements PlatformAdapter {
+  constructor(readonly kind: 'linux' | 'macos') {}
 
   terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan {
-    return { command: 'ssh', args: sshArgs(host, remoteCwd, options), cwd: os.homedir() };
+    return { command: 'ssh', args: sshArgs(host, remoteCwd, options) };
   }
 
-  exec(
-    host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions
-  ): CommandPlan {
+  exec(host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions): CommandPlan {
     const args = sshArgs(host, undefined, options);
-    args.push(remoteCommand(remoteCwd, command));
+    args.push(remoteExecCommand(remoteCwd, command));
     return { command: 'ssh', args };
   }
 }
@@ -88,13 +98,10 @@ class WslAdapter implements PlatformAdapter {
   terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan {
     const args = [host.name];
     if (remoteCwd) args.unshift('--tty');
-    if (remoteCwd) {
-      args.push(`cd -- ${shellQuote(remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`);
-    }
+    if (remoteCwd) args.push(remoteLoginCommand(remoteCwd));
     return {
-      command: 'ssh-bridge',
+      command: sshBridgePath(),
       args,
-      cwd: os.homedir(),
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
         ...(options?.bridgeMasterPassword
@@ -104,16 +111,28 @@ class WslAdapter implements PlatformAdapter {
     };
   }
 
-  exec(
-    host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions
-  ): CommandPlan {
+  exec(host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions): CommandPlan {
     return {
-      command: 'ssh-bridge',
-      args: [host.name, remoteCommand(remoteCwd, command)],
+      command: sshBridgePath(),
+      args: [host.name, remoteExecCommand(remoteCwd, command)],
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1'
       }
     };
+  }
+}
+
+class WindowsAdapter implements PlatformAdapter {
+  readonly kind = 'windows' as const;
+
+  terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan {
+    return { command: 'ssh', args: sshArgs(host, remoteCwd, options) };
+  }
+
+  exec(host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions): CommandPlan {
+    const args = sshArgs(host, undefined, options);
+    args.push(remoteExecCommand(remoteCwd, command));
+    return { command: 'ssh', args };
   }
 }
 
@@ -126,5 +145,10 @@ export function detectPlatform(platform = process.platform, release = os.release
 }
 
 export function createPlatformAdapter(kind = detectPlatform()): PlatformAdapter {
-  return kind === 'wsl' ? new WslAdapter() : new NativeAdapter(kind);
+  switch (kind) {
+    case 'windows': return new WindowsAdapter();
+    case 'macos': return new UnixAdapter('macos');
+    case 'linux': return new UnixAdapter('linux');
+    case 'wsl': return new WslAdapter();
+  }
 }

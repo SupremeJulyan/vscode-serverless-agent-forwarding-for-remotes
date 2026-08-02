@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# Bundled SSH bridge for WSL — used by the Serverless Remote SSH VS Code extension.
+# This is a trimmed-down version that removes the sshfs-bridge dependency and
+# only handles terminal (ssh-bridge) and exec (command) functionality.
+# VPN relay + SSH control-pool are included for aTrust / VPN scenarios.
+
+set -Eeuo pipefail
+
+die() {
+  printf '错误: %s\n' "$*" >&2
+  exit 1
+}
+
+bridge_performance_now() {
+  local value
+  if [[ -n "${EPOCHREALTIME:-}" ]]; then
+    value="${EPOCHREALTIME/./}"
+  else
+    value="$(date +%s%6N)"
+  fi
+  printf -v "$1" '%s' "$value"
+}
+
+bridge_performance_log() {
+  local label="$1" started_at="$2" finished_at elapsed_us
+  bridge_performance_now finished_at
+  elapsed_us=$((10#$finished_at - 10#$started_at))
+  printf '[性能] %s: %d.%03d ms\n' \
+    "$label" "$((elapsed_us / 1000))" "$((elapsed_us % 1000))" >&2
+}
+
+# ── Resolve the bundle root ──────────────────────────────────────────────────
+script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+bundle_root="$(cd -- "$script_dir" && pwd)"
+
+# ── Parse arguments ──────────────────────────────────────────────────────────
+usage() {
+  cat <<'EOF'
+用法:
+  ssh-bridge -h | --help
+  ssh-bridge [-t | --tty] name [远程命令...]
+
+环境变量:
+  VPN_TARGET_PORT=22   目标 SSH 端口
+EOF
+}
+
+force_tty=false
+case "${1:-}" in
+  -t|--tty)
+    force_tty=true
+    shift
+    ;;
+esac
+
+[[ $# -ge 1 ]] || { usage >&2; exit 2; }
+case "$1" in
+  -h|--help|help) usage; exit 0 ;;
+esac
+
+requested_destination="$1"
+shift
+remote_args=("$@")
+
+# ── Load helper modules ──────────────────────────────────────────────────────
+source "$bundle_root/ssh-control-pool.sh"
+source "$bundle_root/vpn-relay-pool.sh"
+bridge_performance_now bridge_started_at
+
+# ── Config resolution ───────────────────────────────────────────────────────
+config_dir="${HOME:?}/.wsl-vpn-ssh"
+config_file="$config_dir/config.json"
+
+for command in ssh python3 flock; do
+  command -v "$command" >/dev/null 2>&1 || die "缺少命令 '$command'"
+done
+
+config_values=()
+if [[ -r "$config_file" ]]; then
+  while IFS= read -r -d '' value; do
+    config_values+=("$value")
+  done < <(python3 - "$config_file" "$requested_destination" <<'PY'
+import json, os, sys
+
+config_path, selected = sys.argv[1:]
+try:
+    with open(config_path, encoding="utf-8") as f:
+        data = json.load(f)
+except (OSError, json.JSONDecodeError) as e:
+    raise SystemExit(f"配置读取失败: {e}")
+
+entries = data.get("hosts", []) if isinstance(data, dict) else data
+if not isinstance(entries, list):
+    raise SystemExit("配置顶层必须是数组，或包含 hosts 数组的对象")
+
+for index, item in enumerate(entries):
+    if not isinstance(item, dict):
+        raise SystemExit(f"第 {index + 1} 项不是对象")
+    if str(item.get("name", "")) != selected:
+        continue
+    missing = [key for key in ("ip", "user") if not item.get(key)]
+    if missing:
+        raise SystemExit(f"配置 '{selected}' 缺少字段: {', '.join(missing)}")
+    values = (
+        str(item["ip"]), str(item["user"]), str(item.get("password") or ""),
+        os.path.expanduser(str(item.get("private_key_path") or "")),
+        str(item.get("port") or 22),
+        "true" if item.get("vpn", item.get("atrust", True)) else "false",
+    )
+    for value in values:
+        sys.stdout.buffer.write(value.encode() + b"\0")
+    break
+PY
+  )
+fi
+
+password=""
+private_key_path=""
+use_vpn=true
+if ((${#config_values[@]})); then
+  ((${#config_values[@]} == 6)) || die "配置项读取不完整"
+  target_host="${config_values[0]}"
+  ssh_user="${config_values[1]}"
+  password="${config_values[2]}"
+  if [[ -n "$password" ]]; then
+    password="$(python3 "$bundle_root/password_crypto.py" "$config_file" hosts "$requested_destination")" \
+      || die "配置密码处理失败"
+  fi
+  private_key_path="${config_values[3]}"
+  target_port="${config_values[4]}"
+  use_vpn="${config_values[5]}"
+  local_destination="$ssh_user@$target_host"
+  tunnel_destination="$ssh_user@127.0.0.1"
+else
+  destination="$requested_destination"
+  if [[ "$destination" == *@* ]]; then
+    ssh_user="${destination%@*}"
+    target_host="${destination##*@}"
+    local_destination="$ssh_user@$target_host"
+    tunnel_destination="$ssh_user@127.0.0.1"
+  else
+    target_host="$destination"
+    local_destination="$destination"
+    tunnel_destination="127.0.0.1"
+  fi
+  target_port="${VPN_TARGET_PORT:-22}"
+fi
+target_port="${VPN_TARGET_PORT:-$target_port}"
+
+[[ -n "$target_host" ]] || die "目标主机不能为空"
+[[ "$target_port" =~ ^[0-9]+$ ]] \
+  && ((target_port >= 1 && target_port <= 65535)) \
+  || die "SSH 端口必须是 1-65535 的整数"
+
+# ── SSH options ──────────────────────────────────────────────────────────────
+ssh_options=(-o StrictHostKeyChecking=accept-new)
+ssh_control_prepare || die "SSH 控制连接池初始化失败"
+ssh_options+=("${SSH_CONTROL_OPTIONS[@]}")
+
+if [[ "$force_tty" == true ]] || [[ -n "${SSH_BRIDGE_MOUNT_NAME:-}" && ${#remote_args[@]} -gt 0 ]]; then
+  ssh_options+=(-t)
+fi
+if [[ -n "$private_key_path" ]]; then
+  [[ -r "$private_key_path" ]] || die "私钥不可读: $private_key_path"
+  ssh_options+=(-i "$private_key_path")
+fi
+
+ssh_command=(ssh)
+if [[ -n "$password" ]]; then
+  command -v sshpass >/dev/null 2>&1 || die "配置包含密码，请先安装 'sshpass'"
+  ssh_command=(sshpass -e ssh)
+  export SSHPASS="$password"
+fi
+
+# ── Direct connection (no VPN) ───────────────────────────────────────────────
+if [[ "$use_vpn" != true ]]; then
+  bridge_performance_now control_check_started_at
+  control_status="$(ssh_control_status "$local_destination" "$target_port")"
+  bridge_performance_log "SSH 控制连接检查" "$control_check_started_at"
+  printf 'SSH 连接池: %s\n' "$(ssh_control_status_label "$control_status")" >&2
+  bridge_performance_log "SSH 连接派发前准备总计" "$bridge_started_at"
+  exec "${ssh_command[@]}" "${ssh_options[@]}" -p "$target_port" -- "$local_destination" "${remote_args[@]}"
+fi
+
+# ── VPN relay path ───────────────────────────────────────────────────────────
+for command in powershell.exe wslpath; do
+  command -v "$command" >/dev/null 2>&1 || die "缺少命令 '$command'"
+done
+
+relay_holder="ssh-$$"
+bridge_performance_now relay_started_at
+read -r relay_pid local_port relay_status < <(
+  vpn_relay_acquire "$target_host" "$target_port" "$relay_holder"
+) || die "Windows TCP 中继启动失败"
+bridge_performance_log "VPN 中继获取" "$relay_started_at"
+cleanup() {
+  vpn_relay_release "$target_host" "$target_port" "$relay_holder" || true
+}
+trap cleanup EXIT INT TERM
+
+printf 'VPN 中继(%s): 127.0.0.1:%s -> %s:%s (Windows PID %s)\n' \
+  "$relay_status" "$local_port" "$target_host" "$target_port" "$relay_pid" >&2
+
+host_key_alias="$target_host"
+if [[ "$target_port" != 22 ]]; then
+  host_key_alias="[$target_host]:$target_port"
+fi
+
+bridge_performance_now control_check_started_at
+control_status="$(ssh_control_status \
+  "$tunnel_destination" "$local_port" \
+  -o "HostKeyAlias=$host_key_alias" -o CheckHostIP=no)"
+bridge_performance_log "SSH 控制连接检查" "$control_check_started_at"
+printf 'SSH 连接池: %s\n' "$(ssh_control_status_label "$control_status")" >&2
+
+bridge_performance_log "SSH 连接派发前准备总计" "$bridge_started_at"
+"${ssh_command[@]}" \
+  "${ssh_options[@]}" \
+  -p "$local_port" \
+  -o "HostKeyAlias=$host_key_alias" \
+  -o CheckHostIP=no \
+  -- "$tunnel_destination" "${remote_args[@]}"
