@@ -32,7 +32,7 @@ function readRecord(filePath, now = Date.now()) {
   try {
     const value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     const updatedAt = Date.parse(value.updatedAt);
-    if (value.version !== 1 || value.execution !== 'remote' || !value.mcpServerName
+    if (value.version !== 1 || value.execution !== 'remote' || !value.mcpUrl
       || !Number.isFinite(updatedAt)) return null;
     if (now - updatedAt > maxRecordAgeMs) return null;
     return { ...value, updatedAtMs: updatedAt, discoveryFile: filePath };

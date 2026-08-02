@@ -56,7 +56,7 @@ test('stdio router discovers the active window and follows a reconnected mount t
     await writeFile(path.join(discovery, `${instanceId}.json`), JSON.stringify({
       version: 1, instanceId, focused: true, execution: 'remote',
       workspaceUri: 'serverless-sftp://a/srv/a', mountName: 'A', remoteRoot: '/srv/a',
-      host: 'dev', mcpServerName: 'serverless-remote-A', mcpUrl,
+      host: 'dev', mcpUrl,
       updatedAt: new Date().toISOString()
     }));
   };

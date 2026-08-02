@@ -16,7 +16,6 @@ test('publishes a private, versioned remote workspace record and removes it', as
     mountName: 'project',
     remoteRoot: '/srv/project',
     host: 'dev',
-    mcpServerName: 'serverless-remote-project',
     mcpUrl: 'http://127.0.0.1:9848/mcp?token=secret'
   });
   const filePath = path.join(directory, 'window-one.json');
@@ -25,7 +24,7 @@ test('publishes a private, versioned remote workspace record and removes it', as
   assert.equal(value.instanceId, 'window-one');
   assert.equal(value.execution, 'remote');
   assert.equal(value.mountName, 'project');
-  assert.equal(value.mcpServerName, 'serverless-remote-project');
+  assert.equal(value.mcpServerName, undefined);
   assert.equal(typeof value.updatedAt, 'string');
   await publisher.remove();
   await assert.rejects(readFile(filePath, 'utf8'), { code: 'ENOENT' });
