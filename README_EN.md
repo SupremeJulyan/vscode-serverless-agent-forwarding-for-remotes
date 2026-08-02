@@ -30,9 +30,7 @@ code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
 
 ## Configuration
 
-The new default on every platform is `~/.serverless-remote-ssh/config.json`. The legacy
-`~/serverless-remote-ssh/config.json` path and WSL's `~/.wsl-vpn-ssh/config.json` remain supported,
-so existing configurations do not need to be migrated.
+All platforms use `~/.serverless-remote-ssh/config.json`.
 
 ```json
 {

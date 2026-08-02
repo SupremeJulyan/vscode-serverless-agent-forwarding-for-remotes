@@ -333,9 +333,7 @@
     "jsonValidation": [
       {
         "fileMatch": [
-          "**/.serverless-remote-ssh/config.json",
-          "**/serverless-remote-ssh/config.json",
-          "**/.wsl-vpn-ssh/config.json"
+          "**/.serverless-remote-ssh/config.json"
         ],
         "url": "./schemas/config.schema.json"
       }
@@ -346,7 +344,7 @@
         "serverlessRemote.configPath": {
           "type": "string",
           "default": "~/.serverless-remote-ssh/config.json",
-          "description": "Default on all platforms: ~/.serverless-remote-ssh/config.json. Legacy paths remain supported. An explicit value overrides automatic path selection."
+          "description": "Configuration file path. Defaults to ~/.serverless-remote-ssh/config.json on all platforms."
         },
         "serverlessRemote.reuseSshConnection": {
           "type": "boolean",

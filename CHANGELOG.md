@@ -12,6 +12,7 @@
 - Agent 转发开关改为纯偏好标记；启用后在下次打开远程目录时自动启动 MCP 和配置 Agent 集成，关闭后 MCP 工具立即拒绝访问。
 - Agent 集成统一为纯 MCP：移除 Codex 插件、Skill、SessionStart/PreToolUse hooks 和会话绑定文件，Codex 与 Claude Code 共用固定 MCP 路由器完成窗口发现、目标选择、端口路由及工具说明。
 - Agent 转发开启时先注册固定 MCP 再启动窗口服务；最后一个已启用挂载关闭后才移除固定 MCP。
+- 所有平台统一使用 `~/.serverless-remote-ssh/config.json`，移除旧配置路径回退。
 - 新增 `serverlessRemote.agentForwardingAgents` 设置，默认启用 Codex 和 Claude Code；CLI 不在 `PATH` 时自动从对应 VS Code Agent 扩展路径查找。
 - 扩展严格作为 workspace 扩展运行，确保在 Remote-WSL 窗口中安装并运行于 WSL 扩展宿主，而不是 Windows UI 扩展宿主。
 - 恢复 `authentication.ts`、`ssh2-terminal.ts`、`ssh-command.ts`。

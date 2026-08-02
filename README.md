@@ -31,9 +31,7 @@ code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
 
 ## 配置
 
-所有平台的新默认配置文件均为 `~/.serverless-remote-ssh/config.json`。
-旧路径 `~/serverless-remote-ssh/config.json` 和 WSL 的 `~/.wsl-vpn-ssh/config.json`
-仍会自动识别；已有配置无需迁移。
+所有平台统一使用 `~/.serverless-remote-ssh/config.json`。
 
 ```json
 {

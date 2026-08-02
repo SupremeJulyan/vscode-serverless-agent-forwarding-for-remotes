@@ -50,7 +50,7 @@ test('packages Agent integration as a standalone MCP router without a Codex plug
   )));
 });
 
-test('uses the cross-platform config path while retaining legacy schema matches', async () => {
+test('uses only the unified cross-platform config path', async () => {
   const manifest = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
@@ -65,7 +65,5 @@ test('uses the cross-platform config path while retaining legacy schema matches'
     ['codex', 'claudeCode']
   );
   const matches = manifest.contributes?.jsonValidation?.flatMap((item) => item.fileMatch ?? []);
-  assert.ok(matches?.includes('**/.serverless-remote-ssh/config.json'));
-  assert.ok(matches?.includes('**/serverless-remote-ssh/config.json'));
-  assert.ok(matches?.includes('**/.wsl-vpn-ssh/config.json'));
+  assert.deepEqual(matches, ['**/.serverless-remote-ssh/config.json']);
 });

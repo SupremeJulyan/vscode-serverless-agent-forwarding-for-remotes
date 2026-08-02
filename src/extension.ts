@@ -1,7 +1,6 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
@@ -49,8 +48,6 @@ const agentMcpTokenSecret = platformStateKey('agentMcpToken');
 const agentSetupCompletedKey = platformStateKey('agentSetupCompleted');
 const aiForwardMountsKey = platformStateKey('aiForwardMounts');
 const defaultConfigPath = '~/.serverless-remote-ssh/config.json';
-const legacyNativeConfigPath = '~/serverless-remote-ssh/config.json';
-const legacyWslConfigPath = '~/.wsl-vpn-ssh/config.json';
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const openRemoteTerminalAction = 'Open Remote Terminal';
@@ -94,12 +91,7 @@ function configPath(): string {
     ?? inspected?.workspaceValue
     ?? inspected?.globalValue;
   if (configured) return expandHome(configured);
-  const preferred = expandHome(defaultConfigPath);
-  if (existsSync(preferred)) return preferred;
-  const legacyPaths = platformAdapter.kind === 'wsl'
-    ? [legacyWslConfigPath, legacyNativeConfigPath]
-    : [legacyNativeConfigPath, legacyWslConfigPath];
-  return legacyPaths.map(expandHome).find(existsSync) ?? preferred;
+  return expandHome(defaultConfigPath);
 }
 
 async function readConfig(): Promise<BridgeConfig> {
