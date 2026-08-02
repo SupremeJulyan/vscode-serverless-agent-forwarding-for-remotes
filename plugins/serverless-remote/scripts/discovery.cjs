@@ -32,7 +32,8 @@ function readRecord(filePath, now = Date.now()) {
   try {
     const value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     const updatedAt = Date.parse(value.updatedAt);
-    if (value.version !== 1 || value.execution !== 'remote' || !Number.isFinite(updatedAt)) return null;
+    if (value.version !== 1 || value.execution !== 'remote' || !value.mcpServerName
+      || !Number.isFinite(updatedAt)) return null;
     if (now - updatedAt > maxRecordAgeMs) return null;
     return { ...value, updatedAtMs: updatedAt, discoveryFile: filePath };
   } catch {
@@ -76,6 +77,7 @@ function writeBinding(sessionId, workspace) {
     workspaceUri: workspace.workspaceUri,
     mountName: workspace.mountName,
     remoteRoot: workspace.remoteRoot,
+    mcpServerName: workspace.mcpServerName,
     boundAt: new Date().toISOString()
   }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }

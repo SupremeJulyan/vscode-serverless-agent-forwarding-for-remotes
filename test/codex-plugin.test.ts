@@ -37,6 +37,7 @@ test('binds an active remote window at session start and blocks local tools', as
     mountName: 'project',
     remoteRoot: '/srv/project',
     host: 'dev',
+    mcpServerName: 'serverless-remote-project',
     mcpUrl: 'http://127.0.0.1:9848/mcp?token=secret',
     updatedAt: new Date().toISOString()
   }));
@@ -47,6 +48,7 @@ test('binds an active remote window at session start and blocks local tools', as
   assert.equal(start.exitCode, 0, start.stderr);
   const startResult = JSON.parse(start.stdout);
   assert.match(startResult.hookSpecificOutput.additionalContext, /resolve_workspace_execution/);
+  assert.match(startResult.hookSpecificOutput.additionalContext, /serverless-remote-project/);
   assert.doesNotMatch(start.stdout, /token=secret/);
 
   const guard = await runHook('pre-tool-use.cjs', {

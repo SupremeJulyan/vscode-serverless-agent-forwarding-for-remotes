@@ -12,6 +12,7 @@ export interface AgentWorkspaceRecord {
   mountName: string;
   remoteRoot: string;
   host: string;
+  mcpServerName: string;
   mcpUrl: string;
   updatedAt: string;
 }

@@ -12,11 +12,12 @@ process.stdin.on('end', () => {
     const context = [
       'SERVERLESS REMOTE WORKSPACE DETECTED.',
       `This Codex session is bound to ${workspace.workspaceUri} (remote root ${workspace.remoteRoot}).`,
-      'Before any workspace operation, call the serverless-remote MCP tool resolve_workspace_execution.',
+      `Before any workspace operation, call resolve_workspace_execution from MCP server ${workspace.mcpServerName}.`,
       'Use remote_list, remote_read, remote_write, and remote_search for files.',
       'Use run_remote_command for Git, builds, tests, packages, processes, and shell commands.',
       'Never use local Bash, apply_patch, Edit, Write, or local filesystem tools for this workspace.',
-      'If the MCP tools are deferred, search for serverless-remote or resolve_workspace_execution first.'
+      `If its tools are deferred, search for ${workspace.mcpServerName} or resolve_workspace_execution first.`,
+      `Do not use a different Serverless Remote MCP server; this session is bound to ${workspace.mountName}.`
     ].join(' ');
     process.stdout.write(JSON.stringify({
       systemMessage: `Connected to Serverless Remote mount ${workspace.mountName}.`,

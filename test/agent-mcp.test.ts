@@ -70,3 +70,34 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     await server.stop();
   }
 });
+
+test('allocates independent ports for concurrent window MCP servers', async () => {
+  const callbacks = (name: string) => ({
+    listFolders: async () => [],
+    currentWorkspace: async () => ({
+      name,
+      workspaceUri: `serverless-sftp://${name}/srv/${name}`,
+      remoteRoot: `/srv/${name}`,
+      host: name
+    }),
+    list: async () => [],
+    read: async () => ({}),
+    write: async () => ({}),
+    search: async () => ({}),
+    run: async () => ({})
+  });
+  const first = new AgentMcpServer(0, 'first-token', callbacks('dev1'));
+  const second = new AgentMcpServer(0, 'second-token', callbacks('dev2'));
+  try {
+    await Promise.all([first.start(), second.start()]);
+    const firstUrl = new URL(first.url);
+    const secondUrl = new URL(second.url);
+    assert.notEqual(firstUrl.port, '0');
+    assert.notEqual(secondUrl.port, '0');
+    assert.notEqual(firstUrl.port, secondUrl.port);
+    assert.equal(first.running, true);
+    assert.equal(second.running, true);
+  } finally {
+    await Promise.all([first.stop(), second.stop()]);
+  }
+});

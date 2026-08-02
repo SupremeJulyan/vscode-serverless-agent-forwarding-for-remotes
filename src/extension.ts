@@ -12,8 +12,7 @@ import {
   AskpassCredentials, createAskpassCredentials, platformUsesAskpass
 } from './askpass';
 import {
-  CommandPlan, createPlatformAdapter, defaultAgentMcpPort,
-  platformExtensionStateKey
+  CommandPlan, createPlatformAdapter, platformExtensionStateKey
 } from './platform';
 import {
   commandExists, executeCaptured, missingExecutableName,
@@ -79,6 +78,11 @@ class ConfigActionRequiredError extends Error {
 
 function settings(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('serverlessRemote');
+}
+
+function agentMcpServerName(mountName: string): string {
+  const suffix = mountName.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `serverless-remote-${suffix || 'workspace'}`;
 }
 
 function configPath(): string {
@@ -645,6 +649,15 @@ async function forwardedMountName(requested?: string): Promise<string> {
   throw new Error('有多个 AI 转发目标，请提供 mountName');
 }
 
+function windowBoundMountName(boundMountName: string, requested?: string): string {
+  if (requested && requested !== boundMountName) {
+    throw new Error(
+      `MCP 服务已绑定远程窗口“${boundMountName}”，不能访问“${requested}”`
+    );
+  }
+  return boundMountName;
+}
+
 async function readRemoteAgentInstructions(mountName: string): Promise<string | undefined> {
   for (const name of ['AGENTS.override.md', 'AGENTS.md']) {
     try {
@@ -966,12 +979,16 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
       token = randomBytes(24).toString('hex');
       await context.secrets.store(agentMcpTokenSecret, token);
     }
+    const location = currentRemoteLocation();
+    if (!location) throw new Error('当前窗口不是 Serverless Remote 工作区');
+    const boundMountName = location.mountName;
     mcp = new AgentMcpServer(
-      settings().get<number>('agentMcpPort', 0)
-        || defaultAgentMcpPort(platformAdapter.kind),
+      settings().get<number>('agentMcpPort', 0),
       token,
       {
-        listFolders: () => forwardedFolders(context),
+        listFolders: async () => (await forwardedFolders(context)).filter(
+          (folder) => folder.name === boundMountName
+        ),
         currentWorkspace: async () => {
           const location = currentRemoteLocation();
           if (!location) return null;
@@ -989,12 +1006,20 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
             remoteInstructions: await readRemoteAgentInstructions(mount.name)
           };
         },
-        list: async (input) => remoteList({ ...input, mountName: await forwardedMountName(input.mountName) }),
-        read: async (input) => remoteRead({ ...input, mountName: await forwardedMountName(input.mountName) }),
-        write: async (input) => remoteWrite({ ...input, mountName: await forwardedMountName(input.mountName) }),
-        search: async (input) => remoteSearch({ ...input, mountName: await forwardedMountName(input.mountName) }),
+        list: async (input) => remoteList({
+          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+        }),
+        read: async (input) => remoteRead({
+          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+        }),
+        write: async (input) => remoteWrite({
+          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+        }),
+        search: async (input) => remoteSearch({
+          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
+        }),
         run: async (input) => executeRemoteCommand(context, {
-          ...input, mountName: await forwardedMountName(input.mountName)
+          ...input, mountName: windowBoundMountName(boundMountName, input.mountName)
         }),
         log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
       }
@@ -1026,6 +1051,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
     mountName: mount.name,
     remoteRoot: folder.remoteRoot,
     host: mount.host,
+    mcpServerName: agentMcpServerName(mount.name),
     mcpUrl: mcp.url
   });
 }
@@ -1094,7 +1120,7 @@ async function detectedClaudeCommand(): Promise<string | undefined> {
 }
 
 async function configureDetectedAgents(
-  context: vscode.ExtensionContext, server: AgentMcpServer
+  context: vscode.ExtensionContext, server: AgentMcpServer, serverName: string
 ): Promise<void> {
   const saved = context.globalState.get<unknown>(agentSetupCompletedKey);
   const configured = new Set(Array.isArray(saved) ? saved.filter(
@@ -1108,12 +1134,32 @@ async function configureDetectedAgents(
       claudeCommand ? '可用' : '未找到'
     }`
   );
-  const [codexStatus, claudeStatus] = await Promise.all([
+  const [legacyCodexStatus, legacyClaudeStatus] = await Promise.all([
     codexCommand
       ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
       : Promise.resolve(undefined),
     claudeCommand
       ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
+      : Promise.resolve(undefined)
+  ]);
+  await Promise.all([
+    codexCommand && legacyCodexStatus?.exitCode === 0
+      ? executeAgentMcpCommand({
+          command: codexCommand, args: ['mcp', 'remove', 'serverless-remote']
+        })
+      : Promise.resolve(undefined),
+    claudeCommand && legacyClaudeStatus?.exitCode === 0
+      ? executeAgentMcpCommand({
+          command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
+        })
+      : Promise.resolve(undefined)
+  ]);
+  const [codexStatus, claudeStatus] = await Promise.all([
+    codexCommand
+      ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', serverName] })
+      : Promise.resolve(undefined),
+    claudeCommand
+      ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', serverName] })
       : Promise.resolve(undefined)
   ]);
   const commandOutput = (result: Awaited<ReturnType<typeof executeAgentMcpCommand>> | undefined) =>
@@ -1122,8 +1168,10 @@ async function configureDetectedAgents(
   const claudeExists = claudeStatus?.exitCode === 0;
   const codexConfigured = codexExists && commandOutput(codexStatus).includes(server.url);
   const claudeConfigured = claudeExists && commandOutput(claudeStatus).includes(server.url);
-  if (!codexConfigured) configured.delete('codex');
-  if (!claudeConfigured) configured.delete('claude');
+  const codexKey = `codex:${serverName}`;
+  const claudeKey = `claude:${serverName}`;
+  if (!codexConfigured) configured.delete(codexKey);
+  if (!claudeConfigured) configured.delete(claudeKey);
   bridgeOutput?.appendLine(
     `[Agent MCP] 注册状态：Codex ${codexConfigured ? '已注册' : '未注册'}，Claude Code ${
       claudeConfigured ? '已注册' : '未注册'
@@ -1148,40 +1196,40 @@ async function configureDetectedAgents(
     return;
   }
   const failures: string[] = [];
-  if (codexCommand && !configured.has('codex')) {
+  if (codexCommand && !configured.has(codexKey)) {
     if (codexExists) {
       await executeAgentMcpCommand({
-        command: codexCommand, args: ['mcp', 'remove', 'serverless-remote']
+        command: codexCommand, args: ['mcp', 'remove', serverName]
       });
     }
     const result = await executeAgentMcpCommand({
       command: codexCommand,
-      args: ['mcp', 'add', 'serverless-remote', '--url', server.url]
+      args: ['mcp', 'add', serverName, '--url', server.url]
     });
     if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
       failures.push(`Codex: ${result.stderr || result.stdout}`);
     } else {
-      configured.add('codex');
+      configured.add(codexKey);
       bridgeOutput?.appendLine('[Agent MCP] Codex 注册成功');
     }
   }
-  if (claudeCommand && !configured.has('claude')) {
+  if (claudeCommand && !configured.has(claudeKey)) {
     if (claudeExists) {
       await executeAgentMcpCommand({
-        command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
+        command: claudeCommand, args: ['mcp', 'remove', serverName]
       });
     }
     const result = await executeAgentMcpCommand({
       command: claudeCommand,
       args: [
         'mcp', 'add', '--transport', 'http', '--scope', 'user',
-        'serverless-remote', server.url
+        serverName, server.url
       ]
     });
     if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
       failures.push(`Claude Code: ${result.stderr || result.stdout}`);
     } else {
-      configured.add('claude');
+      configured.add(claudeKey);
       bridgeOutput?.appendLine('[Agent MCP] Claude Code 注册成功');
     }
   }
@@ -1195,9 +1243,9 @@ async function configureDetectedAgents(
     );
     if (choice === copyAction) {
       await vscode.env.clipboard.writeText([
-        codexCommand ? `codex mcp add serverless-remote --url '${server.url}'` : '',
+        codexCommand ? `codex mcp add ${serverName} --url '${server.url}'` : '',
         claudeCommand
-          ? `claude mcp add --transport http --scope user serverless-remote '${server.url}'`
+          ? `claude mcp add --transport http --scope user ${serverName} '${server.url}'`
           : ''
       ].filter(Boolean).join('\n'));
     }
@@ -1229,7 +1277,7 @@ async function toggleAiForward(mount: MountConfig): Promise<void> {
   if (turningOn && current?.mountName === mount.name) {
     try {
       const server = await ensureAgentMcpServer(vscodeContext);
-      await configureDetectedAgents(vscodeContext, server);
+      await configureDetectedAgents(vscodeContext, server, agentMcpServerName(mount.name));
     } catch (error) {
       enabled.delete(mount.name);
       await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
@@ -1440,7 +1488,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (current && enabled.has(current.mountName)) {
       const server = await ensureAgentMcpServer(context);
       if (!server.portUnavailable) {
-        await configureDetectedAgents(context, server);
+        await configureDetectedAgents(context, server, agentMcpServerName(current.mountName));
         await publishAgentWorkspace(context);
       }
     }

@@ -351,10 +351,10 @@
         },
         "serverlessRemote.agentMcpPort": {
           "type": "number",
-          "minimum": 1024,
+          "minimum": 0,
           "maximum": 65535,
-          "default": 9848,
-          "description": "Loopback-only Streamable HTTP MCP port used by Codex, Claude Code, and other agents."
+          "default": 0,
+          "description": "Loopback-only Streamable HTTP MCP port. Use 0 (recommended) to allocate an independent port for each remote VS Code window."
         }
       }
     }
