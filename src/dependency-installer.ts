@@ -13,7 +13,7 @@ interface Distribution {
   name: string;
 }
 
-const requiredWslCommands = ['ssh', 'python3', 'flock'] as const;
+const requiredWslCommands = ['flock'] as const;
 
 export function parseOsRelease(contents: string): Distribution {
   const values = new Map<string, string>();
@@ -31,19 +31,19 @@ export function parseOsRelease(contents: string): Distribution {
 export function wslDependencyCommand(distribution: Distribution): string | undefined {
   const family = new Set([distribution.id, ...distribution.idLike]);
   if (family.has('debian') || family.has('ubuntu')) {
-    return 'apt update && apt install -y openssh-client python3 util-linux';
+    return 'apt update && apt install -y util-linux';
   }
   if (family.has('fedora') || family.has('rhel') || family.has('centos')) {
-    return 'dnf install -y openssh-clients python3 util-linux';
+    return 'dnf install -y util-linux';
   }
   if (family.has('arch') || family.has('manjaro')) {
-    return 'pacman -S --needed --noconfirm openssh python util-linux';
+    return 'pacman -S --needed --noconfirm util-linux';
   }
   if (family.has('suse') || family.has('opensuse')) {
-    return 'zypper --non-interactive install openssh-clients python3 util-linux';
+    return 'zypper --non-interactive install util-linux';
   }
   if (family.has('alpine')) {
-    return 'apk add openssh-client python3 util-linux';
+    return 'apk add util-linux';
   }
   return undefined;
 }
@@ -72,12 +72,12 @@ export async function installWslDependencies(reporter: InstallReporter): Promise
   const distribution = parseOsRelease(await readFile('/etc/os-release', 'utf8'));
   const installCommand = wslDependencyCommand(distribution);
   if (!installCommand) {
-    throw new Error(`未识别 ${distribution.name} 的包管理器，请手动安装 OpenSSH、Python 和 util-linux`);
+    throw new Error(`未识别 ${distribution.name} 的包管理器，请手动安装 util-linux`);
   }
 
   const wsl = '/mnt/c/Windows/System32/wsl.exe';
   const distro = process.env.WSL_DISTRO_NAME;
-  reporter.progress(`正在为 ${distribution.name} 安装 SSH 依赖…`, 20);
+  reporter.progress(`正在为 ${distribution.name} 安装 util-linux…`, 20);
   await run(wsl, [
     ...(distro ? ['-d', distro] : []),
     '-u', 'root', '--', 'sh', '-lc', installCommand

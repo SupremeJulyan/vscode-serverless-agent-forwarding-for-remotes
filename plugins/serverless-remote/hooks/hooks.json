@@ -1,0 +1,32 @@
+{
+  "description": "Discovers Serverless Remote workspaces and blocks accidental local execution.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/session-start.cjs\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\session-start.cjs\"",
+            "statusMessage": "Detecting Serverless Remote workspace",
+            "additionalContextLimit": 2000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/pre-tool-use.cjs\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\pre-tool-use.cjs\"",
+            "statusMessage": "Checking Serverless Remote routing"
+          }
+        ]
+      }
+    ]
+  }
+}

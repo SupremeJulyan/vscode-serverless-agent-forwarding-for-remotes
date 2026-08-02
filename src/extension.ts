@@ -24,6 +24,7 @@ import {
   passwordValueOffset
 } from './authentication';
 import { AgentMcpServer } from './agent-mcp';
+import { AgentWorkspacePublisher } from './agent-discovery';
 import { connectSftp } from './sftp/client';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import {
@@ -62,6 +63,8 @@ let vscodeContext: vscode.ExtensionContext;
 let pool: SftpConnectionPool;
 let registry: RemoteFolderRegistry;
 let provider: SftpFileSystemProvider;
+const agentWorkspacePublisher = new AgentWorkspacePublisher(randomBytes(12).toString('hex'));
+let agentWorkspaceHeartbeat: NodeJS.Timeout | undefined;
 const openingTerminalIds = new Set<string>();
 
 class ConfigActionRequiredError extends Error {
@@ -278,8 +281,9 @@ async function offerAgentForwardBeforeOpen(
 ): Promise<void> {
   const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
   if (enabled.has(mount.name)) {
-    const server = await ensureAgentMcpServer(context);
-    await configureDetectedAgents(context, server);
+    // The target folder opens in a new VS Code window.  Starting MCP here
+    // would bind its workspace callbacks to the source window instead.
+    if (!currentRemoteLocation()) await mcp?.stop();
     return;
   }
   const dismissed = new Set(
@@ -291,7 +295,7 @@ async function offerAgentForwardBeforeOpen(
     `是否为“${mount.name}”打开 Agent 转发？`,
     {
       modal: true,
-      detail: '在进入远程目录前完成 MCP 注册，使新窗口中的 Agent 可以在首次启动时加载远程工具。'
+      detail: '新的远程工作区窗口将启动 MCP，使 Agent 可以加载远程工具。'
     },
     enableAction
   );
@@ -301,15 +305,10 @@ async function offerAgentForwardBeforeOpen(
     return;
   }
   enabled.add(mount.name);
-  try {
-    const server = await ensureAgentMcpServer(context);
-    await context.globalState.update(aiForwardMountsKey, [...enabled]);
-    await configureDetectedAgents(context, server);
-  } catch (error) {
-    enabled.delete(mount.name);
-    await context.globalState.update(aiForwardMountsKey, [...enabled]);
-    throw error;
-  }
+  await context.globalState.update(aiForwardMountsKey, [...enabled]);
+  // A local source window may still own the fixed MCP port from an earlier
+  // session.  Release it so the new remote workspace window can own MCP.
+  if (!currentRemoteLocation()) await mcp?.stop();
 }
 
 async function openRemoteFolder(requested?: MountConfig): Promise<void> {
@@ -1006,6 +1005,51 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
   return mcp;
 }
 
+async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<void> {
+  const location = currentRemoteLocation();
+  const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  if (!location || !enabled.has(location.mountName) || !mcp?.running || mcp.portUnavailable) {
+    await agentWorkspacePublisher.remove();
+    return;
+  }
+  const config = await readConfig();
+  const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+  if (!mount) {
+    await agentWorkspacePublisher.remove();
+    return;
+  }
+  const folder = await ensureFolder(mount);
+  await agentWorkspacePublisher.publish({
+    focused: vscode.window.state.focused,
+    execution: 'remote',
+    workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
+    mountName: mount.name,
+    remoteRoot: folder.remoteRoot,
+    host: mount.host,
+    mcpUrl: mcp.url
+  });
+}
+
+function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
+  if (agentWorkspaceHeartbeat) clearInterval(agentWorkspaceHeartbeat);
+  const refresh = () => void publishAgentWorkspace(context).catch((error) => {
+    bridgeOutput?.appendLine(`[Agent discovery] ${error instanceof Error ? error.message : String(error)}`);
+  });
+  refresh();
+  agentWorkspaceHeartbeat = setInterval(refresh, 10_000);
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState(refresh),
+    vscode.workspace.onDidChangeWorkspaceFolders(refresh),
+    {
+      dispose: () => {
+        if (agentWorkspaceHeartbeat) clearInterval(agentWorkspaceHeartbeat);
+        agentWorkspaceHeartbeat = undefined;
+        void agentWorkspacePublisher.remove();
+      }
+    }
+  );
+}
+
 async function detectedCodexCommand(): Promise<string | undefined> {
   if (await commandExists('codex')) return 'codex';
   const extension = vscode.extensions.getExtension('openai.chatgpt');
@@ -1180,21 +1224,19 @@ async function toggleAiForward(mount: MountConfig): Promise<void> {
   } else {
     enabled.delete(mount.name);
   }
-  if (turningOn) {
+  await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
+  const current = currentRemoteLocation();
+  if (turningOn && current?.mountName === mount.name) {
     try {
       const server = await ensureAgentMcpServer(vscodeContext);
-      await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
       await configureDetectedAgents(vscodeContext, server);
     } catch (error) {
       enabled.delete(mount.name);
       await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
       throw error;
     }
-  } else if (enabled.size === 0) {
-    await vscodeContext.globalState.update(aiForwardMountsKey, []);
+  } else if (!turningOn && current?.mountName === mount.name) {
     await mcp?.stop();
-  } else {
-    await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
   }
   void vscode.window.showInformationMessage(
     `"${mount.name}" AI 转发已${turningOn ? '打开' : '关闭'}。${
@@ -1394,13 +1436,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Agent MCP: start and auto-configure on launch
   await guard(async () => {
     const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
-    if (enabled.size > 0) {
+    const current = currentRemoteLocation();
+    if (current && enabled.has(current.mountName)) {
       const server = await ensureAgentMcpServer(context);
       if (!server.portUnavailable) {
         await configureDetectedAgents(context, server);
+        await publishAgentWorkspace(context);
       }
     }
   });
+  startAgentWorkspacePublishing(context);
 
   // Status bar
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -1413,6 +1458,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
+  if (agentWorkspaceHeartbeat) clearInterval(agentWorkspaceHeartbeat);
+  await agentWorkspacePublisher.remove();
   await mcp?.stop();
   await pool?.close();
 }

@@ -1,0 +1,21 @@
+{
+  "name": "serverless-remote",
+  "version": "0.1.0",
+  "description": "Routes Codex file and command operations into an active Serverless Remote SSH workspace.",
+  "author": {
+    "name": "julyan"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Serverless Remote",
+    "shortDescription": "Safely route Codex into Serverless Remote SSH.",
+    "longDescription": "Discovers the active Serverless Remote SSH VS Code window, binds it to a Codex session, and prevents local tools from modifying a virtual remote workspace.",
+    "developerName": "julyan",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "Inspect and update the active Serverless Remote project.",
+      "Run tests in my active Serverless Remote workspace."
+    ]
+  }
+}

@@ -10,22 +10,20 @@ test('parses quoted os-release values', () => {
   });
 });
 
-test('installs the bundled WSL bridge runtime dependencies with apt', () => {
+test('installs only util-linux for the bundled WSL bridge', () => {
   const command = wslDependencyCommand({
     id: 'ubuntu', idLike: ['debian'], name: 'Ubuntu'
   });
   assert.match(command ?? '', /^apt update && apt install -y /);
-  for (const dependency of ['openssh-client', 'python3', 'util-linux']) {
-    assert.match(command ?? '', new RegExp(`\\b${dependency}\\b`));
-  }
-  assert.doesNotMatch(command ?? '', /sshfs|git|wsl-vpn-ssh-bridge/);
+  assert.match(command ?? '', /\butil-linux\b/);
+  assert.doesNotMatch(command ?? '', /openssh|python|sshpass|sshfs|git|wsl-vpn-ssh-bridge/);
 });
 
 test('supports the package-manager families used by main', () => {
   for (const id of ['fedora', 'arch', 'opensuse', 'alpine']) {
     const command = wslDependencyCommand({ id, idLike: [], name: id }) ?? '';
-    assert.match(command, /openssh/);
-    assert.doesNotMatch(command, /sshpass/);
+    assert.match(command, /util-linux/);
+    assert.doesNotMatch(command, /openssh|python|sshpass/);
   }
   assert.equal(wslDependencyCommand({ id: 'unknown', idLike: [], name: 'Unknown' }), undefined);
 });

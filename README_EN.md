@@ -74,6 +74,28 @@ Git, and operating-system inspection. Tools are restricted to forwarding-enabled
 remote roots. A root `AGENTS.override.md` or `AGENTS.md` is returned as workspace
 guidance without writing instructions into the local home directory.
 
+### Codex plugin (Windows app / CLI / VS Code)
+
+The `plugins/serverless-remote` Codex plugin discovers the focused Serverless
+Remote VS Code window for each new session. Its `SessionStart` hook binds that
+window to the Codex session and requires `resolve_workspace_execution` first.
+Its `PreToolUse` hook prevents that bound session from accidentally using local
+shell or local file-editing tools for the virtual workspace.
+
+For local development, install it with:
+
+```sh
+codex plugin marketplace add /path/to/vscode-serverless-remote-ssh
+codex plugin add serverless-remote@personal
+```
+
+Review and trust the plugin hooks in Codex, restart Codex, and start a new
+conversation. Native Windows Codex reads window discovery records from
+`%USERPROFILE%`; WSL mode checks both the WSL home and the Windows user profile.
+The VS Code extension must remain running with AI forwarding enabled for the
+mount. If multiple remote windows are open, a new session prefers the focused,
+most recently updated window.
+
 ## Limitations
 
 - Local command-line programs cannot access `serverless-sftp://` files.

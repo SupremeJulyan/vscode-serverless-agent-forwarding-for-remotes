@@ -82,6 +82,25 @@ Agent 会在会话开始时通过 `resolve_workspace_execution` 识别当前 SFT
 限制在已开启转发的 `remote_path` 内。远端根目录的 `AGENTS.override.md` 或
 `AGENTS.md` 会作为工作区指引随路由结果提供给 Agent，不会写入本机用户目录。
 
+### Codex 插件（Windows App / CLI / VS Code）
+
+仓库内的 `plugins/serverless-remote` Codex 插件会为每个新会话发现当前获得焦点的
+Serverless Remote VS Code 窗口。发现远程窗口后，`SessionStart` hook 会把该窗口绑定到
+Codex 会话并要求首先调用 `resolve_workspace_execution`；`PreToolUse` hook 会阻止该会话
+使用本地 shell 或本地文件编辑工具误操作虚拟工作区。
+
+本地开发安装：
+
+```sh
+codex plugin marketplace add /path/to/vscode-serverless-remote-ssh
+codex plugin add serverless-remote@personal
+```
+
+安装后在 Codex 中审核并信任插件 hooks，然后重启 Codex 并新建对话。Windows Codex
+原生模式使用 `%USERPROFILE%` 中的窗口发现记录；WSL 模式会同时尝试 WSL home 和
+Windows 用户目录。VS Code 扩展必须保持运行，并为相应挂载开启“AI 转发”。如果同时
+打开多个远程窗口，创建会话时优先绑定当前获得焦点且状态最新的窗口。
+
 ## 限制
 
 - 本地命令行程序不能直接访问 `serverless-sftp://` 文件。
