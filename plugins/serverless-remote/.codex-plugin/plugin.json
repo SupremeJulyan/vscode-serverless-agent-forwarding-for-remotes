@@ -1,11 +1,12 @@
 {
   "name": "serverless-remote",
-  "version": "0.1.0+codex.20260802114234",
+  "version": "0.1.0+codex.20260802123510",
   "description": "Routes Codex file and command operations into an active Serverless Remote SSH workspace.",
   "author": {
     "name": "julyan"
   },
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Serverless Remote",
     "shortDescription": "Safely route Codex into Serverless Remote SSH.",

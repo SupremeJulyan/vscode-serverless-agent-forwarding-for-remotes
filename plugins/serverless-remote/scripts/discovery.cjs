@@ -61,6 +61,25 @@ function activeWorkspace() {
   return records[0] || null;
 }
 
+function workspaceForBinding(binding) {
+  if (!binding?.mountName) return null;
+  const now = Date.now();
+  const records = [];
+  for (const directory of discoveryDirectories()) {
+    try {
+      for (const name of fs.readdirSync(directory)) {
+        if (!name.endsWith('.json')) continue;
+        const record = readRecord(path.join(directory, name), now);
+        if (record?.mountName === binding.mountName) records.push(record);
+      }
+    } catch {
+      // Missing discovery directories mean the bound workspace is offline.
+    }
+  }
+  records.sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+  return records[0] || null;
+}
+
 function bindingPath(sessionId) {
   const dataDirectory = process.env.PLUGIN_DATA
     || path.join(os.homedir(), '.serverless-remote-ssh', 'codex-plugin');
@@ -90,4 +109,4 @@ function readBinding(sessionId) {
   }
 }
 
-module.exports = { activeWorkspace, readBinding, writeBinding };
+module.exports = { activeWorkspace, readBinding, workspaceForBinding, writeBinding };

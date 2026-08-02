@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { access, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -488,11 +488,11 @@ async function disconnect(requested?: MountConfig): Promise<void> {
   const shared = registry.values().some((folder) => folder.hostName === mount.host);
   if (!shared) await pool.disconnect(resolveMount(config, mount).hostConfig.name);
 
-  // Clean up AI forwarding state
-  const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
-  enabled.delete(mount.name);
-  await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
-  if (enabled.size === 0) await mcp?.stop();
+  // Keep the Agent-forwarding preference so reconnecting this mount can
+  // restore existing Codex conversations through the stable plugin router.
+  // Only the explicit toggle command clears the preference.
+  await mcp?.stop();
+  await agentWorkspacePublisher.remove();
 }
 
 // ---- Open Config ----
@@ -1150,10 +1150,7 @@ async function configureDetectedAgents(
       claudeCommand ? '可用' : '未找到'
     }`
   );
-  const [legacyCodexStatus, legacyClaudeStatus, codexPluginStatus] = await Promise.all([
-    codexCommand
-      ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
-      : Promise.resolve(undefined),
+  const [legacyClaudeStatus, codexPluginStatus] = await Promise.all([
     claudeCommand
       ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
       : Promise.resolve(undefined),
@@ -1162,11 +1159,6 @@ async function configureDetectedAgents(
       : Promise.resolve(undefined)
   ]);
   await Promise.all([
-    codexCommand && legacyCodexStatus?.exitCode === 0
-      ? executeAgentMcpCommand({
-          command: codexCommand, args: ['mcp', 'remove', 'serverless-remote']
-        })
-      : Promise.resolve(undefined),
     claudeCommand && legacyClaudeStatus?.exitCode === 0
       ? executeAgentMcpCommand({
           command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
@@ -1185,27 +1177,37 @@ async function configureDetectedAgents(
     `${result?.stdout ?? ''}\n${result?.stderr ?? ''}`;
   const codexExists = codexStatus?.exitCode === 0;
   const claudeExists = claudeStatus?.exitCode === 0;
-  const codexConfigured = codexExists && commandOutput(codexStatus).includes(server.url);
   const claudeConfigured = claudeExists && commandOutput(claudeStatus).includes(server.url);
-  const codexPluginInstalled = codexPluginStatus?.exitCode === 0
-    && /^serverless-remote@personal\s+installed\b/im.test(commandOutput(codexPluginStatus));
-  const codexKey = `codex:${serverName}`;
+  const installedPluginMatch = /^serverless-remote@personal\s+installed(?:, enabled)?\s+(\S+)/im
+    .exec(commandOutput(codexPluginStatus));
+  const codexPluginInstalled = Boolean(installedPluginMatch);
+  let bundledPluginVersion: string | undefined;
+  try {
+    const manifest = JSON.parse(await readFile(path.join(
+      context.extensionPath, 'plugins', 'serverless-remote', '.codex-plugin', 'plugin.json'
+    ), 'utf8')) as { version?: unknown };
+    if (typeof manifest.version === 'string') bundledPluginVersion = manifest.version;
+  } catch {
+    // Plugin installation below will report the actionable packaging failure.
+  }
+  const codexPluginCurrent = codexPluginInstalled
+    && Boolean(bundledPluginVersion && installedPluginMatch?.[1] === bundledPluginVersion);
   const claudeKey = `claude:${serverName}`;
   const codexPluginKey = `codex-plugin:${codexPluginSelector}`;
-  if (!codexConfigured) configured.delete(codexKey);
+  configured.delete(`codex:${serverName}`);
   if (!claudeConfigured) configured.delete(claudeKey);
-  if (!codexPluginInstalled) configured.delete(codexPluginKey);
+  if (!codexPluginCurrent) configured.delete(codexPluginKey);
   bridgeOutput?.appendLine(
-    `[Agent MCP] 注册状态：Codex ${codexConfigured ? '已注册' : '未注册'}，Claude Code ${
+    `[Agent MCP] 注册状态：Codex 动态 MCP ${codexExists ? '待移除' : '无需注册'}，Claude Code ${
       claudeConfigured ? '已注册' : '未注册'
-    }；Codex 插件 ${codexPluginInstalled ? '已安装' : '未安装'}`
+    }；Codex 插件 ${codexPluginCurrent ? '已是当前版本' : codexPluginInstalled ? '待更新' : '未安装'}`
   );
   const agents = [
-    ...(codexCommand && !codexConfigured ? ['Codex'] : []),
     ...(claudeCommand && !claudeConfigured ? ['Claude Code'] : [])
   ];
-  const needsCodexPlugin = Boolean(codexCommand && !codexPluginInstalled);
-  if (agents.length === 0 && !needsCodexPlugin) {
+  const needsCodexPlugin = Boolean(codexCommand && !codexPluginCurrent);
+  const needsCodexMcpCleanup = Boolean(codexCommand && codexExists);
+  if (agents.length === 0 && !needsCodexPlugin && !needsCodexMcpCleanup) {
     await context.globalState.update(agentSetupCompletedKey, [...configured]);
     return;
   }
@@ -1217,8 +1219,9 @@ async function configureDetectedAgents(
       detail: [
         agents.length > 0 ? `注册 ${agents.join(' 和 ')} MCP。` : '',
         needsCodexPlugin
-          ? '安装 Codex 插件；该插件包含会话发现和本地工具防误操作 hooks，Codex 会要求审核并信任。'
+          ? '安装 Codex 插件；插件提供固定 MCP 路由、会话发现和本地工具防误操作 hooks，Codex 会要求审核并信任。'
           : '',
+        needsCodexMcpCleanup ? `移除旧的 Codex 动态 MCP 配置 ${serverName}。` : '',
         `MCP 服务仅监听本机：${server.url.replace(/token=.*/, 'token=<hidden>')}`
       ].filter(Boolean).join('\n')
     },
@@ -1229,7 +1232,7 @@ async function configureDetectedAgents(
     return;
   }
   const failures: string[] = [];
-  if (codexCommand && needsCodexPlugin && !configured.has(codexPluginKey)) {
+  if (codexCommand && needsCodexPlugin) {
     const marketplace = await executeAgentMcpCommand({
       command: codexCommand,
       args: ['plugin', 'marketplace', 'add', context.extensionPath]
@@ -1250,21 +1253,14 @@ async function configureDetectedAgents(
       }
     }
   }
-  if (codexCommand && !configured.has(codexKey)) {
-    if (codexExists) {
-      await executeAgentMcpCommand({
-        command: codexCommand, args: ['mcp', 'remove', serverName]
-      });
-    }
+  if (codexCommand && needsCodexMcpCleanup) {
     const result = await executeAgentMcpCommand({
-      command: codexCommand,
-      args: ['mcp', 'add', serverName, '--url', server.url]
+      command: codexCommand, args: ['mcp', 'remove', serverName]
     });
-    if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
-      failures.push(`Codex: ${result.stderr || result.stdout}`);
+    if (result.exitCode !== 0) {
+      failures.push(`Codex 旧 MCP 清理: ${result.stderr || result.stdout}`);
     } else {
-      configured.add(codexKey);
-      bridgeOutput?.appendLine('[Agent MCP] Codex 注册成功');
+      bridgeOutput?.appendLine(`[Agent MCP] 已移除 Codex 旧动态 MCP：${serverName}`);
     }
   }
   if (claudeCommand && !configured.has(claudeKey)) {
@@ -1300,7 +1296,6 @@ async function configureDetectedAgents(
         codexCommand && needsCodexPlugin
           ? `codex plugin marketplace add '${context.extensionPath}'\ncodex plugin add ${codexPluginSelector}`
           : '',
-        codexCommand ? `codex mcp add ${serverName} --url '${server.url}'` : '',
         claudeCommand
           ? `claude mcp add --transport http --scope user ${serverName} '${server.url}'`
           : ''
@@ -1309,7 +1304,7 @@ async function configureDetectedAgents(
     return;
   }
   void vscode.window.showInformationMessage(
-    `${agents.join(' 和 ')} 已配置。新打开的窗口会自动加载 MCP；如果 Agent 已在当前窗口运行，请重启对应 Agent/扩展。`
+    `Agent 集成已配置。Codex 使用插件内置的固定 MCP 路由；首次安装或更新插件后，请重启 Codex 并新建一次对话。`
   );
 }
 

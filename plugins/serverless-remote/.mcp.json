@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "serverless-remote": {
+      "command": "node",
+      "args": ["./scripts/mcp-router.cjs"],
+      "cwd": "."
+    }
+  }
+}

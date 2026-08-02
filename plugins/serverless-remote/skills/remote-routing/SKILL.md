@@ -10,4 +10,4 @@ description: Route code reading, editing, Git, build, test, package, process, an
 3. Use only `remote_list`, `remote_read`, `remote_search`, and `remote_write` for workspace files.
 4. Use only `run_remote_command` for Git, builds, tests, package managers, processes, services, and shell commands.
 5. Never substitute local shell commands, `apply_patch`, Edit, Write, or local filesystem tools for a remote workspace.
-6. If routing cannot be resolved or the MCP server is unavailable, stop and tell the user to enable AI forwarding in Serverless Remote SSH and start a new Codex conversation.
+6. If routing reports `REMOTE_DISCONNECTED`, stop and tell the user to reconnect the same mount in Serverless Remote SSH, then retry in this conversation. A new conversation is not required.

@@ -77,20 +77,21 @@ guidance without writing instructions into the local home directory.
 
 ### Codex plugin (Windows app / CLI / VS Code)
 
-Each AI-forwarded remote VS Code window starts an MCP server on an independent
-dynamically allocated port and registers it as `serverless-remote-<mountName>`.
-For example, `dev1`, `dev2`, and `dev3` expose three separate services. Each
-service is restricted to its bound mount and rejects another `mountName`.
+Each Agent-forwarded remote VS Code window starts an MCP server on an independent
+dynamically allocated port. The Codex plugin provides a stable stdio MCP router
+that resolves the latest window port from the conversation's mount binding on every call.
+Each window service is restricted to its bound mount and rejects another `mountName`.
 
 The `plugins/serverless-remote` Codex plugin discovers the focused Serverless
 Remote VS Code window for each new session. Its `SessionStart` hook binds that
-window to the Codex session and requires `resolve_workspace_execution` from
-that window's exact MCP server first.
-Its `PreToolUse` hook prevents that bound session from accidentally using local
-shell or local file-editing tools for the virtual workspace.
+mount to the Codex session. Its `PreToolUse` hook injects the session ID into
+router calls and prevents that bound session from accidentally using local shell
+or local file-editing tools for the virtual workspace. Tools return
+`REMOTE_DISCONNECTED` while the window is offline and automatically follow the
+new port when the same mount reconnects.
 
-After you enable AI forwarding and confirm one-click setup, the extension automatically registers
-the MCP server and installs the `serverless-remote` Codex plugin from the extension directory.
+After you enable Agent forwarding and confirm one-click setup, the extension installs the
+`serverless-remote` Codex plugin and its stable MCP router from the extension directory.
 Codex will ask you to review and trust the plugin hooks; restart Codex and start a new conversation
 after installation.
 
@@ -104,8 +105,9 @@ codex plugin add serverless-remote@personal
 Review and trust the plugin hooks in Codex, restart Codex, and start a new
 conversation. Native Windows Codex reads window discovery records from
 `%USERPROFILE%`; WSL mode checks both the WSL home and the Windows user profile.
-The VS Code extension must remain running with AI forwarding enabled for the
-mount. If multiple remote windows are open, a new session prefers the focused,
+The VS Code extension must remain running with Agent forwarding enabled for the
+mount. Disconnecting SFTP preserves that preference, so the same conversation resumes after the
+mount reconnects. If multiple remote windows are open, a new session prefers the focused,
 most recently updated window. Keep `serverlessRemote.agentMcpPort` at its
 default value of `0`; configuring a fixed port reintroduces multi-window port
 collisions.

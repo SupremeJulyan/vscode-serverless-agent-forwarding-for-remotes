@@ -71,3 +71,20 @@ test('does not block sessions that were not bound to a remote window', async () 
   assert.equal(result.exitCode, 0, result.stderr);
   assert.equal(result.stdout, '');
 });
+
+test('injects the Codex session id into bundled MCP tool calls', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-plugin-'));
+  const pluginData = path.join(home, 'plugin-data');
+  await mkdir(path.join(pluginData, 'bindings'), { recursive: true });
+  await writeFile(path.join(pluginData, 'bindings', 'session-one.json'), JSON.stringify({
+    version: 1, sessionId: 'session-one', instanceId: 'window-one', mountName: 'project'
+  }));
+  const result = await runHook('pre-tool-use.cjs', {
+    session_id: 'session-one', hook_event_name: 'PreToolUse',
+    tool_name: 'mcp__serverless-remote__remote_read',
+    tool_input: { path: 'README.md' }
+  }, { ...process.env, HOME: home, USERPROFILE: '', PLUGIN_DATA: pluginData });
+  const output = JSON.parse(result.stdout).hookSpecificOutput;
+  assert.equal(output.permissionDecision, 'allow');
+  assert.deepEqual(output.updatedInput, { path: 'README.md', _sessionId: 'session-one' });
+});
