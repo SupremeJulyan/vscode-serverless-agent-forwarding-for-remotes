@@ -36,3 +36,20 @@ export async function ensureAgentCwdPlaceholder(
   await mkdir(localPath, { recursive: true });
   return { localPath, created };
 }
+
+/** Creates the local empty directory that represents a remote workspace subdirectory. */
+export async function ensureAgentCwdSubdirectory(
+  localRoot: string, remoteRoot: string, remotePath: string
+): Promise<string> {
+  const relative = path.posix.relative(
+    path.posix.normalize(remoteRoot), path.posix.normalize(remotePath)
+  );
+  if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
+    throw new Error(`Agent cwd path is outside the remote root: ${remotePath}`);
+  }
+  const localPath = relative
+    ? path.join(localRoot, ...relative.split('/'))
+    : localRoot;
+  await mkdir(localPath, { recursive: true });
+  return localPath;
+}

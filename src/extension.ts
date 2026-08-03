@@ -25,7 +25,7 @@ import {
 import { AgentMcpServer } from './agent-mcp';
 import { AgentHttpRouter } from './agent-http-router';
 import { AgentWorkspacePublisher } from './agent-discovery';
-import { ensureAgentCwdPlaceholder } from './agent-cwd';
+import { ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory } from './agent-cwd';
 import { connectSftp } from './sftp/client';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import {
@@ -361,6 +361,8 @@ async function switchRemoteDirectory(): Promise<void> {
   if ((await session.stat(resolved)).type !== 'directory') {
     throw new Error(`远程路径不是目录：${resolved}`);
   }
+  const localRoot = vscode.Uri.from({ scheme: 'file', path: folder.workspaceRoot }).fsPath;
+  await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
   agentTrace('Open', `当前窗口切换远程目录：${location.remotePath} -> ${resolved}`);
   await vscode.commands.executeCommand(
     'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), false

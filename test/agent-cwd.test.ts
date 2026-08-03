@@ -3,7 +3,7 @@ import { lstat, mkdtemp } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { ensureAgentCwdPlaceholder } from '../src/agent-cwd';
+import { ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory } from '../src/agent-cwd';
 
 test('creates a real cwd below extension storage', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'agent-cwd-'));
@@ -23,4 +23,18 @@ test('uses separate cwd directories for mounts with the same remote root', async
   const first = await ensureAgentCwdPlaceholder('/srv/project', temporary, 'first');
   const second = await ensureAgentCwdPlaceholder('/srv/project', temporary, 'second');
   assert.notEqual(first.localPath, second.localPath);
+});
+
+test('creates a real cwd for a switched remote subdirectory', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'agent-cwd-subdirectory-'));
+  const root = await ensureAgentCwdPlaceholder('/home/user', temporary, 'home');
+  const nested = await ensureAgentCwdSubdirectory(
+    root.localPath, '/home/user', '/home/user/zhuyuan/project'
+  );
+  assert.equal(nested, path.join(root.localPath, 'zhuyuan', 'project'));
+  assert.equal((await lstat(nested)).isDirectory(), true);
+  await assert.rejects(
+    ensureAgentCwdSubdirectory(root.localPath, '/home/user', '/home/other'),
+    /outside the remote root/
+  );
 });
