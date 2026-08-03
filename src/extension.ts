@@ -25,6 +25,7 @@ import {
 import { AgentMcpServer } from './agent-mcp';
 import { AgentHttpRouter } from './agent-http-router';
 import { AgentWorkspacePublisher } from './agent-discovery';
+import { ensureAgentCwdPlaceholder } from './agent-cwd';
 import { connectSftp } from './sftp/client';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import {
@@ -1374,6 +1375,7 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
     await agentWorkspacePublisher.remove();
   }
   if (enabledValue) {
+    await prepareAgentCwd(mount);
     agentTrace('Preference', '先启动固定 HTTP 路由并注册 Agent，再启动当前窗口服务');
     startAgentHttpRouterLeadership(vscodeContext);
     integrationSucceeded = await configureDetectedAgents(vscodeContext, true);
@@ -1397,6 +1399,27 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
           : '所有转发均已关闭，但固定 MCP 移除失败，请查看输出。'
         : '其他已启用挂载继续共用固定 MCP。'}`
   );
+}
+
+async function prepareAgentCwd(mount: MountConfig): Promise<void> {
+  const folder = await ensureFolder(mount);
+  try {
+    const placeholder = await ensureAgentCwdPlaceholder(
+      folder.remoteRoot, vscodeContext.globalStorageUri.fsPath
+    );
+    agentTrace(
+      'CWD',
+      placeholder.linkPath
+        ? `${placeholder.created ? '已创建' : '已存在'} Agent cwd 链接：${placeholder.linkPath} -> ${placeholder.targetPath}`
+        : `Agent cwd 已可用：${placeholder.localPath}`
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    bridgeOutput?.appendLine(`[Agent CWD] 无法为 ${folder.remoteRoot} 创建本机占位链接：${detail}`);
+    void vscode.window.showWarningMessage(
+      `Serverless Remote SSH：无法创建 Agent cwd 占位链接 ${folder.remoteRoot}。Claude Code 可能因 ENOENT 无法启动，请查看输出。`
+    );
+  }
 }
 
 // ---- Guard / Error Handling (aligned with main) ----
@@ -1621,6 +1644,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await configureDetectedAgents(context, true);
       if (current && enabled.has(current.mountName)) {
         agentTrace('Activate', `挂载 ${current.mountName} 已启用，启动窗口动态 MCP 后端`);
+        const config = await readConfig();
+        const mount = config.mounts.find((candidate) => candidate.name === current.mountName);
+        if (mount) await prepareAgentCwd(mount);
         const server = await ensureAgentMcpServer(context);
         if (!server.portUnavailable) {
           await publishAgentWorkspace(context);

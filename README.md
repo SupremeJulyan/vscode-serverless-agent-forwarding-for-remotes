@@ -88,6 +88,12 @@ Claude Code 注册同一个由扩展进程托管的固定 Streamable HTTP MCP �
 当前获得焦点且状态最新的窗口；显式提供 `mountName` 时选择对应的活动挂载。窗口服务只能
 访问其绑定挂载，不能通过请求参数跨窗口访问。
 
+某些 Agent 扩展仍会把虚拟 URI 的 POSIX 路径当成本机 cwd 并在启动时调用
+`lstat` 或创建 Git watcher。开启 Agent 转发时，扩展会在用户级扩展存储中创建空的
+占位目录，并在第一个不存在的本机路径段建立 Windows Junction 或 Linux/macOS
+目录符号链接。该目录不包含或同步远程文件，只用于让 Agent 完成本机启动。扩展不会
+覆盖已存在的本机路径；如果父目录权限不允许创建链接，会在输出面板中报告。
+
 窗口发现、目标选择、动态端口路由、断线判断、挂载校验和远程工具说明全部由扩展内置的
 HTTP 路由器完成，不安装 Codex 插件、Skill 或 hooks。多个 VS Code 窗口通过固定端口选出
 一个 Router Leader；Leader 关闭后，其他窗口会自动接管。MCP instructions

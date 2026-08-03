@@ -83,6 +83,14 @@ The router resolves the target window's latest port on every call. Calls without
 use the focused, most recently updated window; an explicit `mountName` selects that active
 mount. Each window service remains restricted to its own mount.
 
+Some Agent extensions still treat the virtual URI's POSIX path as a native cwd and call
+`lstat` or start a Git watcher during startup. When Agent forwarding is enabled, this
+extension creates an empty backing directory in per-user extension storage and places a
+Windows junction or Linux/macOS directory symlink at the first missing native path
+component. It contains no remote files and exists only to let the Agent finish native
+startup. Existing native paths are never replaced; permission failures are reported in
+the output channel.
+
 Window discovery, target selection, dynamic-port routing, disconnect detection,
 mount validation, and remote-tool guidance all live in the extension-hosted HTTP router. VS Code
 windows elect one router leader by claiming the fixed port, and another window takes over when
