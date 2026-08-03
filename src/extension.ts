@@ -53,7 +53,7 @@ const aiForwardMountsKey = platformStateKey('aiForwardMounts');
 const defaultConfigPath = '~/.safs/config.json';
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
-const openRemoteTerminalAction = 'Open Remote Terminal';
+const reconnectRemoteTerminalAction = '重连终端';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
 
 let output: vscode.OutputChannel;
@@ -71,6 +71,10 @@ const agentWorkspacePublisher = new AgentWorkspacePublisher(randomBytes(12).toSt
 let agentWorkspaceHeartbeat: NodeJS.Timeout | undefined;
 let lastAgentDiscoveryState = '';
 const openingTerminalIds = new Set<string>();
+const managedRemoteTerminals = new Map<vscode.Terminal, {
+  mount: MountConfig;
+  remoteCwd: string;
+}>();
 
 class ConfigActionRequiredError extends Error {
   constructor(
@@ -390,22 +394,18 @@ function currentRemoteLocation(): { mountName: string; remotePath: string } | un
 
 // ---- openTerminal (aligned with main) ----
 
-function isManagedRemoteTerminal(terminal: vscode.Terminal): boolean {
-  const options = terminal.creationOptions;
-  return 'env' in options && typeof options.env?.[terminalIdentityEnv] === 'string';
-}
-
 async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promise<void> {
-  if (!isManagedRemoteTerminal(terminal)
-    || terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
+  const reopen = managedRemoteTerminals.get(terminal);
+  managedRemoteTerminals.delete(terminal);
+  if (!reopen || terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
     return;
   }
   const selected = await vscode.window.showInformationMessage(
-    `远程终端"${terminal.name}"已退出。请运行"SAFS: Open Remote Terminal"重新打开。`,
-    openRemoteTerminalAction
+    `远程终端“${terminal.name}”已退出。`,
+    reconnectRemoteTerminalAction
   );
-  if (selected === openRemoteTerminalAction) {
-    await vscode.commands.executeCommand(`${commandPrefix}.openTerminal`);
+  if (selected === reconnectRemoteTerminalAction) {
+    await openTerminal(vscodeContext, reopen.mount, reopen.remoteCwd, undefined, true);
   }
 }
 
@@ -490,6 +490,7 @@ async function openTerminal(
         isTransient: true
       });
     performanceLine(`${mount.name} SSH 终端创建（不含远端握手）`, terminalStartedAt);
+    managedRemoteTerminals.set(terminal, { mount, remoteCwd });
     if (credentials) {
       const disposable = vscode.window.onDidCloseTerminal((closed) => {
         if (closed === terminal) {

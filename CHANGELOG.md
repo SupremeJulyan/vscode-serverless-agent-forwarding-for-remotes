@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- Show a reconnect action when a SAFS remote terminal exits, including built-in SSH terminals, and reopen it at the same remote directory.
+
 ## 1.0.2
 
 - Enable OpenSSH connection reuse for interactive terminals on every platform, with automatic fallback to a direct connection when reuse is unavailable.
