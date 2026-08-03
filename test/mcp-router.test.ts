@@ -64,6 +64,8 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     await router.start();
     assert.equal(router.leader, true);
     await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
+    assert.deepEqual(await client.listResources(), { resources: [] });
+    assert.deepEqual(await client.listResourceTemplates(), { resourceTemplates: [] });
 
     workspaces = [record('old-a', first.url)];
     const route = await client.callTool({

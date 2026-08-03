@@ -2,6 +2,9 @@ import * as http from 'node:http';
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import {
+  ListResourcesRequestSchema, ListResourceTemplatesRequestSchema
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 export interface RemoteFolderInfo {
@@ -56,6 +59,12 @@ export class AgentMcpServer {
           + 'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, and run_remote_command for workspace operations. Never substitute the local filesystem or local shell. '
           + 'mountName may be omitted to target the active forwarded remote workspace.'
       }
+    );
+    server.server.registerCapabilities({ resources: {} });
+    server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+    server.server.setRequestHandler(
+      ListResourceTemplatesRequestSchema,
+      async () => ({ resourceTemplates: [] })
     );
     const result = (value: unknown) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }]

@@ -29,6 +29,8 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
   const client = new Client({ name: 'agent-mcp-test', version: '1.0.0' });
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    assert.deepEqual(await client.listResources(), { resources: [] });
+    assert.deepEqual(await client.listResourceTemplates(), { resourceTemplates: [] });
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
       'current_remote_workspace',

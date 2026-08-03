@@ -2,6 +2,9 @@ import * as http from 'node:http';
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import {
+  ListResourcesRequestSchema, ListResourceTemplatesRequestSchema
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
   DiscoveredAgentWorkspace, agentDiscoveryDirectories, discoverAgentWorkspaces
@@ -197,6 +200,12 @@ export class AgentHttpRouter {
           'Reuse the mountName returned by resolve_workspace_execution for every later tool call so background work stays bound to the same remote window.'
         ].join(' ')
       }
+    );
+    server.server.registerCapabilities({ resources: {} });
+    server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+    server.server.setRequestHandler(
+      ListResourceTemplatesRequestSchema,
+      async () => ({ resourceTemplates: [] })
     );
     const register = (
       name: string, title: string, description: string,
