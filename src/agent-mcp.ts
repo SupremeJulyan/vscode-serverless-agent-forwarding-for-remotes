@@ -48,7 +48,7 @@ export class AgentMcpServer {
 
   private createProtocolServer(): McpServer {
     const server = new McpServer(
-      { name: 'serverless-remote-ssh', version: '2.0.0' },
+      { name: 'serverless-remote-ssh', version: '2.0.1' },
       {
         instructions:
           'This VS Code workspace may use the serverless-sftp virtual filesystem. Virtual remote files are NOT present in the agent host filesystem. '

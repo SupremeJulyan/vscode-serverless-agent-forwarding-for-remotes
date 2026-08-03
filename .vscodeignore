@@ -1,6 +1,7 @@
 .vscode/**
 src/**
 test/**
+resources/agent-mcp/**
 tsconfig.json
 esbuild.js
 node_modules/**

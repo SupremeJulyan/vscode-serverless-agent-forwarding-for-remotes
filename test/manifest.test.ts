@@ -21,7 +21,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '2.0.0');
+  assert.equal(manifest.version, '2.0.1');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:serverless-sftp'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
   assert.deepEqual(manifest.extensionKind, ['workspace']);
@@ -42,9 +42,11 @@ test('shows separate Agent forwarding actions for enabled and disabled mounts', 
     && item.when?.includes('aiEnabled')));
 });
 
-test('packages Agent integration as a standalone MCP router without a Codex plugin', async () => {
-  await access(new URL('../resources/agent-mcp/mcp-router.cjs', import.meta.url));
-  await access(new URL('../resources/agent-mcp/discovery.cjs', import.meta.url));
+test('packages Agent integration without a spawned stdio router or Codex plugin', async () => {
+  await access(new URL('../src/agent-http-router.ts', import.meta.url));
+  const extensionSource = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
+  assert.equal(extensionSource.includes('mcp-router.cjs'), false);
+  assert.equal(extensionSource.includes("'--', 'node'"), false);
   await assert.rejects(access(new URL(
     '../plugins/serverless-remote/.codex-plugin/plugin.json', import.meta.url
   )));
@@ -63,6 +65,12 @@ test('uses only the unified cross-platform config path', async () => {
       'serverlessRemote.agentForwardingAgents'
     ]?.default,
     ['codex', 'claudeCode']
+  );
+  assert.equal(
+    manifest.contributes?.configuration?.properties?.[
+      'serverlessRemote.agentHttpRouterPort'
+    ]?.default,
+    9848
   );
   const matches = manifest.contributes?.jsonValidation?.flatMap((item) => item.fileMatch ?? []);
   assert.deepEqual(matches, ['**/.serverless-remote-ssh/config.json']);

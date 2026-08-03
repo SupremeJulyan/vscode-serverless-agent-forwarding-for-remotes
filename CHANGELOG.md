@@ -1,5 +1,13 @@
 # Change Log
 
+## 2.0.1
+
+- 将 Agent 的固定 STDIO MCP 路由器替换为扩展进程内的固定 Streamable HTTP 路由器，彻底避免 Agent 从虚拟远程 cwd 启动子进程。
+- 本地窗口在打开远程窗口前预先启动固定 HTTP 入口；多个 VS Code 窗口通过端口抢占选出 Leader，并在 Leader 退出后自动接管。
+- 保留每个远程窗口的动态端口 MCP 后端和发现记录，固定路由器按 `mountName` 或窗口焦点转发到最新后端。
+- Codex 和 Claude Code 的旧 STDIO 配置会自动迁移为相同的固定 HTTP URL。
+- 新增 `serverlessRemote.agentHttpRouterPort`，默认固定端口为 `9848`；`agentMcpPort` 继续控制窗口动态后端。
+
 ## 2.0.0
 
 - **重启版本**：SFTP 直连架构稳定，版本号重置为 2.0.0。

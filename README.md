@@ -82,35 +82,37 @@ Agent 在执行工作区操作前通过 `resolve_workspace_execution` 识别当�
 ### 统一 Agent MCP（Codex / Claude Code）
 
 每个开启 Agent 转发的远程 VS Code 窗口会启动独立的动态端口 MCP。扩展为 Codex 和
-Claude Code 注册同一个固定的
-stdio MCP 路由器，并在每次工具调用时找到目标窗口的最新端口。省略 `mountName` 时使用
+Claude Code 注册同一个由扩展进程托管的固定 Streamable HTTP MCP 路由器，并在每次工具
+调用时找到目标窗口的最新动态端口。Agent 不再启动 STDIO 路由子进程，因此不会继承
+`serverless-sftp` 虚拟工作区 cwd。省略 `mountName` 时使用
 当前获得焦点且状态最新的窗口；显式提供 `mountName` 时选择对应的活动挂载。窗口服务只能
 访问其绑定挂载，不能通过请求参数跨窗口访问。
 
-`resources/agent-mcp` 中的窗口发现、目标选择、动态端口路由、断线判断、挂载校验和远程
-工具说明全部由 MCP 路由器完成，不安装 Codex 插件、Skill 或 hooks。MCP instructions
+窗口发现、目标选择、动态端口路由、断线判断、挂载校验和远程工具说明全部由扩展内置的
+HTTP 路由器完成，不安装 Codex 插件、Skill 或 hooks。多个 VS Code 窗口通过固定端口选出
+一个 Router Leader；Leader 关闭后，其他窗口会自动接管。MCP instructions
 会要求 Agent 对 `serverless-sftp` 工作区只使用远程
 工具；由于 MCP 无法拦截客户端自身的本地工具，该约束依赖 Agent 遵循工具说明。
 
 “启用 Agent 转发”会先为检测到的 Codex 和 Claude Code 安装或更新名为
-`serverless-remote` 的固定 stdio MCP；如果当前已打开该远程目录，还会立即启动该窗口的
+`serverless-remote` 的固定 HTTP MCP；如果当前已打开该远程目录，还会立即启动该窗口的
 动态端口 MCP 服务。关闭某个挂载的 Agent 转发会停止该窗口服务；只有最后一个已启用挂载
 也被关闭后，扩展才会执行 `mcp remove`。首次安装、更新或移除 MCP 后请重启 Agent 并
 新建对话。
 
-本地开发也可手动安装：
+扩展会生成鉴权令牌并自动执行等价于以下形式的配置：
 
 ```sh
-codex mcp add serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
-claude mcp add --scope user serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
+codex mcp add serverless-remote --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+claude mcp add --transport http --scope user serverless-remote 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 ```
 
-安装后重启 Agent 并新建对话。Windows Codex
-原生模式使用 `%USERPROFILE%` 中的窗口发现记录；WSL 模式会同时尝试 WSL home 和
-Windows 用户目录。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
+安装后重启 Agent 并新建对话。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
 不会关闭 Agent 转发偏好，重连相同挂载后 MCP 会发现新端口。如果同时打开多个远程窗口，
 省略 `mountName` 的工具调用使用当前获得焦点且状态最新的窗口。设置
-`serverlessRemote.agentMcpPort` 应保持为默认值 `0`；配置固定端口会重新引入多窗口端口冲突。
+`serverlessRemote.agentMcpPort` 应保持为默认值 `0`；固定入口端口由
+`serverlessRemote.agentHttpRouterPort` 控制，默认是 `9848`。如果该端口被其他程序占用，
+扩展会拒绝连接并提示更换端口，不会误连到未知服务。
 
 ## 限制
 
@@ -127,6 +129,7 @@ Windows 用户目录。VS Code 扩展必须保持运行，并为相应挂载开�
 - `serverlessRemote.sftp.cacheTtl`
 - `serverlessRemote.sftp.watchInterval`
 - `serverlessRemote.agentMcpPort`
+- `serverlessRemote.agentHttpRouterPort`
 - `serverlessRemote.agentForwardingAgents`：选择启用 MCP 转发的 Agent，默认
   `codex` 和 `claudeCode`。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从
   对应的 VS Code Agent 扩展安装路径查找内置 CLI。

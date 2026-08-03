@@ -76,40 +76,42 @@ extension does not create or read Agent guidance files on the remote host.
 ### Unified Agent MCP (Codex / Claude Code)
 
 Each Agent-forwarded remote VS Code window starts an MCP server on an independent
-dynamically allocated port. The extension registers the same stable stdio MCP router
-for Codex and Claude Code. The router resolves the target window's latest port on every
-call. Calls without `mountName`
+dynamically allocated port. The extension registers the same stable Streamable HTTP MCP
+router, hosted inside the extension process, for Codex and Claude Code. Agents no longer
+spawn a stdio router process and therefore cannot inherit a `serverless-sftp` virtual cwd.
+The router resolves the target window's latest port on every call. Calls without `mountName`
 use the focused, most recently updated window; an explicit `mountName` selects that active
 mount. Each window service remains restricted to its own mount.
 
 Window discovery, target selection, dynamic-port routing, disconnect detection,
-mount validation, and remote-tool guidance all live in `resources/agent-mcp`. The
+mount validation, and remote-tool guidance all live in the extension-hosted HTTP router. VS Code
+windows elect one router leader by claiming the fixed port, and another window takes over when
+that leader exits. The
 integration does not install a Codex plugin, skill, or hooks. MCP instructions tell agents to use only
 remote tools for `serverless-sftp` workspaces; because MCP cannot intercept a client's
 own local tools, enforcement depends on the agent following those instructions.
 
-Enable Agent Forwarding first installs or updates the fixed `serverless-remote` stdio MCP
+Enable Agent Forwarding first installs or updates the fixed `serverless-remote` HTTP MCP
 for detected Codex and Claude Code installations. If that remote folder is already open,
 the action also starts its window-scoped dynamic-port MCP service immediately. Disabling
 a mount stops its window service; the extension runs `mcp remove` only after the last
 enabled mount is disabled. Restart the Agent and start a new conversation after installing,
 updating, or removing MCP.
 
-For local development, you can also install it manually with:
+The extension generates an authentication token and automatically applies configurations
+equivalent to:
 
 ```sh
-codex mcp add serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
-claude mcp add --scope user serverless-remote -- node /path/to/vscode-serverless-remote-ssh/resources/agent-mcp/mcp-router.cjs
+codex mcp add serverless-remote --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+claude mcp add --transport http --scope user serverless-remote 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 ```
 
-Restart Codex and start a new conversation. Native Windows Codex reads window discovery records from
-`%USERPROFILE%`; WSL mode checks both the WSL home and the Windows user profile.
-The VS Code extension must remain running with Agent forwarding enabled for the
+Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
 the mount reconnects. If multiple remote windows are open, calls without `mountName` use
 the focused, most recently updated window. Keep `serverlessRemote.agentMcpPort` at its
-default value of `0`; configuring a fixed port reintroduces multi-window port
-collisions.
+default value of `0`. `serverlessRemote.agentHttpRouterPort` controls the stable Agent-facing
+port and defaults to `9848`; the extension rejects an unrelated process occupying that port.
 
 ## Limitations
 
@@ -122,6 +124,8 @@ collisions.
 
 ## Settings
 
+- `serverlessRemote.agentMcpPort`: dynamic per-window backend port; keep the default `0`.
+- `serverlessRemote.agentHttpRouterPort`: stable Agent-facing HTTP router port; defaults to `9848`.
 - `serverlessRemote.agentForwardingAgents`: selects Agents enabled for MCP forwarding;
   defaults to `codex` and `claudeCode`. The extension first searches `PATH` for a CLI
   with MCP commands, then falls back to the corresponding installed VS Code Agent
