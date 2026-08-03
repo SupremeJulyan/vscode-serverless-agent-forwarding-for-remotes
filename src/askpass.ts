@@ -40,7 +40,7 @@ export function platformUsesAskpass(platform: PlatformKind): boolean {
 }
 
 export async function createAskpassCredentials(password: string): Promise<AskpassCredentials> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-askpass-'));
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'safs-askpass-'));
   const passwordPath = path.join(directory, 'password');
   const markerPath = path.join(directory, 'invoked');
   const win32 = process.platform === 'win32';
@@ -56,7 +56,7 @@ export async function createAskpassCredentials(password: string): Promise<Askpas
     env: {
       SSH_ASKPASS: helperPath,
       SSH_ASKPASS_REQUIRE: 'force',
-      DISPLAY: process.env.DISPLAY || 'serverless-remote-ssh',
+      DISPLAY: process.env.DISPLAY || 'safs',
       SERVERLESS_REMOTE_ASKPASS_FILE: passwordPath,
       ...(win32 ? { SERVERLESS_REMOTE_ASKPASS_MARKER: markerPath } : {})
     },

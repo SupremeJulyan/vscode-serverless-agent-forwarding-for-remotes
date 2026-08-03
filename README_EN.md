@@ -1,4 +1,6 @@
-# Serverless Remote SSH
+# SAFS
+
+**S**erverless **A**gent **F**orwarding for **SSH**
 
 [简体中文](README.md) | [English](README_EN.md)
 
@@ -7,7 +9,7 @@ terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 
 ## Features
 
-- Opens remote folders as `serverless-sftp://` virtual workspaces.
+- Opens remote folders as `safs://` virtual workspaces.
 - Browse, read, save, create, rename, and delete remote files and directories.
 - Password and private-key authentication with optional master-password encryption.
 - Pooled SFTP connections, metadata caching, reconnect support, and file polling.
@@ -17,20 +19,20 @@ terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 
 ## Quick start
 
-1. Install `vscode-serverless-remote-ssh-1.0.0.vsix`.
-2. Run `Serverless Remote SSH: Add SSH Config`.
+1. Install `safs-1.0.0.vsix`.
+2. Run `SAFS: Add SSH Config`.
 3. Enter a name, `user@host`, and password or private key.
-4. Run `Serverless Remote SSH: Open Remote Folder`.
+4. Run `SAFS: Open Remote Folder`.
 5. Edit files directly in the Explorer.
-6. Run `Serverless Remote SSH: Disconnect` when finished.
+6. Run `SAFS: Disconnect` when finished.
 
 ```sh
-code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
+code --install-extension safs-1.0.0.vsix
 ```
 
 ## Configuration
 
-All platforms use `~/.serverless-remote-ssh/config.json`.
+All platforms use `~/.safs/config.json`.
 
 ```json
 {
@@ -51,15 +53,14 @@ All platforms use `~/.serverless-remote-ssh/config.json`.
 }
 ```
 
-The `mounts` array name remains for backward compatibility. Version 1.0.0
-ignores legacy `local_path` and `local_paths` fields because no local mount is
-created.
+The top-level `mounts` array defines SFTP remote folders. Remote directories are
+not mounted into the local filesystem.
 
 ## Agent access
 
-VS Code tools: `#serverlessRemoteList`, `#serverlessRemoteRead`,
-`#serverlessRemoteWrite`, `#serverlessRemoteSearch`, and
-`#serverlessRemoteRun`.
+VS Code tools: `#safsList`, `#safsRead`,
+`#safsWrite`, `#safsSearch`, and
+`#safsRun`.
 
 The loopback-only, token-protected MCP service exposes
 `resolve_workspace_execution`, `list_remote_folders`, `remote_list`, `remote_read`, `remote_write`,
@@ -78,7 +79,7 @@ extension does not create or read Agent guidance files on the remote host.
 Each Agent-forwarded remote VS Code window starts an MCP server on an independent
 dynamically allocated port. The extension registers the same stable Streamable HTTP MCP
 router, hosted inside the extension process, for Codex and Claude Code. Agents no longer
-spawn a stdio router process and therefore cannot inherit a `serverless-sftp` virtual cwd.
+spawn a stdio router process and therefore cannot inherit a `safs` virtual cwd.
 The router resolves the target window's latest port on every call. Calls without `mountName`
 use the focused, most recently updated window; an explicit `mountName` selects that active
 mount. Each window service remains restricted to its own mount.
@@ -90,17 +91,17 @@ provider maps that URI namespace back to the actual remote root, so no directory
 symbolic link is created at the remote machine's absolute path and administrator access
 is not required. The placeholder contains no remote files and exists only to let Agents
 finish native startup. Workspaces opened by older versions must be reopened from the
-Serverless Remote SSH view to use the new URI namespace.
+SAFS view to use the new URI namespace.
 
 Window discovery, target selection, dynamic-port routing, disconnect detection,
 mount validation, and remote-tool guidance all live in the extension-hosted HTTP router. VS Code
 windows elect one router leader by claiming the fixed port, and another window takes over when
 that leader exits. The
 integration does not install a Codex plugin, skill, or hooks. MCP instructions tell agents to use only
-remote tools for `serverless-sftp` workspaces; because MCP cannot intercept a client's
+remote tools for `safs` workspaces; because MCP cannot intercept a client's
 own local tools, enforcement depends on the agent following those instructions.
 
-Enable Agent Forwarding first installs or updates the fixed `serverless-remote` HTTP MCP
+Enable Agent Forwarding first installs or updates the fixed `safs` HTTP MCP
 for detected Codex and Claude Code installations. If that remote folder is already open,
 the action also starts its window-scoped dynamic-port MCP service immediately. Disabling
 a mount stops its window service; the extension runs `mcp remove` only after the last
@@ -111,26 +112,26 @@ The extension generates an authentication token and automatically applies config
 equivalent to:
 
 ```sh
-codex mcp add serverless-remote --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
-claude mcp add --transport http --scope user serverless-remote 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+codex mcp add safs --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 ```
 
-If no Agent CLI is installed, run **Serverless Remote SSH: Copy Desktop Agent MCP
+If no Agent CLI is installed, run **SAFS: Copy Desktop Agent MCP
 URL** from the VS Code Command Palette. In the desktop app, open **Settings > MCP
-servers**, add a **Streamable HTTP** server named `serverless-remote`, and paste the
+servers**, add a **Streamable HTTP** server named `safs`, and paste the
 copied URL. The URL contains an authentication token; do not share it or commit it
 to the repository.
 
 Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
 the mount reconnects. If multiple remote windows are open, calls without `mountName` use
-the focused, most recently updated window. Keep `serverlessRemote.agentMcpPort` at its
-default value of `0`. `serverlessRemote.agentHttpRouterPort` controls the stable Agent-facing
+the focused, most recently updated window. Keep `safs.agentMcpPort` at its
+default value of `0`. `safs.agentHttpRouterPort` controls the stable Agent-facing
 port and defaults to `9848`; the extension rejects an unrelated process occupying that port.
 
 ## Limitations
 
-- Local command-line programs cannot access `serverless-sftp://` files.
+- Local command-line programs cannot access `safs://` files.
 - Extensions that only support `file://` workspaces may be unavailable.
 - SFTP has no native change notifications, so external changes are polled.
 - WSL configurations with `vpn: true` reuse the Windows TCP relay supplied by
@@ -139,9 +140,9 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 
 ## Settings
 
-- `serverlessRemote.agentMcpPort`: dynamic per-window backend port; keep the default `0`.
-- `serverlessRemote.agentHttpRouterPort`: stable Agent-facing HTTP router port; defaults to `9848`.
-- `serverlessRemote.agentForwardingAgents`: selects Agents enabled for MCP forwarding;
+- `safs.agentMcpPort`: dynamic per-window backend port; keep the default `0`.
+- `safs.agentHttpRouterPort`: stable Agent-facing HTTP router port; defaults to `9848`.
+- `safs.agentForwardingAgents`: selects Agents enabled for MCP forwarding;
   defaults to `codex` and `claudeCode`. The extension first searches `PATH` for a CLI
   with MCP commands, then falls back to the corresponding installed VS Code Agent
   extension's bundled CLI.

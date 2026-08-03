@@ -21,7 +21,7 @@ export interface AgentWorkspaceRecord {
 }
 
 export function agentDiscoveryDirectory(homeDirectory = os.homedir()): string {
-  return path.join(homeDirectory, '.serverless-remote-ssh', 'agent-workspaces');
+  return path.join(homeDirectory, '.safs', 'agent-workspaces');
 }
 
 function windowsPathToWsl(value: string): string {

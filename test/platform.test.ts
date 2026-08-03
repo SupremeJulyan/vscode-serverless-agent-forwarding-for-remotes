@@ -67,7 +67,7 @@ test('WSL enables connection reuse only for background commands', () => {
 
 test('WSL passes the selected config path to terminal and command bridges', () => {
   const adapter = createPlatformAdapter('wsl');
-  const options = { bridgeConfigPath: '/home/alice/.serverless-remote-ssh/config.json' };
+  const options = { bridgeConfigPath: '/home/alice/.safs/config.json' };
   assert.equal(
     adapter.terminal(host, '/srv/project', options).env?.WSL_VPN_SSH_CONFIG,
     options.bridgeConfigPath

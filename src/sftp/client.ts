@@ -171,7 +171,7 @@ async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
   ].join(' && ');
   const { stdout } = await execFileAsync(
     'bash',
-    ['-c', command, 'serverless-sftp-relay', script, host.ip, String(targetPort), holder],
+    ['-c', command, 'safs-relay', script, host.ip, String(targetPort), holder],
     { timeout: 30_000 }
   );
   const fields = stdout.trim().split(/\s+/);
@@ -188,7 +188,7 @@ async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
         [
           '-c',
           'source "$1" && vpn_relay_release "$2" "$3" "$4"',
-          'serverless-sftp-relay',
+          'safs-relay',
           script,
           host.ip,
           String(targetPort),

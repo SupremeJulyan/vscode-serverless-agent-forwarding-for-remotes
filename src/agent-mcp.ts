@@ -51,10 +51,10 @@ export class AgentMcpServer {
 
   private createProtocolServer(): McpServer {
     const server = new McpServer(
-      { name: 'serverless-remote-ssh', version: '2.0.1' },
+      { name: 'safs', version: '1.0.0' },
       {
         instructions:
-          'This VS Code workspace may use the serverless-sftp virtual filesystem. Virtual remote files are NOT present in the agent host filesystem. '
+          'This VS Code workspace may use the safs virtual filesystem. Virtual remote files are NOT present in the agent host filesystem. '
           + 'At the start of every conversation, call resolve_workspace_execution before reading files, running shell commands, inferring the OS, or using Git/build/test/package tools. '
           + 'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, and run_remote_command for workspace operations. Never substitute the local filesystem or local shell. '
           + 'mountName may be omitted to target the active forwarded remote workspace.'

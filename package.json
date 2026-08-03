@@ -1,14 +1,14 @@
 {
-  "name": "vscode-serverless-remote-ssh",
-  "displayName": "Serverless Remote SSH",
-  "description": "Browse and edit remote files over SFTP and open SSH terminals without installing VS Code Server.",
+  "name": "safs",
+  "displayName": "SAFS",
+  "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "2.0.3",
+  "version": "1.0.0",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SupremeJulyan/vscode-serverless-remote-ssh.git"
+    "url": "https://github.com/SupremeJulyan/safs.git"
   },
   "engines": {
     "vscode": "^1.93.0"
@@ -20,6 +20,8 @@
     "ssh",
     "sftp",
     "remote",
+    "agent",
+    "mcp",
     "wsl",
     "serverless"
   ],
@@ -35,82 +37,82 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onFileSystem:serverless-sftp",
+    "onFileSystem:safs",
     "onStartupFinished",
-    "onView:serverlessRemote.mounts",
-    "onCommand:serverlessRemote.openFolder",
-    "onCommand:serverlessRemote.openTerminal",
-    "onCommand:serverlessRemote.close",
-    "onCommand:serverlessRemote.status",
-    "onCommand:serverlessRemote.openConfig",
-    "onCommand:serverlessRemote.addSshConfig",
-    "onCommand:serverlessRemote.copyDesktopAgentMcpUrl"
+    "onView:safs.mounts",
+    "onCommand:safs.openFolder",
+    "onCommand:safs.openTerminal",
+    "onCommand:safs.close",
+    "onCommand:safs.status",
+    "onCommand:safs.openConfig",
+    "onCommand:safs.addSshConfig",
+    "onCommand:safs.copyDesktopAgentMcpUrl"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "serverlessRemote.openFolder",
-        "title": "Serverless Remote SSH: 打开远程文件夹",
+        "command": "safs.openFolder",
+        "title": "SAFS: 打开远程文件夹",
         "icon": "$(remote-explorer)"
       },
       {
-        "command": "serverlessRemote.openTerminal",
-        "title": "Serverless Remote SSH: 打开远程终端",
+        "command": "safs.openTerminal",
+        "title": "SAFS: 打开远程终端",
         "icon": "$(terminal)"
       },
       {
-        "command": "serverlessRemote.close",
-        "title": "Serverless Remote SSH: 断开 SFTP 连接"
+        "command": "safs.close",
+        "title": "SAFS: 断开 SFTP 连接"
       },
       {
-        "command": "serverlessRemote.status",
-        "title": "Serverless Remote SSH: 显示状态"
+        "command": "safs.status",
+        "title": "SAFS: 显示状态"
       },
       {
-        "command": "serverlessRemote.openConfig",
-        "title": "Serverless Remote SSH: 打开配置"
+        "command": "safs.openConfig",
+        "title": "SAFS: 打开配置"
       },
       {
-        "command": "serverlessRemote.addSshConfig",
-        "title": "Serverless Remote SSH: 添加 SSH 配置",
+        "command": "safs.addSshConfig",
+        "title": "SAFS: 添加 SSH 配置",
         "icon": "$(add)"
       },
       {
-        "command": "serverlessRemote.copyDesktopAgentMcpUrl",
-        "title": "Serverless Remote SSH: 复制桌面版 Agent MCP 地址"
+        "command": "safs.copyDesktopAgentMcpUrl",
+        "title": "SAFS: 复制桌面版 Agent MCP 地址"
       },
       {
-        "command": "serverlessRemote.refreshExplorer",
+        "command": "safs.refreshExplorer",
         "title": "刷新远程文件夹",
         "icon": "$(refresh)"
       },
       {
-        "command": "serverlessRemote.openFolderItem",
+        "command": "safs.openFolderItem",
         "title": "打开远程文件夹",
         "icon": "$(folder-opened)"
       },
       {
-        "command": "serverlessRemote.openTerminalItem",
+        "command": "safs.openTerminalItem",
         "title": "打开远程终端",
         "icon": "$(terminal)"
       },
       {
-        "command": "serverlessRemote.closeItem",
+        "command": "safs.closeItem",
         "title": "断开连接",
         "icon": "$(debug-disconnect)"
       },
       {
-        "command": "serverlessRemote.enableAiForwardItem",
+        "command": "safs.enableAiForwardItem",
         "title": "启用 Agent 转发",
         "icon": "$(sparkle)"
       },
       {
-        "command": "serverlessRemote.disableAiForwardItem",
+        "command": "safs.disableAiForwardItem",
         "title": "关闭 Agent 转发",
         "icon": "$(circle-slash)"
       },
       {
-        "command": "serverlessRemote.deleteConfigItem",
+        "command": "safs.deleteConfigItem",
         "title": "删除配置",
         "icon": "$(trash)"
       }
@@ -118,133 +120,133 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "serverlessRemote",
-          "title": "Serverless Remote SSH",
+          "id": "safs",
+          "title": "SAFS",
           "icon": "resources/remote-ssh.svg"
         }
       ]
     },
     "views": {
-      "serverlessRemote": [
+      "safs": [
         {
-          "id": "serverlessRemote.mounts",
+          "id": "safs.mounts",
           "name": "远程文件夹"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "serverlessRemote.mounts",
-        "contents": "尚未配置远程文件夹。\n[添加 SSH 配置](command:serverlessRemote.addSshConfig)\n[打开配置](command:serverlessRemote.openConfig)",
-        "when": "serverlessRemote.hasNoMounts"
+        "view": "safs.mounts",
+        "contents": "尚未配置远程文件夹。\n[添加 SSH 配置](command:safs.addSshConfig)\n[打开配置](command:safs.openConfig)",
+        "when": "safs.hasNoMounts"
       }
     ],
     "menus": {
       "commandPalette": [
         {
-          "command": "serverlessRemote.openFolder"
+          "command": "safs.openFolder"
         },
         {
-          "command": "serverlessRemote.openTerminal"
+          "command": "safs.openTerminal"
         },
         {
-          "command": "serverlessRemote.close"
+          "command": "safs.close"
         },
         {
-          "command": "serverlessRemote.status"
+          "command": "safs.status"
         },
         {
-          "command": "serverlessRemote.openConfig"
+          "command": "safs.openConfig"
         },
         {
-          "command": "serverlessRemote.addSshConfig"
+          "command": "safs.addSshConfig"
         }
       ],
       "view/title": [
         {
-          "command": "serverlessRemote.addSshConfig",
-          "when": "view == serverlessRemote.mounts",
+          "command": "safs.addSshConfig",
+          "when": "view == safs.mounts",
           "group": "navigation@1"
         },
         {
-          "command": "serverlessRemote.refreshExplorer",
-          "when": "view == serverlessRemote.mounts",
+          "command": "safs.refreshExplorer",
+          "when": "view == safs.mounts",
           "group": "navigation@2"
         },
         {
-          "command": "serverlessRemote.openConfig",
-          "when": "view == serverlessRemote.mounts",
-          "group": "serverlessRemote@1"
+          "command": "safs.openConfig",
+          "when": "view == safs.mounts",
+          "group": "safs@1"
         },
         {
-          "command": "serverlessRemote.status",
-          "when": "view == serverlessRemote.mounts",
-          "group": "serverlessRemote@2"
+          "command": "safs.status",
+          "when": "view == safs.mounts",
+          "group": "safs@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "serverlessRemote.enableAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiDisabled/",
+          "command": "safs.enableAiForwardItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection.*aiDisabled/",
           "group": "inline@1"
         },
         {
-          "command": "serverlessRemote.disableAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiEnabled/",
+          "command": "safs.disableAiForwardItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection.*aiEnabled/",
           "group": "inline@1"
         },
         {
-          "command": "serverlessRemote.openFolderItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
+          "command": "safs.openFolderItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
           "group": "inline@2"
         },
         {
-          "command": "serverlessRemote.openTerminalItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
+          "command": "safs.openTerminalItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
           "group": "inline@3"
         },
         {
-          "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection\\.connected/",
+          "command": "safs.closeItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection\\.connected/",
           "group": "inline@4"
         },
         {
-          "command": "serverlessRemote.enableAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiDisabled/",
-          "group": "serverlessRemote@1"
+          "command": "safs.enableAiForwardItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection.*aiDisabled/",
+          "group": "safs@1"
         },
         {
-          "command": "serverlessRemote.disableAiForwardItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection.*aiEnabled/",
-          "group": "serverlessRemote@1"
+          "command": "safs.disableAiForwardItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection.*aiEnabled/",
+          "group": "safs@1"
         },
         {
-          "command": "serverlessRemote.openFolderItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
-          "group": "serverlessRemote@2"
+          "command": "safs.openFolderItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
+          "group": "safs@2"
         },
         {
-          "command": "serverlessRemote.openTerminalItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
-          "group": "serverlessRemote@3"
+          "command": "safs.openTerminalItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
+          "group": "safs@3"
         },
         {
-          "command": "serverlessRemote.closeItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection\\.connected/",
-          "group": "serverlessRemote@4"
+          "command": "safs.closeItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection\\.connected/",
+          "group": "safs@4"
         },
         {
-          "command": "serverlessRemote.deleteConfigItem",
-          "when": "view == serverlessRemote.mounts && viewItem =~ /serverlessRemote\\.connection/",
-          "group": "serverlessRemote@5"
+          "command": "safs.deleteConfigItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
+          "group": "safs@5"
         }
       ]
     },
     "languageModelTools": [
       {
-        "name": "serverlessRemote_runRemoteCommand",
+        "name": "safs_runRemoteCommand",
         "displayName": "Run Remote SSH Command",
-        "toolReferenceName": "serverlessRemoteRun",
+        "toolReferenceName": "safsRun",
         "canBeReferencedInPrompt": true,
         "icon": "$(terminal)",
         "userDescription": "Run a command in the matching remote SSH directory.",
@@ -271,9 +273,9 @@
         }
       },
       {
-        "name": "serverlessRemote_listRemoteFiles",
+        "name": "safs_listRemoteFiles",
         "displayName": "List Remote Files",
-        "toolReferenceName": "serverlessRemoteList",
+        "toolReferenceName": "safsList",
         "canBeReferencedInPrompt": true,
         "modelDescription": "Lists a directory directly over SFTP.",
         "inputSchema": {
@@ -286,9 +288,9 @@
         }
       },
       {
-        "name": "serverlessRemote_readRemoteFile",
+        "name": "safs_readRemoteFile",
         "displayName": "Read Remote File",
-        "toolReferenceName": "serverlessRemoteRead",
+        "toolReferenceName": "safsRead",
         "canBeReferencedInPrompt": true,
         "modelDescription": "Reads a file directly over SFTP. Use this instead of local filesystem tools.",
         "inputSchema": {
@@ -303,9 +305,9 @@
         }
       },
       {
-        "name": "serverlessRemote_writeRemoteFile",
+        "name": "safs_writeRemoteFile",
         "displayName": "Write Remote File",
-        "toolReferenceName": "serverlessRemoteWrite",
+        "toolReferenceName": "safsWrite",
         "canBeReferencedInPrompt": true,
         "modelDescription": "Creates or replaces a UTF-8 file directly over SFTP.",
         "inputSchema": {
@@ -319,9 +321,9 @@
         }
       },
       {
-        "name": "serverlessRemote_searchRemoteFiles",
+        "name": "safs_searchRemoteFiles",
         "displayName": "Search Remote Files",
-        "toolReferenceName": "serverlessRemoteSearch",
+        "toolReferenceName": "safsSearch",
         "canBeReferencedInPrompt": true,
         "modelDescription": "Searches file contents on a configured remote SSH host.",
         "inputSchema": {
@@ -338,44 +340,44 @@
     "jsonValidation": [
       {
         "fileMatch": [
-          "**/.serverless-remote-ssh/config.json"
+          "**/.safs/config.json"
         ],
         "url": "./schemas/config.schema.json"
       }
     ],
     "configuration": {
-      "title": "Serverless Remote SSH",
+      "title": "SAFS",
       "properties": {
-        "serverlessRemote.configPath": {
+        "safs.configPath": {
           "type": "string",
-          "default": "~/.serverless-remote-ssh/config.json",
-          "description": "Configuration file path. Defaults to ~/.serverless-remote-ssh/config.json on all platforms."
+          "default": "~/.safs/config.json",
+          "description": "Configuration file path. Defaults to ~/.safs/config.json on all platforms."
         },
-        "serverlessRemote.reuseSshConnection": {
+        "safs.reuseSshConnection": {
           "type": "boolean",
           "default": true,
           "description": "Reuse OpenSSH connections between remote terminals and command executions."
         },
-        "serverlessRemote.sftp.cacheTtl": {
+        "safs.sftp.cacheTtl": {
           "type": "number",
           "minimum": 0,
           "default": 5,
           "description": "SFTP metadata and directory cache lifetime in seconds."
         },
-        "serverlessRemote.sftp.watchInterval": {
+        "safs.sftp.watchInterval": {
           "type": "number",
           "minimum": 1,
           "default": 5,
           "description": "Remote file polling interval in seconds."
         },
-        "serverlessRemote.agentMcpPort": {
+        "safs.agentMcpPort": {
           "type": "number",
           "minimum": 0,
           "maximum": 65535,
           "default": 0,
           "description": "Dynamic loopback-only MCP backend port for each remote VS Code window. Use 0 (recommended) to avoid multi-window collisions."
         },
-        "serverlessRemote.agentHttpRouterPort": {
+        "safs.agentHttpRouterPort": {
           "type": "number",
           "minimum": 1024,
           "maximum": 65535,
@@ -383,7 +385,7 @@
           "scope": "machine",
           "description": "Stable loopback-only Streamable HTTP MCP router port registered with Agents. All VS Code windows must use the same value."
         },
-        "serverlessRemote.agentForwardingAgents": {
+        "safs.agentForwardingAgents": {
           "type": "array",
           "default": [
             "codex",

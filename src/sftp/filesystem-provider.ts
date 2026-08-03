@@ -228,7 +228,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
   ): Promise<void> {
     try {
       const { session, remotePath } = await this.resolve(uri, true);
-      const temporaryPath = `${remotePath}.serverless-remote-${randomBytes(6).toString('hex')}`;
+      const temporaryPath = `${remotePath}.safs-${randomBytes(6).toString('hex')}`;
       try {
         await session.writeFile(temporaryPath, content, { create: true, overwrite: false });
         if (!options.overwrite) {

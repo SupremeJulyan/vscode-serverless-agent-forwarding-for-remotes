@@ -21,8 +21,8 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '2.0.3');
-  assert.ok(manifest.activationEvents?.includes('onFileSystem:serverless-sftp'));
+  assert.equal(manifest.version, '1.0.0');
+  assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
   assert.deepEqual(manifest.extensionKind, ['workspace']);
 });
@@ -32,16 +32,16 @@ test('shows separate Agent forwarding actions for enabled and disabled mounts', 
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
   const commands = manifest.contributes?.commands ?? [];
-  assert.ok(commands.some((item) => item.command === 'serverlessRemote.enableAiForwardItem'));
-  assert.ok(commands.some((item) => item.command === 'serverlessRemote.disableAiForwardItem'));
+  assert.ok(commands.some((item) => item.command === 'safs.enableAiForwardItem'));
+  assert.ok(commands.some((item) => item.command === 'safs.disableAiForwardItem'));
   assert.ok(commands.some(
-    (item) => item.command === 'serverlessRemote.copyDesktopAgentMcpUrl'
+    (item) => item.command === 'safs.copyDesktopAgentMcpUrl'
   ));
-  assert.equal(commands.some((item) => item.command === 'serverlessRemote.toggleAiForwardItem'), false);
+  assert.equal(commands.some((item) => item.command === 'safs.toggleAiForwardItem'), false);
   const menu = manifest.contributes?.menus?.['view/item/context'] ?? [];
-  assert.ok(menu.some((item) => item.command === 'serverlessRemote.enableAiForwardItem'
+  assert.ok(menu.some((item) => item.command === 'safs.enableAiForwardItem'
     && item.when?.includes('aiDisabled')));
-  assert.ok(menu.some((item) => item.command === 'serverlessRemote.disableAiForwardItem'
+  assert.ok(menu.some((item) => item.command === 'safs.disableAiForwardItem'
     && item.when?.includes('aiEnabled')));
 });
 
@@ -51,7 +51,7 @@ test('packages Agent integration without a spawned stdio router or Codex plugin'
   assert.equal(extensionSource.includes('mcp-router.cjs'), false);
   assert.equal(extensionSource.includes("'--', 'node'"), false);
   await assert.rejects(access(new URL(
-    '../plugins/serverless-remote/.codex-plugin/plugin.json', import.meta.url
+    '../plugins/safs/.codex-plugin/plugin.json', import.meta.url
   )));
 });
 
@@ -60,21 +60,21 @@ test('uses only the unified cross-platform config path', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
   assert.equal(
-    manifest.contributes?.configuration?.properties?.['serverlessRemote.configPath']?.default,
-    '~/.serverless-remote-ssh/config.json'
+    manifest.contributes?.configuration?.properties?.['safs.configPath']?.default,
+    '~/.safs/config.json'
   );
   assert.deepEqual(
     manifest.contributes?.configuration?.properties?.[
-      'serverlessRemote.agentForwardingAgents'
+      'safs.agentForwardingAgents'
     ]?.default,
     ['codex', 'claudeCode']
   );
   assert.equal(
     manifest.contributes?.configuration?.properties?.[
-      'serverlessRemote.agentHttpRouterPort'
+      'safs.agentHttpRouterPort'
     ]?.default,
     9848
   );
   const matches = manifest.contributes?.jsonValidation?.flatMap((item) => item.fileMatch ?? []);
-  assert.deepEqual(matches, ['**/.serverless-remote-ssh/config.json']);
+  assert.deepEqual(matches, ['**/.safs/config.json']);
 });

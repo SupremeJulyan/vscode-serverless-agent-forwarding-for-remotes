@@ -23,7 +23,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
-public static class ServerlessRemoteTcpRelay
+public static class SafsTcpRelay
 {
     private static async Task CopyAsync(NetworkStream source, NetworkStream destination)
     {
@@ -104,7 +104,7 @@ public static class ServerlessRemoteTcpRelay
 
 if ($RunRelay) {
     Add-Type -TypeDefinition $relaySource -Language CSharp
-    [ServerlessRemoteTcpRelay]::Run(
+    [SafsTcpRelay]::Run(
         $TargetHost,
         $TargetPort,
         $ListenPort,

@@ -11,7 +11,7 @@ function callbacks(label: string) {
   return {
     listFolders: async () => [],
     currentWorkspace: async () => ({
-      name: 'A', workspaceUri: 'serverless-sftp://a/srv/a', remoteRoot: '/srv/a', host: 'dev'
+      name: 'A', workspaceUri: 'safs://a/srv/a', remoteRoot: '/srv/a', host: 'dev'
     }),
     list: async (input: unknown) => ({ label, input }),
     read: async (input: unknown) => ({ label, input }),
@@ -29,7 +29,7 @@ function record(instanceId: string, mcpUrl: string): DiscoveredAgentWorkspace {
     processId: process.pid,
     focused: true,
     execution: 'remote',
-    workspaceUri: 'serverless-sftp://a/srv/a',
+    workspaceUri: 'safs://a/srv/a',
     mountName: 'A',
     remoteRoot: '/srv/a',
     host: 'dev',

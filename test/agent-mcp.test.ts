@@ -9,13 +9,13 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
   const server = new AgentMcpServer(port, 'test-token', {
     listFolders: async () => [{
       name: 'project',
-      workspaceUri: 'serverless-sftp://project/srv/project',
+      workspaceUri: 'safs://project/srv/project',
       remoteRoot: '/srv/project',
       host: 'dev'
     }],
     currentWorkspace: async () => ({
       name: 'project',
-      workspaceUri: 'serverless-sftp://project/srv/project',
+      workspaceUri: 'safs://project/srv/project',
       remoteRoot: '/srv/project',
       host: 'dev'
     }),
@@ -56,7 +56,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       execution: 'remote',
       workspace: {
         name: 'project',
-        workspaceUri: 'serverless-sftp://project/srv/project',
+        workspaceUri: 'safs://project/srv/project',
         remoteRoot: '/srv/project',
         host: 'dev'
       },
@@ -76,7 +76,7 @@ test('allocates independent ports for concurrent window MCP servers', async () =
     listFolders: async () => [],
     currentWorkspace: async () => ({
       name,
-      workspaceUri: `serverless-sftp://${name}/srv/${name}`,
+      workspaceUri: `safs://${name}/srv/${name}`,
       remoteRoot: `/srv/${name}`,
       host: name
     }),

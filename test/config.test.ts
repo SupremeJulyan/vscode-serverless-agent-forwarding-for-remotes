@@ -20,7 +20,7 @@ test('parses and resolves a mount through its host reference', () => {
 });
 
 test('saves a configuration that can be loaded as JSON', async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-save-'));
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'safs-save-'));
   const configPath = path.join(directory, 'config.json');
   const config = {
     encrypt_passwords: true,
@@ -101,7 +101,7 @@ test('parses compact SSH login input', () => {
 });
 
 test('creates a minimal config template without overwriting an existing config', async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-'));
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'safs-'));
   const configPath = path.join(directory, 'nested', 'config.json');
 
   assert.equal(await ensureConfigFile(configPath), configPath);

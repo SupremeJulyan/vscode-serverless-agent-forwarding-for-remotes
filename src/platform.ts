@@ -14,7 +14,7 @@ export function defaultAgentMcpPort(platform: PlatformKind): number {
 }
 
 export function platformExtensionStateKey(name: string, platform: PlatformKind): string {
-  return `serverlessRemote.${name}.${platform}`;
+  return `safs.${name}.${platform}`;
 }
 
 export interface CommandPlan {
@@ -46,7 +46,7 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
     ? [
         '-o', 'ControlMaster=auto',
         '-o', 'ControlPersist=10m',
-        '-o', 'ControlPath=~/.ssh/serverless-remote-%C'
+        '-o', 'ControlPath=~/.ssh/safs-%C'
       ]
     : [];
 }

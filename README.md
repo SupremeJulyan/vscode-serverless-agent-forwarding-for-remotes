@@ -1,4 +1,6 @@
-# Serverless Remote SSH
+# SAFS
+
+**S**erverless **A**gent **F**orwarding for **SSH**
 
 [简体中文](README.md) | [English](README_EN.md)
 
@@ -7,7 +9,7 @@
 
 ## 功能
 
-- 使用 `serverless-sftp://` 虚拟工作区直接显示远程目录。
+- 使用 `safs://` 虚拟工作区直接显示远程目录。
 - 浏览、打开、保存、新建、重命名和删除远程文件及目录。
 - 密码或私钥认证；配置密码可通过主口令加密。
 - SFTP 连接池、断线重试、元数据缓存和远程文件轮询。
@@ -18,20 +20,20 @@
 
 ## 使用
 
-1. 安装 `vscode-serverless-remote-ssh-1.0.0.vsix`。
-2. 运行 `Serverless Remote SSH: 添加 SSH 配置`。
+1. 安装 `safs-1.0.0.vsix`。
+2. 运行 `SAFS: 添加 SSH 配置`。
 3. 输入配置名称、`user@host`，并选择密码或私钥认证。
-4. 运行 `Serverless Remote SSH: 打开远程文件夹`。
+4. 运行 `SAFS: 打开远程文件夹`。
 5. 在资源管理器中直接编辑远程文件。
-6. 使用 `Serverless Remote SSH: 断开 SFTP 连接` 关闭连接。
+6. 使用 `SAFS: 断开 SFTP 连接` 关闭连接。
 
 ```sh
-code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
+code --install-extension safs-1.0.0.vsix
 ```
 
 ## 配置
 
-所有平台统一使用 `~/.serverless-remote-ssh/config.json`。
+所有平台统一使用 `~/.safs/config.json`。
 
 ```json
 {
@@ -56,18 +58,17 @@ code --install-extension vscode-serverless-remote-ssh-1.0.0.vsix
 }
 ```
 
-为兼容旧配置，顶层数组仍叫 `mounts`；1.0.0 不再读取 `local_path` 和
-`local_paths`，远程目录不会挂载到本地文件系统。
+顶层 `mounts` 数组定义 SFTP 远程文件夹；远程目录不会挂载到本地文件系统。
 
 ## Agent 工具
 
 VS Code Agent 可使用：
 
-- `#serverlessRemoteList`
-- `#serverlessRemoteRead`
-- `#serverlessRemoteWrite`
-- `#serverlessRemoteSearch`
-- `#serverlessRemoteRun`
+- `#safsList`
+- `#safsRead`
+- `#safsWrite`
+- `#safsSearch`
+- `#safsRun`
 
 扩展还在 `127.0.0.1` 上提供令牌保护的 Streamable HTTP MCP 服务，工具包括
 `resolve_workspace_execution`、`list_remote_folders`、`remote_list`、`remote_read`、`remote_write`、
@@ -84,7 +85,7 @@ Agent 在执行工作区操作前通过 `resolve_workspace_execution` 识别当�
 每个开启 Agent 转发的远程 VS Code 窗口会启动独立的动态端口 MCP。扩展为 Codex 和
 Claude Code 注册同一个由扩展进程托管的固定 Streamable HTTP MCP 路由器，并在每次工具
 调用时找到目标窗口的最新动态端口。Agent 不再启动 STDIO 路由子进程，因此不会继承
-`serverless-sftp` 虚拟工作区 cwd。省略 `mountName` 时使用
+`safs` 虚拟工作区 cwd。省略 `mountName` 时使用
 当前获得焦点且状态最新的窗口；显式提供 `mountName` 时选择对应的活动挂载。窗口服务只能
 访问其绑定挂载，不能通过请求参数跨窗口访问。
 
@@ -97,11 +98,11 @@ Claude Code 注册同一个由扩展进程托管的固定 Streamable HTTP MCP �
 窗口发现、目标选择、动态端口路由、断线判断、挂载校验和远程工具说明全部由扩展内置的
 HTTP 路由器完成，不安装 Codex 插件、Skill 或 hooks。多个 VS Code 窗口通过固定端口选出
 一个 Router Leader；Leader 关闭后，其他窗口会自动接管。MCP instructions
-会要求 Agent 对 `serverless-sftp` 工作区只使用远程
+会要求 Agent 对 `safs` 工作区只使用远程
 工具；由于 MCP 无法拦截客户端自身的本地工具，该约束依赖 Agent 遵循工具说明。
 
 “启用 Agent 转发”会先为检测到的 Codex 和 Claude Code 安装或更新名为
-`serverless-remote` 的固定 HTTP MCP；如果当前已打开该远程目录，还会立即启动该窗口的
+`safs` 的固定 HTTP MCP；如果当前已打开该远程目录，还会立即启动该窗口的
 动态端口 MCP 服务。关闭某个挂载的 Agent 转发会停止该窗口服务；只有最后一个已启用挂载
 也被关闭后，扩展才会执行 `mcp remove`。首次安装、更新或移除 MCP 后请重启 Agent 并
 新建对话。
@@ -109,26 +110,26 @@ HTTP 路由器完成，不安装 Codex 插件、Skill 或 hooks。多个 VS Code
 扩展会生成鉴权令牌并自动执行等价于以下形式的配置：
 
 ```sh
-codex mcp add serverless-remote --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
-claude mcp add --transport http --scope user serverless-remote 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+codex mcp add safs --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 ```
 
 如果未安装 Agent CLI，可在 VS Code 命令面板执行
-**Serverless Remote SSH: 复制桌面版 Agent MCP 地址**，然后在桌面版
-**Settings > MCP servers** 中添加名为 `serverless-remote` 的
+**SAFS: 复制桌面版 Agent MCP 地址**，然后在桌面版
+**Settings > MCP servers** 中添加名为 `safs` 的
 **Streamable HTTP** 服务器并粘贴该地址。地址包含鉴权令牌，不要共享或
 提交到仓库。
 
 安装后重启 Agent 并新建对话。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
 不会关闭 Agent 转发偏好，重连相同挂载后 MCP 会发现新端口。如果同时打开多个远程窗口，
 省略 `mountName` 的工具调用使用当前获得焦点且状态最新的窗口。设置
-`serverlessRemote.agentMcpPort` 应保持为默认值 `0`；固定入口端口由
-`serverlessRemote.agentHttpRouterPort` 控制，默认是 `9848`。如果该端口被其他程序占用，
+`safs.agentMcpPort` 应保持为默认值 `0`；固定入口端口由
+`safs.agentHttpRouterPort` 控制，默认是 `9848`。如果该端口被其他程序占用，
 扩展会拒绝连接并提示更换端口，不会误连到未知服务。
 
 ## 限制
 
-- 本地命令行程序不能直接访问 `serverless-sftp://` 文件。
+- 本地命令行程序不能直接访问 `safs://` 文件。
 - 只支持 `file://` 工作区的第三方 VS Code 扩展可能无法使用。
 - SFTP 没有原生文件变更通知，扩展使用定时轮询检测外部修改。
 - WSL 的 `vpn: true` 配置复用 `wsl-vpn-ssh-bridge` 的 Windows TCP 中继；
@@ -136,12 +137,12 @@ claude mcp add --transport http --scope user serverless-remote 'http://127.0.0.1
 
 ## 设置
 
-- `serverlessRemote.configPath`
-- `serverlessRemote.reuseSshConnection`
-- `serverlessRemote.sftp.cacheTtl`
-- `serverlessRemote.sftp.watchInterval`
-- `serverlessRemote.agentMcpPort`
-- `serverlessRemote.agentHttpRouterPort`
-- `serverlessRemote.agentForwardingAgents`：选择启用 MCP 转发的 Agent，默认
+- `safs.configPath`
+- `safs.reuseSshConnection`
+- `safs.sftp.cacheTtl`
+- `safs.sftp.watchInterval`
+- `safs.agentMcpPort`
+- `safs.agentHttpRouterPort`
+- `safs.agentForwardingAgents`：选择启用 MCP 转发的 Agent，默认
   `codex` 和 `claudeCode`。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从
   对应的 VS Code Agent 扩展安装路径查找内置 CLI。

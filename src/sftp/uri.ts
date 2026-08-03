@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 
-export const remoteFileSystemScheme = 'serverless-sftp';
+export const remoteFileSystemScheme = 'safs';
 
 export interface RemoteUriLocation {
   mountName: string;

@@ -6,7 +6,7 @@ import { expandHome, HostConfig } from './config';
 import { keyboardInteractivePasswordReplies } from './authentication';
 import { ssh2RemoteCommand } from './ssh-command';
 
-const trustedHostKeysState = 'serverlessRemote.trustedSsh2HostKeys';
+const trustedHostKeysState = 'safs.trustedSsh2HostKeys';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -158,7 +158,7 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
 
   open(initialDimensions?: vscode.TerminalDimensions): void {
     if (initialDimensions) this.dimensions = initialDimensions;
-    this.writeEmitter.fire(`Serverless Remote SSH: 正在连接 ${this.host.name}…\r\n`);
+    this.writeEmitter.fire(`SAFS: 正在连接 ${this.host.name}…\r\n`);
     const config: ConnectConfig = {
       host: this.host.ip,
       port: this.host.port ?? 22,
@@ -212,7 +212,7 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
   }
 
   private fail(error: Error): void {
-    this.writeEmitter.fire(`\r\nServerless Remote SSH: ${error.message}\r\n`);
+    this.writeEmitter.fire(`\r\nSAFS: ${error.message}\r\n`);
     this.finish(1);
   }
 

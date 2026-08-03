@@ -10,7 +10,7 @@ import {
   DiscoveredAgentWorkspace, agentDiscoveryDirectories, discoverAgentWorkspaces
 } from './agent-discovery';
 
-const routerIdentity = 'serverless-remote-http-router-v1';
+const routerIdentity = 'safs-http-router-v1';
 
 export interface AgentHttpRouterOptions {
   discover?: () => DiscoveredAgentWorkspace[];
@@ -190,13 +190,13 @@ export class AgentHttpRouter {
 
   private createProtocolServer(): McpServer {
     const server = new McpServer(
-      { name: 'serverless-remote-http-router', version: '2.0.1' },
+      { name: 'safs-http-router', version: '1.0.0' },
       {
         instructions: [
-          'This MCP server is the complete integration for Serverless Remote SSH virtual workspaces.',
+          'This MCP server is the complete integration for SAFS virtual workspaces.',
           'Before reading files, editing, searching, running shell commands, using Git, builds, tests, or inferring the OS, call resolve_workspace_execution.',
           'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, and run_remote_command for that workspace.',
-          'Never use local shell or local filesystem tools for a serverless-sftp workspace because its files do not exist locally.',
+          'Never use local shell or local filesystem tools for a safs workspace because its files do not exist locally.',
           'Reuse the mountName returned by resolve_workspace_execution for every later tool call so background work stays bound to the same remote window.'
         ].join(' ')
       }
@@ -349,7 +349,7 @@ export class AgentHttpRouter {
     this._available = await this.isExistingRouter();
     if (!this._available) {
       throw new Error(
-        `固定 HTTP MCP 端口 ${this.port} 已被其他程序占用；请修改 serverlessRemote.agentHttpRouterPort。`
+        `固定 HTTP MCP 端口 ${this.port} 已被其他程序占用；请修改 safs.agentHttpRouterPort。`
       );
     }
   }

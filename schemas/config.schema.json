@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Serverless Remote SSH Configuration",
-  "description": "SSH hosts and remote folders used by Serverless Remote SSH.",
+  "title": "SAFS Configuration",
+  "description": "SSH hosts and remote folders used by SAFS.",
   "type": "object",
   "required": ["hosts", "mounts"],
   "properties": {

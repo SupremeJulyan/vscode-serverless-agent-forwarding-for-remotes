@@ -17,7 +17,7 @@ test('round-trips remote folder names and unusual POSIX paths', () => {
 
 test('uses a case-insensitive-safe authority for ASCII mount names', () => {
   const uri = remoteUri('gkn', '/home/alice');
-  assert.equal(uri, 'serverless-sftp://m-676b6e/home/alice');
+  assert.equal(uri, 'safs://m-676b6e/home/alice');
   assert.deepEqual(parseRemoteUri(uri), {
     mountName: 'gkn',
     remotePath: '/home/alice'
@@ -45,7 +45,7 @@ test('resolves dot and relative roots through the server realpath result', () =>
 
 test('rejects malformed or unrelated remote URIs', () => {
   assert.throws(() => parseRemoteUri('file:///srv/project'), /Unsupported remote URI scheme/);
-  assert.throws(() => parseRemoteUri('serverless-sftp://project/srv'), /Invalid remote URI authority/);
+  assert.throws(() => parseRemoteUri('safs://project/srv'), /Invalid remote URI authority/);
   assert.throws(
     () => parseRemoteUri(`${remoteUri('project', '/srv')}?secret=value`),
     /Invalid remote workspace URI/

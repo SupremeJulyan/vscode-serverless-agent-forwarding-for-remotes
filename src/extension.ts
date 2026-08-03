@@ -40,17 +40,17 @@ import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
 
-const commandPrefix = 'serverlessRemote';
+const commandPrefix = 'safs';
 const platformAdapter = createPlatformAdapter();
 
 const platformStateKey = (name: string): string =>
   platformExtensionStateKey(name, platformAdapter.kind);
 const terminalIdentityEnv = 'SERVERLESS_REMOTE_TERMINAL_ID';
-const masterPasswordSecret = 'serverlessRemote.masterPassword';
+const masterPasswordSecret = 'safs.masterPassword';
 const agentMcpTokenSecret = platformStateKey('agentMcpToken');
 const agentSetupCompletedKey = platformStateKey('agentSetupCompleted');
 const aiForwardMountsKey = platformStateKey('aiForwardMounts');
-const defaultConfigPath = '~/.serverless-remote-ssh/config.json';
+const defaultConfigPath = '~/.safs/config.json';
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const openRemoteTerminalAction = 'Open Remote Terminal';
@@ -83,7 +83,7 @@ class ConfigActionRequiredError extends Error {
 }
 
 function settings(): vscode.WorkspaceConfiguration {
-  return vscode.workspace.getConfiguration('serverlessRemote');
+  return vscode.workspace.getConfiguration('safs');
 }
 
 function agentTrace(stage: string, message: string): void {
@@ -363,7 +363,7 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
     return;
   }
   const selected = await vscode.window.showInformationMessage(
-    `远程终端"${terminal.name}"已退出。请运行"Serverless Remote SSH: Open Remote Terminal"重新打开。`,
+    `远程终端"${terminal.name}"已退出。请运行"SAFS: Open Remote Terminal"重新打开。`,
     openRemoteTerminalAction
   );
   if (selected === openRemoteTerminalAction) {
@@ -845,7 +845,7 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
         : connectionState === 'error' ? '连接错误' : '未连接';
     item.description = `SFTP：${connectionLabel} · Agent 转发：${aiForwarded ? '已开启' : '已关闭'}`;
     item.contextValue = [
-      'serverlessRemote.connection',
+      'safs.connection',
       connected ? 'connected' : 'disconnected',
       aiForwarded ? 'aiEnabled' : 'aiDisabled'
     ].join('.');
@@ -871,7 +871,7 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
     try {
       const config = await readConfig();
       await vscode.commands.executeCommand(
-        'setContext', 'serverlessRemote.hasNoMounts', config.mounts.length === 0
+        'setContext', 'safs.hasNoMounts', config.mounts.length === 0
       );
       return config.mounts;
     } catch {
@@ -895,7 +895,7 @@ async function restoreRemoteWorkspaces(): Promise<void> {
     const folder = await ensureFolder(mount);
     if (!isRemotePathInsideRoot(folder.workspaceRoot, location.remotePath)) {
       output.appendLine(
-        `工作区使用不受支持的旧 URI，请从 Serverless Remote SSH 面板重新打开：${mount.name}`
+        `工作区使用不受支持的旧 URI，请从 SAFS 面板重新打开：${mount.name}`
       );
       continue;
     }
@@ -1230,10 +1230,10 @@ async function configureDetectedAgents(
     codexFixedStatus, claudeFixedStatus
   ] = await Promise.all([
     codexCommand
-      ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', 'serverless-remote'] })
+      ? executeAgentMcpCommand({ command: codexCommand, args: ['mcp', 'get', 'safs'] })
       : Promise.resolve(undefined),
     claudeCommand
-      ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', 'serverless-remote'] })
+      ? executeAgentMcpCommand({ command: claudeCommand, args: ['mcp', 'get', 'safs'] })
       : Promise.resolve(undefined)
   ]);
   const commandOutput = (
@@ -1245,8 +1245,8 @@ async function configureDetectedAgents(
     && Boolean(routerUrl && commandOutput(codexFixedStatus).includes(routerUrl));
   const claudeFixedConfigured = claudeFixedExists
     && Boolean(routerUrl && commandOutput(claudeFixedStatus).includes(routerUrl));
-  const codexKey = 'codex:serverless-remote';
-  const claudeKey = 'claude:serverless-remote';
+  const codexKey = 'codex:safs';
+  const claudeKey = 'claude:safs';
   if (!codexEnabled || !codexFixedConfigured) configured.delete(codexKey);
   if (!claudeEnabled || !claudeFixedConfigured) configured.delete(claudeKey);
   bridgeOutput?.appendLine(
@@ -1286,7 +1286,7 @@ async function configureDetectedAgents(
   const failures: string[] = [];
   if (codexCommand && needsCodexDisable) {
     const result = await executeAgentMcpCommand({
-      command: codexCommand, args: ['mcp', 'remove', 'serverless-remote']
+      command: codexCommand, args: ['mcp', 'remove', 'safs']
     });
     if (result.exitCode === 0) {
       configured.delete(codexKey);
@@ -1299,7 +1299,7 @@ async function configureDetectedAgents(
     let canAdd = true;
     if (codexFixedExists) {
       const removed = await executeAgentMcpCommand({
-        command: codexCommand, args: ['mcp', 'remove', 'serverless-remote']
+        command: codexCommand, args: ['mcp', 'remove', 'safs']
       });
       if (removed.exitCode !== 0) {
         canAdd = false;
@@ -1309,7 +1309,7 @@ async function configureDetectedAgents(
     if (canAdd) {
       const result = await executeAgentMcpCommand({
         command: codexCommand,
-        args: ['mcp', 'add', 'serverless-remote', '--url', routerUrl!]
+        args: ['mcp', 'add', 'safs', '--url', routerUrl!]
       });
       if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
         failures.push(`Codex MCP: ${result.stderr || result.stdout}`);
@@ -1321,7 +1321,7 @@ async function configureDetectedAgents(
   }
   if (claudeCommand && needsClaudeDisable) {
     const result = await executeAgentMcpCommand({
-      command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
+      command: claudeCommand, args: ['mcp', 'remove', 'safs']
     });
     if (result.exitCode === 0) {
       configured.delete(claudeKey);
@@ -1334,7 +1334,7 @@ async function configureDetectedAgents(
     let canAdd = true;
     if (claudeFixedExists) {
       const removed = await executeAgentMcpCommand({
-        command: claudeCommand, args: ['mcp', 'remove', 'serverless-remote']
+        command: claudeCommand, args: ['mcp', 'remove', 'safs']
       });
       if (removed.exitCode !== 0) {
         canAdd = false;
@@ -1346,7 +1346,7 @@ async function configureDetectedAgents(
         command: claudeCommand,
         args: [
           'mcp', 'add', '--transport', 'http', '--scope', 'user',
-          'serverless-remote', routerUrl!
+          'safs', routerUrl!
         ]
       });
       if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
@@ -1368,10 +1368,10 @@ async function configureDetectedAgents(
     if (choice === copyAction) {
       await vscode.env.clipboard.writeText([
         codexCommand && codexEnabled
-          ? `codex mcp add serverless-remote --url '${routerUrl}'`
+          ? `codex mcp add safs --url '${routerUrl}'`
           : '',
         claudeCommand && claudeEnabled
-          ? `claude mcp add --transport http --scope user serverless-remote '${routerUrl}'`
+          ? `claude mcp add --transport http --scope user safs '${routerUrl}'`
           : ''
       ].filter(Boolean).join('\n'));
     }
@@ -1434,7 +1434,7 @@ async function prepareAgentCwd(mount: MountConfig): Promise<void> {
     const detail = error instanceof Error ? error.message : String(error);
     bridgeOutput?.appendLine(`[Agent CWD] 无法为 ${mount.name} 创建本机占位目录：${detail}`);
     void vscode.window.showWarningMessage(
-      `Serverless Remote SSH：无法创建 Agent cwd 占位目录。Agent 可能因 ENOENT 无法启动，请查看输出。`
+      `SAFS：无法创建 Agent cwd 占位目录。Agent 可能因 ENOENT 无法启动，请查看输出。`
     );
   }
 }
@@ -1448,7 +1448,7 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof ConfigActionRequiredError) {
       const selected = await vscode.window.showErrorMessage(
-        `Serverless Remote SSH: ${message}`,
+        `SAFS: ${message}`,
         ...error.actions
       );
       if (selected === openConfigAction) {
@@ -1462,12 +1462,12 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
     if (missingCommand) {
       bridgeOutput?.appendLine(`[缺少依赖] ${message}`);
       await vscode.window.showErrorMessage(
-        `Serverless Remote SSH：找不到命令"${missingCommand}"，请确保 SSH 客户端已安装。`
+        `SAFS：找不到命令"${missingCommand}"，请确保 SSH 客户端已安装。`
       );
       return;
     }
     output.appendLine(`[错误] ${message}`);
-    await vscode.window.showErrorMessage(`Serverless Remote SSH: ${message}`);
+    await vscode.window.showErrorMessage(`SAFS: ${message}`);
   }
 }
 
@@ -1481,7 +1481,7 @@ async function ensureSystemDependencies(): Promise<void> {
   try {
     await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
-      title: `Serverless Remote SSH：正在安装 ${platformName} 依赖`,
+      title: `SAFS：正在安装 ${platformName} 依赖`,
       cancellable: false
     }, async (progress) => {
       const reporter = {
@@ -1498,13 +1498,13 @@ async function ensureSystemDependencies(): Promise<void> {
     });
     bridgeOutput?.appendLine(`${platformName} 系统依赖自动安装完成`);
     void vscode.window.showInformationMessage(
-      `Serverless Remote SSH：${platformName} 依赖安装完成。`
+      `SAFS：${platformName} 依赖安装完成。`
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     bridgeOutput?.appendLine(`[依赖安装失败] ${detail}`);
     const selected = await vscode.window.showErrorMessage(
-      `Serverless Remote SSH：${platformName} 依赖自动安装失败：${detail}`,
+      `SAFS：${platformName} 依赖自动安装失败：${detail}`,
       '查看输出'
     );
     if (selected === '查看输出') bridgeOutput?.show(true);
@@ -1515,8 +1515,8 @@ async function ensureSystemDependencies(): Promise<void> {
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   vscodeContext = context;
-  output = vscode.window.createOutputChannel('Serverless Remote SSH');
-  bridgeOutput = vscode.window.createOutputChannel('Serverless Remote SSH');
+  output = vscode.window.createOutputChannel('SAFS');
+  bridgeOutput = vscode.window.createOutputChannel('SAFS');
   context.subscriptions.push(output, bridgeOutput);
   agentTrace('Activate', `扩展激活，workspace=${
     vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString()).join(', ') || '<none>'
@@ -1589,7 +1589,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const router = await ensureAgentHttpRouter(context);
     await vscode.env.clipboard.writeText(router.url);
     void vscode.window.showInformationMessage(
-      '已复制桌面版 Agent MCP 地址。在桌面版的 Settings > MCP servers 中添加 Streamable HTTP 服务器“serverless-remote”，粘贴该地址后重启 Agent。'
+      '已复制桌面版 Agent MCP 地址。在桌面版的 Settings > MCP servers 中添加 Streamable HTTP 服务器“safs”，粘贴该地址后重启 Agent。'
     );
   });
   command('refreshExplorer', async () => tree.refresh());
@@ -1625,22 +1625,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       new vscode.LanguageModelTextPart(JSON.stringify(await callback(options.input), null, 2))
     ])
   }));
-  tool<{ mountName?: string; path?: string }>('serverlessRemote_listRemoteFiles', async (input) =>
+  tool<{ mountName?: string; path?: string }>('safs_listRemoteFiles', async (input) =>
     remoteList({ ...input, mountName: await forwardedMountName(input.mountName) }));
   tool<{ mountName?: string; path: string; offset?: number; length?: number }>(
-    'serverlessRemote_readRemoteFile', async (input) =>
+    'safs_readRemoteFile', async (input) =>
       remoteRead({ ...input, mountName: await forwardedMountName(input.mountName) })
   );
   tool<{ mountName?: string; path: string; content: string }>(
-    'serverlessRemote_writeRemoteFile', async (input) =>
+    'safs_writeRemoteFile', async (input) =>
       remoteWrite({ ...input, mountName: await forwardedMountName(input.mountName) }), true
   );
   tool<{ mountName?: string; query: string; path?: string }>(
-    'serverlessRemote_searchRemoteFiles', async (input) =>
+    'safs_searchRemoteFiles', async (input) =>
       remoteSearch({ ...input, mountName: await forwardedMountName(input.mountName) })
   );
   tool<{ mountName?: string; command: string; remoteCwd?: string }>(
-    'serverlessRemote_runRemoteCommand', async (input) =>
+    'safs_runRemoteCommand', async (input) =>
       runRemote({ ...input, mountName: await forwardedMountName(input.mountName) }), true
   );
 
@@ -1690,7 +1690,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Status bar
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  statusBar.name = 'Serverless Remote SSH';
+  statusBar.name = 'SAFS';
   statusBar.text = '$(remote) Serverless SFTP';
   statusBar.tooltip = '打开 SFTP 远程文件夹';
   statusBar.command = `${commandPrefix}.openFolder`;

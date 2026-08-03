@@ -8,13 +8,13 @@ import {
 } from '../src/agent-discovery';
 
 test('publishes a private, versioned remote workspace record and removes it', async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-discovery-'));
+  const home = await mkdtemp(path.join(os.tmpdir(), 'safs-discovery-'));
   const directory = agentDiscoveryDirectory(home);
   const publisher = new AgentWorkspacePublisher('window-one', directory);
   await publisher.publish({
     focused: true,
     execution: 'remote',
-    workspaceUri: 'serverless-sftp://project/srv/project',
+    workspaceUri: 'safs://project/srv/project',
     mountName: 'project',
     remoteRoot: '/srv/project',
     host: 'dev',
@@ -33,7 +33,7 @@ test('publishes a private, versioned remote workspace record and removes it', as
 });
 
 test('discovers focused fresh windows first and ignores stale records', async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), 'serverless-remote-discovery-'));
+  const home = await mkdtemp(path.join(os.tmpdir(), 'safs-discovery-'));
   const directory = agentDiscoveryDirectory(home);
   const now = Date.now();
   const record = (instanceId: string, focused: boolean, updatedAtMs: number) => ({
@@ -42,7 +42,7 @@ test('discovers focused fresh windows first and ignores stale records', async ()
     processId: 1,
     focused,
     execution: 'remote',
-    workspaceUri: `serverless-sftp://${instanceId}/srv/${instanceId}`,
+    workspaceUri: `safs://${instanceId}/srv/${instanceId}`,
     mountName: instanceId,
     remoteRoot: `/srv/${instanceId}`,
     host: 'dev',

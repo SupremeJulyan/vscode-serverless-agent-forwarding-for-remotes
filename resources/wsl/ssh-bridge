@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bundled SSH bridge for WSL — used by the Serverless Remote SSH VS Code extension.
+# Bundled SSH bridge for WSL — used by the SAFS VS Code extension.
 # Password decryption and SSH_ASKPASS credential setup are handled by the
 # TypeScript extension side, matching native Linux authentication.
 # VPN relay is included for aTrust / VPN scenarios.
@@ -69,7 +69,7 @@ source "$bundle_root/vpn-relay-pool.sh"
 bridge_performance_now bridge_started_at
 
 # ── Config resolution ───────────────────────────────────────────────────────
-config_file="${WSL_VPN_SSH_CONFIG:-${HOME:?}/.serverless-remote-ssh/config.json}"
+config_file="${WSL_VPN_SSH_CONFIG:-${HOME:?}/.safs/config.json}"
 
 for command in ssh python3 flock; do
   command -v "$command" >/dev/null 2>&1 || die "缺少命令 '$command'"
@@ -155,7 +155,7 @@ if [[ "${WSL_VPN_SSH_CONNECTION_REUSE:-1}" != 0 ]]; then
   ssh_options+=(
     -o ControlMaster=auto
     -o ControlPersist=10m
-    -o "ControlPath=${HOME:?}/.ssh/serverless-remote-%C"
+    -o "ControlPath=${HOME:?}/.ssh/safs-%C"
   )
 fi
 
