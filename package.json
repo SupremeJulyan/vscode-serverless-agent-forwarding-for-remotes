@@ -3,12 +3,12 @@
   "displayName": "SAFS",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SupremeJulyan/safs.git"
+    "url": "git@github.com:SupremeJulyan/vscode-serverless-agent-forwarding-for-remotes.git"
   },
   "engines": {
     "vscode": "^1.93.0"
@@ -423,7 +423,7 @@
     "package": "npm run check-types && node esbuild.js --production",
     "vscode:prepublish": "npm run package",
     "test": "npm run check-types && tsx --test test/*.test.ts",
-    "vsix": "npx @vscode/vsce package --no-dependencies"
+    "vsix": "npx @vscode/vsce package --no-dependencies --baseContentUrl https://github.com/SupremeJulyan/vscode-serverless-agent-forwarding-for-remotes/blob/main --baseImagesUrl https://raw.githubusercontent.com/SupremeJulyan/vscode-serverless-agent-forwarding-for-remotes/main"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

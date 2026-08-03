@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4
+
+- Add SFTP-backed path completion when switching the current remote directory.
+- Move verbose Agent diagnostics to a dedicated log channel, reduce command-output noise, and clear logs periodically.
+- Update the repository URL.
+
 ## 1.0.3
 
 - Show a reconnect action when a SAFS remote terminal exits, including built-in SSH terminals, and reopen it at the same remote directory.

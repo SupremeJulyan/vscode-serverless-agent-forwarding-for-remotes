@@ -55,9 +55,10 @@ const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const reconnectRemoteTerminalAction = '重连终端';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
+const logClearIntervalMs = 24 * 60 * 60 * 1000;
 
 let output: vscode.OutputChannel;
-let bridgeOutput: vscode.OutputChannel | undefined;
+let bridgeOutput: vscode.LogOutputChannel | undefined;
 let mcp: AgentMcpServer | undefined;
 let httpRouter: AgentHttpRouter | undefined;
 let httpRouterCreation: Promise<AgentHttpRouter> | undefined;
@@ -136,13 +137,11 @@ async function executeAgentMcpCommand(
   plan: CommandPlan, signal?: AbortSignal
 ): Promise<Awaited<ReturnType<typeof executeCaptured>>> {
   const displayName = redactAgentMcpText(planDisplayName(plan));
-  bridgeOutput?.show(true);
   bridgeOutput?.appendLine(`[${new Date().toLocaleString()}] [Agent MCP] $ ${displayName}`);
   try {
-    const result = await executeCaptured({ ...plan, cwd: plan.cwd ?? os.homedir() }, signal, 1024 * 1024, {
-      stdout: (chunk) => bridgeOutput?.append(redactAgentMcpText(chunk)),
-      stderr: (chunk) => bridgeOutput?.append(redactAgentMcpText(chunk))
-    });
+    const result = await executeCaptured(
+      { ...plan, cwd: plan.cwd ?? os.homedir() }, signal, 1024 * 1024
+    );
     bridgeOutput?.appendLine(
       `[Agent MCP] [${result.exitCode === 0 ? '完成' : `失败: exit ${result.exitCode}`}] ${displayName}`
     );
@@ -344,12 +343,10 @@ async function switchRemoteDirectory(): Promise<void> {
   const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
   if (!mount) throw new Error(`远程文件夹配置不存在：${location.mountName}`);
   const folder = await ensureFolder(mount);
-  const requested = await vscode.window.showInputBox({
-    title: `切换远程目录：${mount.name}`,
-    prompt: `输入 ${folder.remoteRoot} 内的远程目录绝对路径或相对路径`,
-    value: location.remotePath,
-    validateInput: (value) => value.trim() ? undefined : '请输入远程目录路径'
-  });
+  const session = await pool.get(folder.hostName);
+  const requested = await promptRemoteDirectory(
+    session, folder.remoteRoot, location.remotePath, mount.name
+  );
   if (requested === undefined) return;
   const candidate = requested.trim().startsWith('/')
     ? path.posix.normalize(requested.trim())
@@ -357,7 +354,6 @@ async function switchRemoteDirectory(): Promise<void> {
   if (!isRemotePathInsideRoot(folder.remoteRoot, candidate)) {
     throw new Error(`远程目录必须位于挂载根目录 ${folder.remoteRoot} 内`);
   }
-  const session = await pool.get(folder.hostName);
   const resolved = await session.realpath(candidate);
   if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) {
     throw new Error(`远程目录必须位于挂载根目录 ${folder.remoteRoot} 内`);
@@ -371,6 +367,66 @@ async function switchRemoteDirectory(): Promise<void> {
   await vscode.commands.executeCommand(
     'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), false
   );
+}
+
+async function promptRemoteDirectory(
+  session: import('./sftp/session').SftpSession,
+  remoteRoot: string,
+  currentPath: string,
+  mountName: string
+): Promise<string | undefined> {
+  const picker = vscode.window.createQuickPick<vscode.QuickPickItem>();
+  picker.title = `切换远程目录：${mountName}`;
+  picker.placeholder = `输入 ${remoteRoot} 内的路径，选择候选目录以补全`;
+  picker.value = currentPath.endsWith('/') ? currentPath : `${currentPath}/`;
+  picker.matchOnDescription = true;
+  let requestId = 0;
+
+  const updateSuggestions = async (value: string): Promise<void> => {
+    const id = ++requestId;
+    const typed = value.trim();
+    const absolute = typed.startsWith('/')
+      ? path.posix.normalize(typed)
+      : path.posix.resolve(currentPath, typed || '.');
+    const directory = typed.endsWith('/') ? absolute : path.posix.dirname(absolute);
+    if (!isRemotePathInsideRoot(remoteRoot, directory)) {
+      picker.items = [];
+      return;
+    }
+    picker.busy = true;
+    try {
+      const entries = await session.readDirectory(directory);
+      if (id !== requestId) return;
+      picker.items = entries
+        .filter((entry) => entry.type === 'directory' || entry.type === 'symbolic-link')
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((entry) => ({
+          label: `${path.posix.join(directory, entry.name)}/`,
+          description: entry.type === 'symbolic-link' ? '符号链接目录' : '远程目录'
+        }));
+    } catch {
+      if (id === requestId) picker.items = [];
+    } finally {
+      if (id === requestId) picker.busy = false;
+    }
+  };
+
+  return new Promise<string | undefined>((resolve) => {
+    let accepted = false;
+    picker.onDidChangeValue((value) => void updateSuggestions(value));
+    picker.onDidAccept(() => {
+      accepted = true;
+      const value = picker.selectedItems[0]?.label ?? picker.value;
+      picker.hide();
+      resolve(value);
+    });
+    picker.onDidHide(() => {
+      picker.dispose();
+      if (!accepted) resolve(undefined);
+    });
+    picker.show();
+    void updateSuggestions(picker.value);
+  });
 }
 
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
@@ -790,7 +846,6 @@ async function executeRemoteCommand(
     try {
       let result;
       if (platformAdapter.kind === 'windows') {
-        bridgeOutput?.show(true);
         bridgeOutput?.appendLine(
           `[${new Date().toLocaleString()}] [Agent MCP] $ ${input.command} (cwd: ${remoteCwd})`
         );
@@ -799,8 +854,6 @@ async function executeRemoteCommand(
             context, resolved.hostConfig, resolved.hostConfig.password,
             remoteCwd, input.command, controller.signal
           );
-          if (result.stdout) bridgeOutput?.append(result.stdout);
-          if (result.stderr) bridgeOutput?.append(result.stderr);
           bridgeOutput?.appendLine(
             `[Agent MCP] [${result.exitCode === 0 ? '完成' : `失败: exit ${result.exitCode}`}] ${input.command}`
           );
@@ -1555,8 +1608,13 @@ async function ensureSystemDependencies(): Promise<void> {
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   vscodeContext = context;
   output = vscode.window.createOutputChannel('SAFS');
-  bridgeOutput = vscode.window.createOutputChannel('SAFS');
+  bridgeOutput = vscode.window.createOutputChannel('SAFS Log', { log: true });
   context.subscriptions.push(output, bridgeOutput);
+  const logCleanup = setInterval(() => {
+    output.clear();
+    bridgeOutput?.clear();
+  }, logClearIntervalMs);
+  context.subscriptions.push({ dispose: () => clearInterval(logCleanup) });
   agentTrace('Activate', `扩展激活，workspace=${
     vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString()).join(', ') || '<none>'
   }`);
