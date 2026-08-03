@@ -287,16 +287,7 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   const placeholder = await ensureAgentCwdPlaceholder(
     remoteRoot, vscodeContext.globalStorageUri.fsPath, mount.name
   );
-  const legacyWorkspaceRoot = vscode.Uri.file(placeholder.legacyLocalPath).path;
-  const usesLegacyWorkspace = vscode.workspace.workspaceFolders?.some((workspace) => {
-    if (workspace.uri.scheme !== remoteFileSystemScheme) return false;
-    const location = parseRemoteUri(workspace.uri.toString());
-    return location.mountName === mount.name
-      && isRemotePathInsideRoot(legacyWorkspaceRoot, location.remotePath);
-  }) ?? false;
-  const workspaceRoot = vscode.Uri.file(
-    usesLegacyWorkspace ? placeholder.legacyLocalPath : placeholder.localPath
-  ).path;
+  const workspaceRoot = vscode.Uri.file(placeholder.localPath).path;
   const folder = { mountName: mount.name, hostName: mount.host, remoteRoot, workspaceRoot };
   registry.set(folder);
   agentTrace(

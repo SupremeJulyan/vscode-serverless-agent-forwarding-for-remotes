@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+- Add a command for switching to a remote subdirectory in the current SAFS window.
+- Use readable, filesystem-safe mount names for Agent cwd placeholders.
+- Preserve the switched remote directory when opening or restoring SSH terminals.
+- Add empty MCP resource and resource-template responses for Codex compatibility.
+
 ## 1.0.0
 
 - Initial SAFS release: **Serverless Agent Forwarding for SSH**.

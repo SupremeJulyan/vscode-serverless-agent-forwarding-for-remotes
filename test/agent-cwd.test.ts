@@ -14,7 +14,6 @@ test('creates a real cwd below extension storage', async () => {
   assert.equal(result.created, true);
   assert.equal(result.localPath.startsWith(path.join(storageRoot, 'agent-cwd')), true);
   assert.equal(path.basename(result.localPath), 'project');
-  assert.equal(path.basename(result.legacyLocalPath), 'workspace');
   assert.equal((await lstat(result.localPath)).isDirectory(), true);
 
   const repeated = await ensureAgentCwdPlaceholder('/home/share/project', storageRoot, 'project');

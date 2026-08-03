@@ -4,7 +4,6 @@ import { lstat, mkdir } from 'node:fs/promises';
 
 export interface AgentCwdPlaceholder {
   localPath: string;
-  legacyLocalPath: string;
   created: boolean;
 }
 
@@ -45,10 +44,9 @@ export async function ensureAgentCwdPlaceholder(
     .digest('hex').slice(0, 16);
   const parent = path.join(storageRoot, 'agent-cwd', key);
   const localPath = path.join(parent, safeAgentCwdName(mountName));
-  const legacyLocalPath = path.join(parent, 'workspace');
   const created = !await exists(localPath);
   await mkdir(localPath, { recursive: true });
-  return { localPath, legacyLocalPath, created };
+  return { localPath, created };
 }
 
 /** Creates the local empty directory that represents a remote workspace subdirectory. */
