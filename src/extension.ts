@@ -287,7 +287,16 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   const placeholder = await ensureAgentCwdPlaceholder(
     remoteRoot, vscodeContext.globalStorageUri.fsPath, mount.name
   );
-  const workspaceRoot = vscode.Uri.file(placeholder.localPath).path;
+  const legacyWorkspaceRoot = vscode.Uri.file(placeholder.legacyLocalPath).path;
+  const usesLegacyWorkspace = vscode.workspace.workspaceFolders?.some((workspace) => {
+    if (workspace.uri.scheme !== remoteFileSystemScheme) return false;
+    const location = parseRemoteUri(workspace.uri.toString());
+    return location.mountName === mount.name
+      && isRemotePathInsideRoot(legacyWorkspaceRoot, location.remotePath);
+  }) ?? false;
+  const workspaceRoot = vscode.Uri.file(
+    usesLegacyWorkspace ? placeholder.legacyLocalPath : placeholder.localPath
+  ).path;
   const folder = { mountName: mount.name, hostName: mount.host, remoteRoot, workspaceRoot };
   registry.set(folder);
   agentTrace(
@@ -377,15 +386,15 @@ function currentRemoteLocation(): { mountName: string; remotePath: string } | un
     }
     return { ...location, remotePath: remotePathForUri(folder, location.remotePath) };
   };
+  const workspace = vscode.workspace.workspaceFolders?.find(
+    (folder) => folder.uri.scheme === remoteFileSystemScheme
+  );
+  if (workspace) return resolveLocation(parseRemoteUri(workspace.uri.toString()));
   const active = vscode.window.activeTextEditor?.document.uri;
   if (active?.scheme === remoteFileSystemScheme) {
     return resolveLocation(parseRemoteUri(active.toString()));
   }
-  const workspace = vscode.workspace.workspaceFolders?.find(
-    (folder) => folder.uri.scheme === remoteFileSystemScheme
-  );
-  if (!workspace) return undefined;
-  return resolveLocation(parseRemoteUri(workspace.uri.toString()));
+  return undefined;
 }
 
 // ---- openTerminal (aligned with main) ----
@@ -944,7 +953,7 @@ async function restoreRemoteWorkspaces(): Promise<void> {
       );
     }
     if (mount.remote_terminal === 'open') {
-      await openTerminal(vscodeContext, mount, folder.remoteRoot);
+      await openTerminal(vscodeContext, mount, openedRemotePath);
     }
   }
 }

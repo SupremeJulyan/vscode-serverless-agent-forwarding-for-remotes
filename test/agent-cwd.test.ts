@@ -3,7 +3,9 @@ import { lstat, mkdtemp } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory } from '../src/agent-cwd';
+import {
+  ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, safeAgentCwdName
+} from '../src/agent-cwd';
 
 test('creates a real cwd below extension storage', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'agent-cwd-'));
@@ -11,11 +13,20 @@ test('creates a real cwd below extension storage', async () => {
   const result = await ensureAgentCwdPlaceholder('/home/share/project', storageRoot, 'project');
   assert.equal(result.created, true);
   assert.equal(result.localPath.startsWith(path.join(storageRoot, 'agent-cwd')), true);
+  assert.equal(path.basename(result.localPath), 'project');
+  assert.equal(path.basename(result.legacyLocalPath), 'workspace');
   assert.equal((await lstat(result.localPath)).isDirectory(), true);
 
   const repeated = await ensureAgentCwdPlaceholder('/home/share/project', storageRoot, 'project');
   assert.equal(repeated.created, false);
   assert.equal(repeated.localPath, result.localPath);
+});
+
+test('uses a readable filesystem-safe mount name below the cwd hash', () => {
+  assert.equal(safeAgentCwdName('node37'), 'node37');
+  assert.equal(safeAgentCwdName('计算节点 / project'), '计算节点_project');
+  assert.equal(safeAgentCwdName('CON'), '_CON');
+  assert.equal(safeAgentCwdName('...'), 'mount');
 });
 
 test('uses separate cwd directories for mounts with the same remote root', async () => {

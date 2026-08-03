@@ -4,7 +4,19 @@ import { lstat, mkdir } from 'node:fs/promises';
 
 export interface AgentCwdPlaceholder {
   localPath: string;
+  legacyLocalPath: string;
   created: boolean;
+}
+
+export function safeAgentCwdName(mountName: string): string {
+  const normalized = mountName.normalize('NFKC').trim();
+  const encoded = [...normalized].map((character) =>
+    /[\p{L}\p{N}._-]/u.test(character) ? character : '_'
+  ).join('').replace(/_+/g, '_').replace(/^[. ]+|[. ]+$/g, '');
+  const shortened = [...encoded].slice(0, 48).join('') || 'mount';
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(shortened)
+    ? `_${shortened}`
+    : shortened;
 }
 
 async function exists(value: string): Promise<boolean> {
@@ -31,10 +43,12 @@ export async function ensureAgentCwdPlaceholder(
   const key = createHash('sha256')
     .update(mountName).update('\0').update(path.posix.normalize(remoteRoot))
     .digest('hex').slice(0, 16);
-  const localPath = path.join(storageRoot, 'agent-cwd', key, 'workspace');
+  const parent = path.join(storageRoot, 'agent-cwd', key);
+  const localPath = path.join(parent, safeAgentCwdName(mountName));
+  const legacyLocalPath = path.join(parent, 'workspace');
   const created = !await exists(localPath);
   await mkdir(localPath, { recursive: true });
-  return { localPath, created };
+  return { localPath, legacyLocalPath, created };
 }
 
 /** Creates the local empty directory that represents a remote workspace subdirectory. */
