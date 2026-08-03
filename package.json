@@ -41,6 +41,7 @@
     "onStartupFinished",
     "onView:safs.mounts",
     "onCommand:safs.openFolder",
+    "onCommand:safs.switchRemoteDirectory",
     "onCommand:safs.openTerminal",
     "onCommand:safs.close",
     "onCommand:safs.status",
@@ -54,6 +55,11 @@
         "command": "safs.openFolder",
         "title": "SAFS: 打开远程文件夹",
         "icon": "$(remote-explorer)"
+      },
+      {
+        "command": "safs.switchRemoteDirectory",
+        "title": "SAFS: 切换远程目录",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "safs.openTerminal",
@@ -145,6 +151,9 @@
       "commandPalette": [
         {
           "command": "safs.openFolder"
+        },
+        {
+          "command": "safs.switchRemoteDirectory"
         },
         {
           "command": "safs.openTerminal"

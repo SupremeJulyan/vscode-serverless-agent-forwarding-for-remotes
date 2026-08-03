@@ -331,6 +331,42 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   });
 }
 
+async function switchRemoteDirectory(): Promise<void> {
+  const location = currentRemoteLocation();
+  if (!location) {
+    throw new Error('当前窗口不是 SAFS 远程工作区');
+  }
+  const config = await readConfig();
+  const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+  if (!mount) throw new Error(`远程文件夹配置不存在：${location.mountName}`);
+  const folder = await ensureFolder(mount);
+  const requested = await vscode.window.showInputBox({
+    title: `切换远程目录：${mount.name}`,
+    prompt: `输入 ${folder.remoteRoot} 内的远程目录绝对路径或相对路径`,
+    value: location.remotePath,
+    validateInput: (value) => value.trim() ? undefined : '请输入远程目录路径'
+  });
+  if (requested === undefined) return;
+  const candidate = requested.trim().startsWith('/')
+    ? path.posix.normalize(requested.trim())
+    : path.posix.resolve(location.remotePath, requested.trim());
+  if (!isRemotePathInsideRoot(folder.remoteRoot, candidate)) {
+    throw new Error(`远程目录必须位于挂载根目录 ${folder.remoteRoot} 内`);
+  }
+  const session = await pool.get(folder.hostName);
+  const resolved = await session.realpath(candidate);
+  if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) {
+    throw new Error(`远程目录必须位于挂载根目录 ${folder.remoteRoot} 内`);
+  }
+  if ((await session.stat(resolved)).type !== 'directory') {
+    throw new Error(`远程路径不是目录：${resolved}`);
+  }
+  agentTrace('Open', `当前窗口切换远程目录：${location.remotePath} -> ${resolved}`);
+  await vscode.commands.executeCommand(
+    'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), false
+  );
+}
+
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
   const resolveLocation = (location: { mountName: string; remotePath: string }) => {
     const folder = registry.get(location.mountName);
@@ -1567,6 +1603,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await openRemoteFolder(mount);
     tree.refresh();
   });
+  command('switchRemoteDirectory', switchRemoteDirectory);
   command('openTerminal', () => openTerminal(context, undefined, undefined, undefined, true));
   command('openTerminalItem', (mount) =>
     openTerminal(context, mount, undefined, undefined, true));

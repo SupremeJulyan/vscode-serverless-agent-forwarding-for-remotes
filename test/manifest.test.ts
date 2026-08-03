@@ -23,8 +23,17 @@ test('extension declares the SFTP filesystem activation event', async () => {
 
   assert.equal(manifest.version, '1.0.0');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
+  assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
   assert.deepEqual(manifest.extensionKind, ['workspace']);
+});
+
+test('contributes a remote-directory switch command instead of relying on the local picker', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  ) as ExtensionManifest;
+  const commands = manifest.contributes?.commands ?? [];
+  assert.ok(commands.some((item) => item.command === 'safs.switchRemoteDirectory'));
 });
 
 test('shows separate Agent forwarding actions for enabled and disabled mounts', async () => {
