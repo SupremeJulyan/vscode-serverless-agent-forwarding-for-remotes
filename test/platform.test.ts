@@ -29,10 +29,13 @@ test('detects WSL separately from native Linux', () => {
 });
 
 test('native SSH opens a login shell in the remote SFTP directory', () => {
-  const plan = createPlatformAdapter('linux').terminal(host, "/srv/O'Brien");
+  const plan = createPlatformAdapter('linux').terminal(host, "/srv/O'Brien", {
+    reuseSshConnection: true
+  });
   assert.equal(plan.command, 'ssh');
   assert.equal(plan.cwd, undefined);
   assert.equal(plan.args.some((argument) => argument.endsWith('/.ssh/id_ed25519')), true);
+  assert.equal(plan.args.includes('ControlMaster=auto'), true);
   assert.match(plan.args.at(-1) ?? '', /cd --/);
   assert.match(plan.args.at(-1) ?? '', /O'"'"'Brien/);
 });
@@ -53,16 +56,27 @@ test('WSL uses bundled ssh-bridge for terminals and command execution', () => {
   assert.equal(terminal.cwd, undefined);
   assert.equal(execution.command, path.join(bundlePath, 'resources', 'wsl', 'ssh-bridge'));
   assert.equal(terminal.args.includes('--tty'), true);
-  assert.equal(terminal.env?.WSL_VPN_SSH_CONNECTION_REUSE, '0');
+  assert.equal(terminal.env?.WSL_VPN_SSH_CONNECTION_REUSE, '1');
   assert.match(execution.args.at(-1) ?? '', /git status/);
 });
 
-test('WSL enables connection reuse only for background commands', () => {
+test('WSL enables connection reuse for terminals and background commands', () => {
   const adapter = createPlatformAdapter('wsl');
   const terminal = adapter.terminal(host, '/srv/project', { reuseSshConnection: true });
   const execution = adapter.exec(host, '/srv/project', 'pwd', { reuseSshConnection: true });
-  assert.equal(terminal.env?.WSL_VPN_SSH_CONNECTION_REUSE, '0');
+  assert.equal(terminal.env?.WSL_VPN_SSH_CONNECTION_REUSE, '1');
   assert.equal(execution.env?.WSL_VPN_SSH_CONNECTION_REUSE, '1');
+});
+
+test('connection reuse can be disabled for native and WSL terminals', () => {
+  const native = createPlatformAdapter('windows').terminal(host, '/srv/project', {
+    reuseSshConnection: false
+  });
+  const wsl = createPlatformAdapter('wsl').terminal(host, '/srv/project', {
+    reuseSshConnection: false
+  });
+  assert.equal(native.args.includes('ControlMaster=auto'), false);
+  assert.equal(wsl.env?.WSL_VPN_SSH_CONNECTION_REUSE, '0');
 });
 
 test('WSL passes the selected config path to terminal and command bridges', () => {

@@ -53,13 +53,9 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
 
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {
   const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
-  // Connection reuse conflicts with PTY allocation in interactive terminals:
-  // "getsockname failed: Not a socket" — ssh's multiplexing code expects
-  // a real socket handle but VS Code's terminal passes the SSH process
-  // through a pseudo-terminal, not a raw socket.
-  if (!remoteCwd) {
-    args.push(...connectionReuseArgs(options));
-  }
+  // ControlMaster=auto reuses a healthy master and lets OpenSSH fall back to a
+  // direct connection when the control socket cannot be used.
+  args.push(...connectionReuseArgs(options));
   if (host.private_key_path) {
     args.push('-i', host.private_key_path);
   }
@@ -104,11 +100,7 @@ class WslAdapter implements PlatformAdapter {
       command: sshBridgePath(),
       args,
       env: {
-        // OpenSSH multiplexing is unreliable when an interactive connection
-        // is attached to VS Code's pseudo-terminal (for example,
-        // "getsockname failed: Not a socket"). Keep reuse for background
-        // commands, but never for an interactive remote terminal.
-        WSL_VPN_SSH_CONNECTION_REUSE: '0',
+        WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
         ...(options?.bridgeConfigPath
           ? { WSL_VPN_SSH_CONFIG: options.bridgeConfigPath }
           : {}),

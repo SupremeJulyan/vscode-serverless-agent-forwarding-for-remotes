@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- Enable OpenSSH connection reuse for interactive terminals on every platform, with automatic fallback to a direct connection when reuse is unavailable.
+
 ## 1.0.1
 
 - Add a command for switching to a remote subdirectory in the current SAFS window.
