@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5
+
+- Remember the last switched directory for each remote configuration and restore both the workspace and terminal there when it is reopened.
+
 ## 1.0.4
 
 - Add SFTP-backed path completion when switching the current remote directory.

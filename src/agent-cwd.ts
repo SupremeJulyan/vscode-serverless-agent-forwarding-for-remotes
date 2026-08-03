@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 
 export interface AgentCwdPlaceholder {
   localPath: string;
@@ -64,4 +64,32 @@ export async function ensureAgentCwdSubdirectory(
     : localRoot;
   await mkdir(localPath, { recursive: true });
   return localPath;
+}
+
+function lastRemoteDirectoryPath(localRoot: string): string {
+  // Keep metadata beside the directory exposed as the Agent cwd so the cwd
+  // itself remains an empty mirror of the remote namespace.
+  return path.join(path.dirname(localRoot), 'last-remote-directory');
+}
+
+export async function readLastRemoteDirectory(localRoot: string): Promise<string | undefined> {
+  try {
+    const value = (await readFile(lastRemoteDirectoryPath(localRoot), 'utf8')).trim();
+    return value && path.posix.isAbsolute(value) ? path.posix.normalize(value) : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+export async function writeLastRemoteDirectory(
+  localRoot: string, remoteRoot: string, remotePath: string
+): Promise<void> {
+  const normalizedRoot = path.posix.normalize(remoteRoot);
+  const normalizedPath = path.posix.normalize(remotePath);
+  const relative = path.posix.relative(normalizedRoot, normalizedPath);
+  if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
+    throw new Error(`Cached Agent cwd path is outside the remote root: ${remotePath}`);
+  }
+  await writeFile(lastRemoteDirectoryPath(localRoot), `${normalizedPath}\n`, 'utf8');
 }

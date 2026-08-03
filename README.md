@@ -14,13 +14,14 @@
 - 密码或私钥认证；配置密码可通过主口令加密。
 - SFTP 连接池、断线重试、元数据缓存和远程文件轮询。
 - 从当前远程文件或工作区打开相同目录下的 SSH 终端。
+- 每个远程配置记住最后切换的目录，重新打开时恢复工作区和终端目录。
 - 远程文件夹侧栏显示连接状态，可打开、断开或删除配置。
 - GitHub Copilot Language Model Tools 和本机 MCP 服务可直接列出、读取、写入、
   搜索远程文件，并通过 SSH 执行远程命令。
 
 ## 使用
 
-1. 安装 `safs-1.0.0.vsix`。
+1. 安装 `safs-1.0.5.vsix`。
 2. 运行 `SAFS: 添加 SSH 配置`。
 3. 输入配置名称、`user@host`，并选择密码或私钥认证。
 4. 运行 `SAFS: 打开远程文件夹`。
@@ -28,7 +29,7 @@
 6. 使用 `SAFS: 断开 SFTP 连接` 关闭连接。
 
 ```sh
-code --install-extension safs-1.0.0.vsix
+code --install-extension safs-1.0.5.vsix
 ```
 
 ## 配置

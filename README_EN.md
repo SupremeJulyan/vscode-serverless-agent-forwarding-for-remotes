@@ -14,12 +14,13 @@ terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 - Password and private-key authentication with optional master-password encryption.
 - Pooled SFTP connections, metadata caching, reconnect support, and file polling.
 - Opens SSH terminals in the directory selected in the remote workspace.
+- Remembers the last switched directory per remote configuration and restores its workspace and terminal there.
 - Direct remote list/read/write/search tools for VS Code agents and MCP clients.
 - Runs builds, tests, Git, and system commands remotely over SSH.
 
 ## Quick start
 
-1. Install `safs-1.0.0.vsix`.
+1. Install `safs-1.0.5.vsix`.
 2. Run `SAFS: Add SSH Config`.
 3. Enter a name, `user@host`, and password or private key.
 4. Run `SAFS: Open Remote Folder`.
@@ -27,7 +28,7 @@ terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 6. Run `SAFS: Disconnect` when finished.
 
 ```sh
-code --install-extension safs-1.0.0.vsix
+code --install-extension safs-1.0.5.vsix
 ```
 
 ## Configuration

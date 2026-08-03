@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
 import {
-  ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, safeAgentCwdName
+  ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
+  safeAgentCwdName, writeLastRemoteDirectory
 } from '../src/agent-cwd';
 
 test('creates a real cwd below extension storage', async () => {
@@ -45,6 +46,30 @@ test('creates a real cwd for a switched remote subdirectory', async () => {
   assert.equal((await lstat(nested)).isDirectory(), true);
   await assert.rejects(
     ensureAgentCwdSubdirectory(root.localPath, '/home/user', '/home/other'),
+    /outside the remote root/
+  );
+});
+
+test('caches the last remote directory beside the empty cwd placeholder', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'agent-cwd-cache-'));
+  const root = await ensureAgentCwdPlaceholder('/home/share/zhuyuan', temporary, 'dev');
+  assert.equal(await readLastRemoteDirectory(root.localPath), undefined);
+
+  await writeLastRemoteDirectory(
+    root.localPath, '/home/share/zhuyuan', '/home/share/zhuyuan/dir1'
+  );
+  assert.equal(
+    await readLastRemoteDirectory(root.localPath), '/home/share/zhuyuan/dir1'
+  );
+  await writeLastRemoteDirectory(
+    root.localPath, '/home/share/zhuyuan', '/home/share/zhuyuan/dir2'
+  );
+  assert.equal(
+    await readLastRemoteDirectory(root.localPath), '/home/share/zhuyuan/dir2'
+  );
+  assert.deepEqual(await readdir(root.localPath), []);
+  await assert.rejects(
+    writeLastRemoteDirectory(root.localPath, '/home/share/zhuyuan', '/home/share/other'),
     /outside the remote root/
   );
 });

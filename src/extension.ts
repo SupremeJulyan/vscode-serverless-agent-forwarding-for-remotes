@@ -25,7 +25,10 @@ import {
 import { AgentMcpServer } from './agent-mcp';
 import { AgentHttpRouter } from './agent-http-router';
 import { AgentWorkspacePublisher } from './agent-discovery';
-import { ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory } from './agent-cwd';
+import {
+  ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
+  writeLastRemoteDirectory
+} from './agent-cwd';
 import { connectSftp } from './sftp/client';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import {
@@ -304,6 +307,27 @@ function folderUri(folder: RemoteFolder, remotePath = folder.remoteRoot): string
   return remoteUri(folder.mountName, workspacePathForRemote(folder, remotePath));
 }
 
+function localRootForFolder(folder: RemoteFolder): string {
+  return vscode.Uri.from({ scheme: 'file', path: folder.workspaceRoot }).fsPath;
+}
+
+async function cachedRemoteDirectory(folder: RemoteFolder): Promise<string> {
+  const localRoot = localRootForFolder(folder);
+  const cached = await readLastRemoteDirectory(localRoot);
+  if (!cached || !isRemotePathInsideRoot(folder.remoteRoot, cached)) return folder.remoteRoot;
+  try {
+    const session = await pool.get(folder.hostName);
+    const resolved = await session.realpath(cached);
+    if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) return folder.remoteRoot;
+    if ((await session.stat(resolved)).type !== 'directory') return folder.remoteRoot;
+    await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
+    return resolved;
+  } catch {
+    await writeLastRemoteDirectory(localRoot, folder.remoteRoot, folder.remoteRoot);
+    return folder.remoteRoot;
+  }
+}
+
 async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   const mount = requested ?? await selectMount('选择要打开的 SFTP 远程文件夹');
   if (!mount) return;
@@ -324,11 +348,12 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   }, async (progress) => {
     progress.report({ message: '正在验证远程目录…' });
     const folder = await ensureFolder(mount);
-    agentTrace('Open', `创建新窗口，workspace=${folderUri(folder)}`);
+    const remoteDirectory = await cachedRemoteDirectory(folder);
+    agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
     progress.report({ message: '正在打开工作区…' });
     await vscode.commands.executeCommand(
       'vscode.openFolder',
-      vscode.Uri.parse(folderUri(folder)),
+      vscode.Uri.parse(folderUri(folder, remoteDirectory)),
       true
     );
   });
@@ -361,8 +386,9 @@ async function switchRemoteDirectory(): Promise<void> {
   if ((await session.stat(resolved)).type !== 'directory') {
     throw new Error(`远程路径不是目录：${resolved}`);
   }
-  const localRoot = vscode.Uri.from({ scheme: 'file', path: folder.workspaceRoot }).fsPath;
+  const localRoot = localRootForFolder(folder);
   await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
+  await writeLastRemoteDirectory(localRoot, folder.remoteRoot, resolved);
   agentTrace('Open', `当前窗口切换远程目录：${location.remotePath} -> ${resolved}`);
   await vscode.commands.executeCommand(
     'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), false
@@ -992,6 +1018,9 @@ async function restoreRemoteWorkspaces(): Promise<void> {
       continue;
     }
     const openedRemotePath = remotePathForUri(folder, location.remotePath);
+    await writeLastRemoteDirectory(
+      localRootForFolder(folder), folder.remoteRoot, openedRemotePath
+    );
     if (folder.remoteRoot !== openedRemotePath) {
       output.appendLine(
         `远程根目录已变化：${openedRemotePath} -> ${folder.remoteRoot}`
