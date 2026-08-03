@@ -11,6 +11,24 @@ export interface RemoteFolder {
   mountName: string;
   hostName: string;
   remoteRoot: string;
+  /** POSIX URI path backed by a real directory in extension global storage. */
+  workspaceRoot: string;
+}
+
+export function remotePathForUri(folder: RemoteFolder, uriPath: string): string {
+  if (isRemotePathInsideRoot(folder.workspaceRoot, uriPath)) {
+    return path.posix.join(
+      folder.remoteRoot, path.posix.relative(folder.workspaceRoot, uriPath)
+    );
+  }
+  return uriPath;
+}
+
+export function workspacePathForRemote(folder: RemoteFolder, remotePath: string): string {
+  if (!isRemotePathInsideRoot(folder.remoteRoot, remotePath)) return remotePath;
+  return path.posix.join(
+    folder.workspaceRoot, path.posix.relative(folder.remoteRoot, remotePath)
+  );
 }
 
 interface CacheEntry<T> {
@@ -83,7 +101,7 @@ export class RemoteFolderRegistry {
   }
 
   uri(folder: RemoteFolder): vscode.Uri {
-    return vscode.Uri.parse(remoteUri(folder.mountName, folder.remoteRoot));
+    return vscode.Uri.parse(remoteUri(folder.mountName, folder.workspaceRoot));
   }
 }
 
@@ -116,17 +134,23 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
     const location = parseRemoteUri(uri.toString());
     const folder = this.registry.get(location.mountName);
     if (!folder) throw vscode.FileSystemError.Unavailable(`Unknown remote folder: ${location.mountName}`);
-    if (!isRemotePathInsideRoot(folder.remoteRoot, location.remotePath)) {
+    if (!isRemotePathInsideRoot(folder.workspaceRoot, location.remotePath)) {
+      throw vscode.FileSystemError.NoPermissions(
+        'The URI is outside the storage-backed workspace namespace'
+      );
+    }
+    const translatedPath = remotePathForUri(folder, location.remotePath);
+    if (!isRemotePathInsideRoot(folder.remoteRoot, translatedPath)) {
       throw vscode.FileSystemError.NoPermissions('The path is outside the remote workspace root');
     }
     const session = await this.pool.get(folder.hostName);
     let securedPath: string;
     try {
-      securedPath = await session.realpath(location.remotePath);
+      securedPath = await session.realpath(translatedPath);
     } catch (error) {
       if (!allowMissing || (errorCode(error) !== 2 && errorCode(error) !== 'ENOENT')) throw error;
-      const parent = await session.realpath(path.posix.dirname(location.remotePath));
-      securedPath = path.posix.join(parent, path.posix.basename(location.remotePath));
+      const parent = await session.realpath(path.posix.dirname(translatedPath));
+      securedPath = path.posix.join(parent, path.posix.basename(translatedPath));
     }
     if (!isRemotePathInsideRoot(folder.remoteRoot, securedPath)) {
       throw vscode.FileSystemError.NoPermissions(

@@ -29,7 +29,8 @@ import { ensureAgentCwdPlaceholder } from './agent-cwd';
 import { connectSftp } from './sftp/client';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import {
-  RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider
+  remotePathForUri, RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider,
+  workspacePathForRemote
 } from './sftp/filesystem-provider';
 import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
@@ -283,10 +284,21 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   const remoteRoot = await session.realpath(mount.remote_path);
   const stat = await session.stat(remoteRoot);
   if (stat.type !== 'directory') throw new Error(`远程路径不是目录：${remoteRoot}`);
-  const folder = { mountName: mount.name, hostName: mount.host, remoteRoot };
+  const placeholder = await ensureAgentCwdPlaceholder(
+    remoteRoot, vscodeContext.globalStorageUri.fsPath, mount.name
+  );
+  const workspaceRoot = vscode.Uri.file(placeholder.localPath).path;
+  const folder = { mountName: mount.name, hostName: mount.host, remoteRoot, workspaceRoot };
   registry.set(folder);
-  agentTrace('SFTP', `挂载 ${mount.name} 验证完成，remoteRoot=${remoteRoot}`);
+  agentTrace(
+    'SFTP',
+    `挂载 ${mount.name} 验证完成，remoteRoot=${remoteRoot}，agentCwd=${placeholder.localPath}`
+  );
   return folder;
+}
+
+function folderUri(folder: RemoteFolder, remotePath = folder.remoteRoot): string {
+  return remoteUri(folder.mountName, workspacePathForRemote(folder, remotePath));
 }
 
 async function openRemoteFolder(requested?: MountConfig): Promise<void> {
@@ -309,23 +321,33 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
   }, async (progress) => {
     progress.report({ message: '正在验证远程目录…' });
     const folder = await ensureFolder(mount);
-    agentTrace('Open', `创建新窗口，workspace=${remoteUri(folder.mountName, folder.remoteRoot)}`);
+    agentTrace('Open', `创建新窗口，workspace=${folderUri(folder)}`);
     progress.report({ message: '正在打开工作区…' });
     await vscode.commands.executeCommand(
       'vscode.openFolder',
-      vscode.Uri.parse(remoteUri(folder.mountName, folder.remoteRoot)),
+      vscode.Uri.parse(folderUri(folder)),
       true
     );
   });
 }
 
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
+  const resolveLocation = (location: { mountName: string; remotePath: string }) => {
+    const folder = registry.get(location.mountName);
+    if (!folder || !isRemotePathInsideRoot(folder.workspaceRoot, location.remotePath)) {
+      return undefined;
+    }
+    return { ...location, remotePath: remotePathForUri(folder, location.remotePath) };
+  };
   const active = vscode.window.activeTextEditor?.document.uri;
-  if (active?.scheme === remoteFileSystemScheme) return parseRemoteUri(active.toString());
+  if (active?.scheme === remoteFileSystemScheme) {
+    return resolveLocation(parseRemoteUri(active.toString()));
+  }
   const workspace = vscode.workspace.workspaceFolders?.find(
     (folder) => folder.uri.scheme === remoteFileSystemScheme
   );
-  return workspace ? parseRemoteUri(workspace.uri.toString()) : undefined;
+  if (!workspace) return undefined;
+  return resolveLocation(parseRemoteUri(workspace.uri.toString()));
 }
 
 // ---- openTerminal (aligned with main) ----
@@ -663,7 +685,7 @@ function toolPath(folder: RemoteFolder, value = '.'): string {
 async function remoteList(input: { mountName: string; path?: string }): Promise<unknown> {
   const { mount, folder } = await mountAndFolder(input.mountName);
   const remotePath = toolPath(folder, input.path);
-  const uri = vscode.Uri.parse(remoteUri(folder.mountName, remotePath));
+  const uri = vscode.Uri.parse(folderUri(folder, remotePath));
   return {
     mountName: mount.name,
     path: remotePath,
@@ -677,7 +699,7 @@ async function remoteRead(input: {
   const { mount, folder } = await mountAndFolder(input.mountName);
   const remotePath = toolPath(folder, input.path);
   const bytes = await provider.readFile(
-    vscode.Uri.parse(remoteUri(folder.mountName, remotePath))
+    vscode.Uri.parse(folderUri(folder, remotePath))
   );
   const offset = input.offset ?? 0;
   const end = input.length ? offset + input.length : bytes.length;
@@ -697,7 +719,7 @@ async function remoteWrite(input: {
 }): Promise<unknown> {
   const { folder } = await mountAndFolder(input.mountName);
   const remotePath = toolPath(folder, input.path);
-  const uri = vscode.Uri.parse(remoteUri(folder.mountName, remotePath));
+  const uri = vscode.Uri.parse(folderUri(folder, remotePath));
   const content = new TextEncoder().encode(input.content);
   await provider.writeFile(uri, content, { create: true, overwrite: true });
   return { mountName: input.mountName, path: remotePath, bytes: content.length };
@@ -871,13 +893,20 @@ async function restoreRemoteWorkspaces(): Promise<void> {
     const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
     if (!mount) continue;
     const folder = await ensureFolder(mount);
-    if (folder.remoteRoot !== location.remotePath) {
+    if (!isRemotePathInsideRoot(folder.workspaceRoot, location.remotePath)) {
       output.appendLine(
-        `远程根目录已变化：${location.remotePath} -> ${folder.remoteRoot}`
+        `工作区使用不受支持的旧 URI，请从 Serverless Remote SSH 面板重新打开：${mount.name}`
+      );
+      continue;
+    }
+    const openedRemotePath = remotePathForUri(folder, location.remotePath);
+    if (folder.remoteRoot !== openedRemotePath) {
+      output.appendLine(
+        `远程根目录已变化：${openedRemotePath} -> ${folder.remoteRoot}`
       );
     }
     if (mount.remote_terminal === 'open') {
-      await openTerminal(vscodeContext, mount, location.remotePath);
+      await openTerminal(vscodeContext, mount, folder.remoteRoot);
     }
   }
 }
@@ -892,11 +921,7 @@ async function preloadRemoteWorkspaces(): Promise<void> {
     const location = parseRemoteUri(workspace.uri.toString());
     const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
     if (!mount) continue;
-    registry.set({
-      mountName: mount.name,
-      hostName: mount.host,
-      remoteRoot: location.remotePath
-    });
+    await ensureFolder(mount);
   }
 }
 
@@ -946,7 +971,7 @@ async function forwardedFolders(context: vscode.ExtensionContext): Promise<impor
       const folder = await ensureFolder(mount);
       return {
         name: mount.name,
-        workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
+        workspaceUri: folderUri(folder),
         remoteRoot: folder.remoteRoot,
         host: mount.host
       };
@@ -1041,7 +1066,7 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
           const folder = await ensureFolder(mount);
           return {
             name: mount.name,
-            workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
+            workspaceUri: folderUri(folder),
             remoteRoot: folder.remoteRoot,
             host: mount.host
           };
@@ -1099,7 +1124,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
   await agentWorkspacePublisher.publish({
     focused: vscode.window.state.focused,
     execution: 'remote',
-    workspaceUri: remoteUri(folder.mountName, folder.remoteRoot),
+    workspaceUri: folderUri(folder),
     mountName: mount.name,
     remoteRoot: folder.remoteRoot,
     host: mount.host,
@@ -1402,22 +1427,14 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
 }
 
 async function prepareAgentCwd(mount: MountConfig): Promise<void> {
-  const folder = await ensureFolder(mount);
   try {
-    const placeholder = await ensureAgentCwdPlaceholder(
-      folder.remoteRoot, vscodeContext.globalStorageUri.fsPath
-    );
-    agentTrace(
-      'CWD',
-      placeholder.linkPath
-        ? `${placeholder.created ? '已创建' : '已存在'} Agent cwd 链接：${placeholder.linkPath} -> ${placeholder.targetPath}`
-        : `Agent cwd 已可用：${placeholder.localPath}`
-    );
+    const folder = await ensureFolder(mount);
+    agentTrace('CWD', `Agent cwd 已可用：${vscode.Uri.parse(folderUri(folder)).fsPath}`);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    bridgeOutput?.appendLine(`[Agent CWD] 无法为 ${folder.remoteRoot} 创建本机占位链接：${detail}`);
+    bridgeOutput?.appendLine(`[Agent CWD] 无法为 ${mount.name} 创建本机占位目录：${detail}`);
     void vscode.window.showWarningMessage(
-      `Serverless Remote SSH：无法创建 Agent cwd 占位链接 ${folder.remoteRoot}。Claude Code 可能因 ENOENT 无法启动，请查看输出。`
+      `Serverless Remote SSH：无法创建 Agent cwd 占位目录。Agent 可能因 ENOENT 无法启动，请查看输出。`
     );
   }
 }

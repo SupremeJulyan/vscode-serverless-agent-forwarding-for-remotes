@@ -1,5 +1,11 @@
 # Change Log
 
+## 2.0.3
+
+- Agent 工作区改用扩展全局存储中的真实占位 cwd，SFTP Provider 将该 URI 命名空间映射回远端根目录。
+- 不再尝试在 `/home` 等系统目录创建占位符号链接，Claude Code、Codex 等 Agent 启动无需管理员权限。
+- 旧版远端路径工作区需从 Serverless Remote SSH 面板重新打开。
+
 ## 2.0.1
 
 - 将 Agent 的固定 STDIO MCP 路由器替换为扩展进程内的固定 Streamable HTTP 路由器，彻底避免 Agent 从虚拟远程 cwd 启动子进程。

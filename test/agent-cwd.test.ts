@@ -1,34 +1,26 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, mkdir, realpath } from 'node:fs/promises';
+import { lstat, mkdtemp } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
 import { ensureAgentCwdPlaceholder } from '../src/agent-cwd';
 
-test('creates a directory link at the first missing path component', async () => {
+test('creates a real cwd below extension storage', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'agent-cwd-'));
-  const nativeRoot = path.join(temporary, 'native');
   const storageRoot = path.join(temporary, 'storage');
-  await mkdir(nativeRoot);
-  const remoteLikeRoot = path.join(nativeRoot, 'home', 'share', 'project');
-
-  // The production input is POSIX. On POSIX test hosts this temporary absolute
-  // path has the same representation and exercises the real symlink behavior.
-  const result = await ensureAgentCwdPlaceholder(remoteLikeRoot, storageRoot);
+  const result = await ensureAgentCwdPlaceholder('/home/share/project', storageRoot, 'project');
   assert.equal(result.created, true);
-  assert.equal(result.linkPath, path.join(nativeRoot, 'home'));
-  assert.equal((await lstat(result.linkPath!)).isSymbolicLink(), true);
-  assert.equal(await realpath(remoteLikeRoot), path.join(result.targetPath!, 'share', 'project'));
+  assert.equal(result.localPath.startsWith(path.join(storageRoot, 'agent-cwd')), true);
+  assert.equal((await lstat(result.localPath)).isDirectory(), true);
 
-  const repeated = await ensureAgentCwdPlaceholder(remoteLikeRoot, storageRoot);
+  const repeated = await ensureAgentCwdPlaceholder('/home/share/project', storageRoot, 'project');
   assert.equal(repeated.created, false);
-  assert.equal(repeated.localPath, remoteLikeRoot);
+  assert.equal(repeated.localPath, result.localPath);
 });
 
-test('does not replace an already existing cwd', async () => {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), 'agent-cwd-existing-'));
-  const workspace = path.join(temporary, 'workspace');
-  await mkdir(workspace);
-  const result = await ensureAgentCwdPlaceholder(workspace, path.join(temporary, 'storage'));
-  assert.deepEqual(result, { localPath: workspace, created: false });
+test('uses separate cwd directories for mounts with the same remote root', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'agent-cwd-mounts-'));
+  const first = await ensureAgentCwdPlaceholder('/srv/project', temporary, 'first');
+  const second = await ensureAgentCwdPlaceholder('/srv/project', temporary, 'second');
+  assert.notEqual(first.localPath, second.localPath);
 });
