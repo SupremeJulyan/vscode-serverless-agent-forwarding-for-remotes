@@ -115,6 +115,12 @@ codex mcp add serverless-remote --url 'http://127.0.0.1:9848/mcp?token=<generate
 claude mcp add --transport http --scope user serverless-remote 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 ```
 
+If no Agent CLI is installed, run **Serverless Remote SSH: Copy Desktop Agent MCP
+URL** from the VS Code Command Palette. In the desktop app, open **Settings > MCP
+servers**, add a **Streamable HTTP** server named `serverless-remote`, and paste the
+copied URL. The URL contains an authentication token; do not share it or commit it
+to the repository.
+
 Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
 the mount reconnects. If multiple remote windows are open, calls without `mountName` use

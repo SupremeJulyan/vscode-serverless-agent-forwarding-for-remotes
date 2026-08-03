@@ -113,6 +113,12 @@ codex mcp add serverless-remote --url 'http://127.0.0.1:9848/mcp?token=<generate
 claude mcp add --transport http --scope user serverless-remote 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 ```
 
+如果未安装 Agent CLI，可在 VS Code 命令面板执行
+**Serverless Remote SSH: 复制桌面版 Agent MCP 地址**，然后在桌面版
+**Settings > MCP servers** 中添加名为 `serverless-remote` 的
+**Streamable HTTP** 服务器并粘贴该地址。地址包含鉴权令牌，不要共享或
+提交到仓库。
+
 安装后重启 Agent 并新建对话。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
 不会关闭 Agent 转发偏好，重连相同挂载后 MCP 会发现新端口。如果同时打开多个远程窗口，
 省略 `mountName` 的工具调用使用当前获得焦点且状态最新的窗口。设置

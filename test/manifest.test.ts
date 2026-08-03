@@ -34,6 +34,9 @@ test('shows separate Agent forwarding actions for enabled and disabled mounts', 
   const commands = manifest.contributes?.commands ?? [];
   assert.ok(commands.some((item) => item.command === 'serverlessRemote.enableAiForwardItem'));
   assert.ok(commands.some((item) => item.command === 'serverlessRemote.disableAiForwardItem'));
+  assert.ok(commands.some(
+    (item) => item.command === 'serverlessRemote.copyDesktopAgentMcpUrl'
+  ));
   assert.equal(commands.some((item) => item.command === 'serverlessRemote.toggleAiForwardItem'), false);
   const menu = manifest.contributes?.menus?.['view/item/context'] ?? [];
   assert.ok(menu.some((item) => item.command === 'serverlessRemote.enableAiForwardItem'

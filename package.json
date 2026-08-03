@@ -43,7 +43,8 @@
     "onCommand:serverlessRemote.close",
     "onCommand:serverlessRemote.status",
     "onCommand:serverlessRemote.openConfig",
-    "onCommand:serverlessRemote.addSshConfig"
+    "onCommand:serverlessRemote.addSshConfig",
+    "onCommand:serverlessRemote.copyDesktopAgentMcpUrl"
   ],
   "contributes": {
     "commands": [
@@ -73,6 +74,10 @@
         "command": "serverlessRemote.addSshConfig",
         "title": "Serverless Remote SSH: 添加 SSH 配置",
         "icon": "$(add)"
+      },
+      {
+        "command": "serverlessRemote.copyDesktopAgentMcpUrl",
+        "title": "Serverless Remote SSH: 复制桌面版 Agent MCP 地址"
       },
       {
         "command": "serverlessRemote.refreshExplorer",

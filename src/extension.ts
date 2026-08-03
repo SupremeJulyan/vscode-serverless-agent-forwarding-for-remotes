@@ -1584,6 +1584,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await addSshConfig(context);
     tree.refresh();
   });
+  command('copyDesktopAgentMcpUrl', async () => {
+    startAgentHttpRouterLeadership(context);
+    const router = await ensureAgentHttpRouter(context);
+    await vscode.env.clipboard.writeText(router.url);
+    void vscode.window.showInformationMessage(
+      '已复制桌面版 Agent MCP 地址。在桌面版的 Settings > MCP servers 中添加 Streamable HTTP 服务器“serverless-remote”，粘贴该地址后重启 Agent。'
+    );
+  });
   command('refreshExplorer', async () => tree.refresh());
   command('deleteConfigItem', async (mount) => {
     await deleteConfig(mount);
