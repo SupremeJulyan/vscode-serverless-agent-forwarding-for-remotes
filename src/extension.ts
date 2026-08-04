@@ -1,7 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { access, readdir } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -15,16 +15,19 @@ import {
   CommandPlan, createPlatformAdapter, platformExtensionStateKey
 } from './platform';
 import {
-  commandExists, executeCaptured, missingExecutableName,
-  resolveExecutable
+  commandExists, executeCaptured,
+  missingExecutableName, resolveExecutable
 } from './process';
 import { executeSsh2Command, Ssh2Terminal } from './ssh2-terminal';
 import {
   passwordValueOffset
 } from './authentication';
-import { AgentMcpServer } from './agent-mcp';
-import { AgentHttpRouter } from './agent-http-router';
+import { AgentMcpServer } from './agent-mcp';import { AgentHttpRouter } from './agent-http-router';
 import { AgentWorkspacePublisher } from './agent-discovery';
+import {
+  AgentDefinition, AgentMcpCliRunner, agentSupportsMcpFor,
+  resolveAgentDefinitions, runAgentMcpOperation
+} from './agent-mcp-registry';
 import {
   ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
   writeLastRemoteDirectory
@@ -1349,103 +1352,13 @@ function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
 
 // ---- Agent 通用转发定义（配置项为 Agent CLI 名）----
 
-interface AgentMcpCapability {
-  get: (serverName: string) => string[];
-  add: (serverName: string, url: string) => string[];
-  remove: (serverName: string) => string[];
-}
-
-interface AgentDefinition {
-  /** 配置 key，即 Agent CLI 命令名（如 codex、claude、pi） */
-  cliName: string;
-  /** 旧版配置兼容 key（如 claudeCode） */
-  legacyIds?: string[];
-  /** 用户可读显示名 */
-  displayName: string;
-  /** 对应 VS Code Agent 扩展 ID，用于查找内置 CLI */
-  extensionId?: string;
-  /** 扩展安装路径 → 内置 CLI 候选列表 */
-  bundledCandidates?: (extensionPath: string) => Promise<string[]>;
-  /** MCP server 注册命令参数模板 */
-  mcp: AgentMcpCapability;
-}
-
-const builtinAgentDefinitions: AgentDefinition[] = [
-  {
-    cliName: 'codex',
-    displayName: 'Codex',
-    extensionId: 'openai.chatgpt',
-    bundledCandidates: async (extensionPath) => {
-      const binRoot = path.join(extensionPath, 'bin');
-      try {
-        const platformDirectories = await readdir(binRoot, { withFileTypes: true });
-        return platformDirectories
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => path.join(
-            binRoot, entry.name, process.platform === 'win32' ? 'codex.exe' : 'codex'
-          ));
-      } catch {
-        // The installed Codex extension does not expose a bundled CLI.
-        return [];
-      }
-    },
-    mcp: {
-      get: (serverName) => ['mcp', 'get', serverName],
-      add: (serverName, url) => ['mcp', 'add', serverName, '--url', url],
-      remove: (serverName) => ['mcp', 'remove', serverName]
-    }
-  },
-  {
-    cliName: 'claude',
-    legacyIds: ['claudeCode'],
-    displayName: 'Claude Code',
-    extensionId: 'anthropic.claude-code',
-    bundledCandidates: async (extensionPath) => [
-      path.join(
-        extensionPath, 'resources', 'native-binary',
-        process.platform === 'win32' ? 'claude.exe' : 'claude'
-      )
-    ],
-    mcp: {
-      get: (serverName) => ['mcp', 'get', serverName],
-      add: (serverName, url) => [
-        'mcp', 'add', '--transport', 'http', '--scope', 'user', serverName, url
-      ],
-      remove: (serverName) => ['mcp', 'remove', serverName]
-    }
-  }
-];
-
-/** 未知 CLI 的通用定义：按 codex 风格参数尝试 MCP 注册 */
-function genericAgentDefinition(cliName: string): AgentDefinition {
-  return {
-    cliName,
-    displayName: cliName,
-    mcp: {
-      get: (serverName) => ['mcp', 'get', serverName],
-      add: (serverName, url) => ['mcp', 'add', serverName, '--url', url],
-      remove: (serverName) => ['mcp', 'remove', serverName]
-    }
-  };
-}
-
-/** 把配置里的 CLI 名解析为 Agent 定义（兼容旧 key、去重） */
-function resolveAgentDefinitions(cliNames: string[]): AgentDefinition[] {
-  const result: AgentDefinition[] = [];
-  const seen = new Set<string>();
-  for (const name of cliNames) {
-    const builtin = builtinAgentDefinitions.find(
-      (def) => def.cliName === name || def.legacyIds?.includes(name)
-    );
-    const def = builtin ?? genericAgentDefinition(name);
-    if (seen.has(def.cliName)) continue;
-    seen.add(def.cliName);
-    result.push(def);
-  }
-  return result;
-}
+// 类型与内置定义见 agent-mcp-registry.ts（AgentDefinition、builtinAgentDefinitions、
+// genericAgentDefinition、resolveAgentDefinitions、agentSupportsMcpFor、runAgentMcpOperation）。
 
 async function detectAgentCommand(def: AgentDefinition): Promise<string | undefined> {
+  // 纯 handler 的 Agent（如 pi）不需要 CLI：MCP 注册由 handler 直接写
+  // 配置文件完成（~/.pi/agent/mcp.json），跳过 PATH 与扩展内置 CLI 检测。
+  if (def.mcp.handler) return def.cliName;
   if (await commandExists(def.cliName)) return def.cliName;
   if (!def.extensionId || !def.bundledCandidates) return undefined;
   const extension = vscode.extensions.getExtension(def.extensionId);
@@ -1462,15 +1375,13 @@ async function detectAgentCommand(def: AgentDefinition): Promise<string | undefi
   return undefined;
 }
 
-/** CLI 报错匹配这些模式时判定为不支持 'mcp' 子命令 */
-const mcpUnsupportedPattern = /unknown command|unrecognized|no such command|invalid command|command not found|not a valid command/i;
-
-function agentSupportsMcp(
-  probe: Awaited<ReturnType<typeof executeAgentMcpCommand>>
-): boolean {
-  if (probe.exitCode === 0) return true;
-  return !mcpUnsupportedPattern.test(`${probe.stdout}\n${probe.stderr}`);
-}
+/** 注册表操作的宿主执行器：CLI 走 executeAgentMcpCommand，日志走输出面板 */
+const mcpRunner: AgentMcpCliRunner = {
+  run: (command, args) => executeAgentMcpCommand({ command, args }),
+  log: (message) => bridgeOutput?.appendLine(
+    `[${new Date().toLocaleString()}] [Agent MCP] $ ${message}`
+  )
+};
 
 async function configureDetectedAgents(
   context: vscode.ExtensionContext, shouldRegister: boolean
@@ -1516,12 +1427,23 @@ async function configureDetectedAgents(
       });
       continue;
     }
-    const status = await executeAgentMcpCommand({
-      command, args: def.mcp.get('safs')
-    });
+    const prerequisiteMissing = def.mcp.handler?.prerequisiteCheck
+      ? await def.mcp.handler.prerequisiteCheck()
+      : undefined;
+    if (prerequisiteMissing) {
+      bridgeOutput?.appendLine(
+        `[Agent MCP] ${def.displayName} 前置条件缺失，跳过自动注册：${prerequisiteMissing}`
+      );
+      states.push({
+        def, command, enabled,
+        fixedExists: false, fixedConfigured: false, supportsMcp: true
+      });
+      continue;
+    }
+    const status = await runAgentMcpOperation(def, 'get', undefined, mcpRunner);
     const output = `${status.stdout}\n${status.stderr}`;
     const fixedExists = status.exitCode === 0;
-    const supportsMcp = agentSupportsMcp(status);
+    const supportsMcp = agentSupportsMcpFor(def, status);
     const fixedConfigured = fixedExists && Boolean(routerUrl && output.includes(routerUrl));
     states.push({ def, command, enabled, fixedExists, fixedConfigured, supportsMcp });
   }
@@ -1579,9 +1501,7 @@ async function configureDetectedAgents(
   ].filter(Boolean).join(' '));
   const failures: string[] = [];
   for (const state of needsDisable) {
-    const result = await executeAgentMcpCommand({
-      command: state.command!, args: state.def.mcp.remove('safs')
-    });
+    const result = await runAgentMcpOperation(state.def, 'remove', undefined, mcpRunner);
     if (result.exitCode === 0) {
       configured.delete(`${state.def.cliName}:safs`);
       bridgeOutput?.appendLine(
@@ -1594,9 +1514,7 @@ async function configureDetectedAgents(
   for (const state of needsSetup) {
     let canAdd = true;
     if (state.fixedExists) {
-      const removed = await executeAgentMcpCommand({
-        command: state.command!, args: state.def.mcp.remove('safs')
-      });
+      const removed = await runAgentMcpOperation(state.def, 'remove', undefined, mcpRunner);
       if (removed.exitCode !== 0) {
         canAdd = false;
         failures.push(
@@ -1605,9 +1523,7 @@ async function configureDetectedAgents(
       }
     }
     if (canAdd) {
-      const result = await executeAgentMcpCommand({
-        command: state.command!, args: state.def.mcp.add('safs', routerUrl!)
-      });
+      const result = await runAgentMcpOperation(state.def, 'add', routerUrl!, mcpRunner);
       if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
         failures.push(`${state.def.displayName}: ${result.stderr || result.stdout}`);
       } else {
@@ -1630,8 +1546,9 @@ async function configureDetectedAgents(
       await vscode.env.clipboard.writeText(
         states
           .filter((state) => state.enabled && state.command && state.supportsMcp)
-          .map((state) =>
-            `${state.def.cliName} ${state.def.mcp.add('safs', routerUrl!).join(' ')}`
+          .map((state) => state.def.mcp.handler
+            ? state.def.mcp.handler.describeAdd('safs', routerUrl!)
+            : `${state.def.cliName} ${state.def.mcp.add('safs', routerUrl!).join(' ')}`
           )
           .join('\n')
       );

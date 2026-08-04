@@ -148,7 +148,10 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   `codex` 和 `claude`。配置值直接使用 Agent 的 CLI 命令名（如 `codex`、
   `claude`、`pi`），支持任意 CLI。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，
   找不到时再从对应的 VS Code Agent 扩展安装路径查找内置 CLI；检测到 CLI 不支持
-  `mcp` 子命令时会跳过并提示（例如 `pi`）。
+  `mcp` 子命令时会跳过并提示。`pi` 通过内置处理器注册：把 SAFS 地址写入
+  pi-mcp-extension 的配置文件（`~/.pi/agent/mcp.json`），无需 `pi mcp add`。
+  **使用 `pi` 需要先在 pi 中安装 `pi-mcp-extension`**（`pi install npm:pi-mcp-extension`），
+  并在启用转发后重启 pi 会话以加载工具。
 - `safs.highRiskCommandPatterns`：Agent 通过 MCP 请求远程命令时的高危匹配规则（正则数组），
   默认包含递归删除、磁盘/分区/文件系统操作、关机重启、管道执行远程脚本，以及 `sudo`/`su`/
   `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按

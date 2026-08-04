@@ -3,7 +3,7 @@
   "displayName": "SAFS",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -290,8 +290,12 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "mountName": { "type": "string" },
-            "path": { "type": "string" }
+            "mountName": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
           },
           "required": []
         }
@@ -305,12 +309,22 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "mountName": { "type": "string" },
-            "path": { "type": "string" },
-            "offset": { "type": "number" },
-            "length": { "type": "number" }
+            "mountName": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "number"
+            },
+            "length": {
+              "type": "number"
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
         }
       },
       {
@@ -322,11 +336,20 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "mountName": { "type": "string" },
-            "path": { "type": "string" },
-            "content": { "type": "string" }
+            "mountName": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
           },
-          "required": ["path", "content"]
+          "required": [
+            "path",
+            "content"
+          ]
         }
       },
       {
@@ -338,11 +361,19 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "mountName": { "type": "string" },
-            "query": { "type": "string" },
-            "path": { "type": "string" }
+            "mountName": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     ],
@@ -394,63 +425,63 @@
           "scope": "machine",
           "description": "Stable loopback-only Streamable HTTP MCP router port registered with Agents. All VS Code windows must use the same value."
         },
-    "safs.agentForwardingAgents": {
-      "type": "array",
-      "default": [
-        "codex",
-        "claude"
-      ],
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "suggestions": [
-          "codex",
-          "claude",
-          "pi"
-        ]
-      },
-      "markdownDescription": "Agent CLI 名称列表，启用 Serverless Remote MCP 转发。扩展按名称从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从对应 VS Code Agent 扩展安装路径查找内置 CLI；**不支持的 MCP 的 CLI 会被跳过并提示。** 常见值：`codex`（OpenAI Codex）、`claude`（Anthropic Claude Code）、`pi`（pi coding agent）等。"
-    },
-    "safs.highRiskCommandPatterns": {
-      "type": "array",
-      "default": [
-        "rm\\s+-(?:[a-z]*rf[a-z]*|[a-z]*fr[a-z]*)\\b",
-        "(?<![\\w./-])mkfs(?:\\.\\w+)?(?:\\s|$)",
-        "(?<![\\w./-])(?:fdisk|sfdisk|parted|wipefs|shred)\\b",
-        "dd\\s+(?:(?!of=/dev/null\\b).)*\\bof=/dev/",
-        "(?<![\\w./-])(?:shutdown|reboot|halt|poweroff)\\b",
-        "systemctl\\s+(?:poweroff|reboot|halt)\\b",
-        "chmod\\s+-R\\s+777\\s+/",
-        "chown\\s+-R\\s+(?:root|0)\\s+/",
-        "\\b(?:curl|wget)\\b.*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b",
-        "(?<![\\w./-])diskpart\\b",
-        "format\\s+[a-z]:",
-        "(?<![\\w./-])sudo\\b",
-        "(?<![\\w./-])su\\b",
-        "(?<![\\w./-])(?:doas|pkexec|gksu|gksudo|kdesu|runas)\\b",
-        "chmod\\s+(?:[ugoa]*\\+s\\b|[246][0-7]{3}\\b)",
-        "\\b(?:setuid|setgid)\\b",
-        "(?<![\\w./-])(?:visudo|sudoers)\\b",
-        "(?<![\\w./-])(?:passwd|useradd|usermod|userdel|groupadd|groupmod|groupdel)\\b",
-        "(?<![\\w./-])net\\s+(?:user|localgroup)\\b",
-        "chattr\\s+[-+][^ ]*i\\b"
-      ],
-      "items": {
-        "type": "string"
-      },
-      "description": "Regular expressions matched against remote commands requested by Agents. A matching command is denied, or requires confirmation when safs.highRiskCommandAction is \"confirm\". Set to [] to disable interception. Matching ignores quoted strings so search terms are not false positives."
-    },
-    "safs.highRiskCommandAction": {
-      "type": "string",
-      "enum": [
-        "deny",
-        "confirm"
-      ],
-      "default": "deny",
-      "description": "How to handle remote commands matching safs.highRiskCommandPatterns: \"deny\" rejects them without running; \"confirm\" asks the user before each execution."
+        "safs.agentForwardingAgents": {
+          "type": "array",
+          "default": [
+            "codex",
+            "claude"
+          ],
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "suggestions": [
+              "codex",
+              "claude",
+              "pi"
+            ]
+          },
+          "markdownDescription": "Agent CLI 名称列表，启用 Serverless Remote MCP 转发。扩展按名称从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从对应 VS Code Agent 扩展安装路径查找内置 CLI；**不支持的 MCP 的 CLI 会被跳过并提示。** 常见值：`codex`（OpenAI Codex）、`claude`（Anthropic Claude Code）、`pi`（pi coding agent）等。"
+        },
+        "safs.highRiskCommandPatterns": {
+          "type": "array",
+          "default": [
+            "rm\\s+-(?:[a-z]*rf[a-z]*|[a-z]*fr[a-z]*)\\b",
+            "(?<![\\w./-])mkfs(?:\\.\\w+)?(?:\\s|$)",
+            "(?<![\\w./-])(?:fdisk|sfdisk|parted|wipefs|shred)\\b",
+            "dd\\s+(?:(?!of=/dev/null\\b).)*\\bof=/dev/",
+            "(?<![\\w./-])(?:shutdown|reboot|halt|poweroff)\\b",
+            "systemctl\\s+(?:poweroff|reboot|halt)\\b",
+            "chmod\\s+-R\\s+777\\s+/",
+            "chown\\s+-R\\s+(?:root|0)\\s+/",
+            "\\b(?:curl|wget)\\b.*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b",
+            "(?<![\\w./-])diskpart\\b",
+            "format\\s+[a-z]:",
+            "(?<![\\w./-])sudo\\b",
+            "(?<![\\w./-])su\\b",
+            "(?<![\\w./-])(?:doas|pkexec|gksu|gksudo|kdesu|runas)\\b",
+            "chmod\\s+(?:[ugoa]*\\+s\\b|[246][0-7]{3}\\b)",
+            "\\b(?:setuid|setgid)\\b",
+            "(?<![\\w./-])(?:visudo|sudoers)\\b",
+            "(?<![\\w./-])(?:passwd|useradd|usermod|userdel|groupadd|groupmod|groupdel)\\b",
+            "(?<![\\w./-])net\\s+(?:user|localgroup)\\b",
+            "chattr\\s+[-+][^ ]*i\\b"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Regular expressions matched against remote commands requested by Agents. A matching command is denied, or requires confirmation when safs.highRiskCommandAction is \"confirm\". Set to [] to disable interception. Matching ignores quoted strings so search terms are not false positives."
+        },
+        "safs.highRiskCommandAction": {
+          "type": "string",
+          "enum": [
+            "deny",
+            "confirm"
+          ],
+          "default": "deny",
+          "description": "How to handle remote commands matching safs.highRiskCommandPatterns: \"deny\" rejects them without running; \"confirm\" asks the user before each execution."
+        }
+      }
     }
-  }
-}
   },
   "scripts": {
     "check-types": "tsc --noEmit",

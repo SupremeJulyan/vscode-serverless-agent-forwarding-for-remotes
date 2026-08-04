@@ -148,4 +148,9 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   directly (e.g. `codex`, `claude`, `pi`); any CLI is accepted. The extension
   first searches `PATH` for a CLI supporting the `mcp` instruction; if it is not
   found, it looks inside the corresponding installed VS Code extension. CLIs
-  without an `mcp` subcommand (e.g. `pi`) are skipped and reported.
+  without an `mcp` subcommand are skipped and reported. `pi` is handled by a
+  built-in file-based handler: the SAFS URL is written to the
+  `pi-mcp-extension` config file (`~/.pi/agent/mcp.json`), no `pi mcp add`
+  needed. **Using `pi` requires installing `pi-mcp-extension` in pi**
+  (`pi install npm:pi-mcp-extension`) and restarting the pi session after
+  enabling forwarding so the tools load.

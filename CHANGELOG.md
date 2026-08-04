@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.9
+
+- Pi support: `pi` in `safs.agentForwardingAgents` is now handled by a built-in file-based handler instead of being skipped. SAFS writes the unified MCP router URL to the `pi-mcp-extension` config file (`~/.pi/agent/mcp.json`) with `streamable-http` transport, so Pi can use SAFS remote tools (`mcp_safs_*`) without an `mcp` subcommand.
+  - Detects whether `pi-mcp-extension` is installed (checks both `~/.pi/agent/settings.json` and the `PI_CODING_AGENT_DIR` agent dir) and warns when it is missing.
+  - Handler-based agents (pi) skip CLI detection entirely: registration no longer requires `pi` in PATH, so the Pendant VS Code extension's bundled runtime works without a standalone `pi` command.
+  - Refactor: all Agent MCP registration (types, built-in definitions, probing and add/get/remove dispatch) moved to a single `src/agent-mcp-registry.ts` module; `extension.ts` keeps only the orchestration. Codex and Claude behavior is unchanged.
+
 ## 1.0.8
 
 - `safs.agentForwardingAgents` now uses real Agent CLI names (`codex`, `claude`; the old `claudeCode` value is still accepted for compatibility) and accepts any CLI name instead of a fixed enum.
