@@ -76,7 +76,7 @@ test('uses only the unified cross-platform config path', async () => {
     manifest.contributes?.configuration?.properties?.[
       'safs.agentForwardingAgents'
     ]?.default,
-    ['codex', 'claudeCode']
+    ['codex', 'claude']
   );
   assert.equal(
     manifest.contributes?.configuration?.properties?.[

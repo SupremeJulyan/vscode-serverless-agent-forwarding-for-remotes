@@ -144,6 +144,8 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 - `safs.agentMcpPort`: dynamic per-window backend port; keep the default `0`.
 - `safs.agentHttpRouterPort`: stable Agent-facing HTTP router port; defaults to `9848`.
 - `safs.agentForwardingAgents`: selects Agents enabled for MCP forwarding;
-  defaults to `codex` and `claudeCode`. The extension first searches `PATH` for a CLI
-  with MCP commands, then falls back to the corresponding installed VS Code Agent
-  extension's bundled CLI.
+  defaults to `codex` and `claude`. Values are the Agent CLI command names
+  directly (e.g. `codex`, `claude`, `pi`); any CLI is accepted. The extension
+  first searches `PATH` for a CLI supporting the `mcp` instruction; if it is not
+  found, it looks inside the corresponding installed VS Code extension. CLIs
+  without an `mcp` subcommand (e.g. `pi`) are skipped and reported.
