@@ -8,9 +8,35 @@ export const defaultHighRiskCommandPatterns: string[] = [
   // 关机 / 重启
   '(?<![\\w./-])(?:shutdown|reboot|halt|poweroff)\\b',
   'systemctl\\s+(?:poweroff|reboot|halt)\\b',
+  // SysV init 关机 / 重启
+  '(?<![\\w./-])(?:init|telinit)\\s+[06]\\b',
   // 根目录权限变更
   'chmod\\s+-R\\s+777\\s+/',
+  'chmod\\s+-R\\s+000\\s+/',
+  'chmod\\s+-R\\s+(?:a-x|a-w|a-r)\\s+/',
   'chown\\s+-R\\s+(?:root|0)\\s+/',
+  // 杀死系统初始化进程
+  'kill\\s+-(?:9|KILL)\\s+1(?:\\s|$)',
+  '(?<![\\w./-])pkill\\s+-(?:9|KILL)\\s+init\\b',
+  // fork bomb
+  ':\\(\\)\\{\\s*:\\|:&\\s*\\}\\s*;',
+  // 内核参数写入
+  'sysctl\\s+-w\\b',
+  '(?:echo|printf)\\s+[^>|;]*>[^\\n]*/proc/sys/',
+  // 防火墙清空 / 禁用
+  '(?<![\\w./-])iptables\\s+-(?:F|X)\\b',
+  '(?<![\\w./-])ufw\\s+disable\\b',
+  'nft\\s+flush\\s+(?:ruleset|chain|table)',
+  // 存储 / 卷毁灭
+  '(?<![\\w./-])zpool\\s+destroy\\b',
+  '(?<![\\w./-])mdadm\\s+--(?:stop|zero-superblock)\\b',
+  'cryptsetup\\s+luks(?:Format|Erase)\\b',
+  '(?<![\\w./-])(?:pvremove|vgremove|lvremove)\\b',
+  // 解除只读挂载
+  'mount\\s+[^|;]*remount\\s*,?\\s*rw\\b',
+  // 引导 / 固件覆写
+  '(?<![\\w./-])grub-install\\b',
+  '(?<![\\w./-])efibootmgr\\b',
   // 从网络管道执行 shell
   '\\b(?:curl|wget)\\b.*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b',
   // Windows 磁盘 / 分区操作

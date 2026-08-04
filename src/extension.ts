@@ -822,14 +822,24 @@ function toolPath(folder: RemoteFolder, value = '.'): string {
   return resolved;
 }
 
+/**
+ * 解析远程路径（绝对路径直接规范化，相对路径基于挂载根目录），
+ * 不限制在远程工作区内——只读工具（list/read/search）允许访问工作区外路径。
+ */
+function resolveRemotePath(folder: RemoteFolder, value = '.'): string {
+  return value.startsWith('/')
+    ? path.posix.normalize(value)
+    : path.posix.resolve(folder.remoteRoot, value);
+}
+
 async function remoteList(input: { mountName: string; path?: string }): Promise<unknown> {
   const { mount, folder } = await mountAndFolder(input.mountName);
-  const remotePath = toolPath(folder, input.path);
-  const uri = vscode.Uri.parse(folderUri(folder, remotePath));
+  const remotePath = resolveRemotePath(folder, input.path);
+  const entries = await (await pool.get(folder.hostName)).readDirectory(remotePath);
   return {
     mountName: mount.name,
     path: remotePath,
-    entries: (await provider.readDirectory(uri)).map(([name, type]) => ({ name, type }))
+    entries: entries.map(({ name, type }) => ({ name, type }))
   };
 }
 
@@ -837,10 +847,8 @@ async function remoteRead(input: {
   mountName: string; path: string; offset?: number; length?: number;
 }): Promise<unknown> {
   const { mount, folder } = await mountAndFolder(input.mountName);
-  const remotePath = toolPath(folder, input.path);
-  const bytes = await provider.readFile(
-    vscode.Uri.parse(folderUri(folder, remotePath))
-  );
+  const remotePath = resolveRemotePath(folder, input.path);
+  const bytes = await (await pool.get(folder.hostName)).readFile(remotePath);
   const offset = input.offset ?? 0;
   const end = input.length ? offset + input.length : bytes.length;
   const selected = bytes.slice(offset, end);
@@ -991,12 +999,9 @@ async function runRemote(input: {
 async function remoteSearch(input: {
   mountName: string; query: string; path?: string;
 }): Promise<unknown> {
-  const { mount, folder } = await mountAndFolder(input.mountName);
-  const requestedPath = toolPath(folder, input.path);
-  const searchPath = await (await pool.get(mount.host)).realpath(requestedPath);
-  if (!isRemotePathInsideRoot(folder.remoteRoot, searchPath)) {
-    throw new Error(`搜索路径通过符号链接超出工作区：${requestedPath}`);
-  }
+  const { folder } = await mountAndFolder(input.mountName);
+  const requestedPath = resolveRemotePath(folder, input.path);
+  const searchPath = await (await pool.get(folder.hostName)).realpath(requestedPath);
   return executeRemoteCommand(vscodeContext, {
     mountName: input.mountName,
     remoteCwd: folder.remoteRoot,

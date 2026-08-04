@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.10
+
+- Read-only MCP tools (`remote_list`, `remote_read`, `remote_search`) now accept paths outside the remote workspace root (e.g. `~/.bashrc`, `/etc/hosts`); they are served directly over SFTP. `remote_write` and `run_remote_command`'s cwd stay restricted to the workspace.
+- Extended high-risk command rules: fork bomb, killing init (`kill -9 1`, `pkill -9 init`), SysV `init`/`telinit 0|6`, kernel parameter writes (`sysctl -w`, `/proc/sys`), firewall flush/disable (`iptables -F`, `ufw disable`, `nft flush`), storage/volume destruction (`zpool destroy`, `mdadm --zero-superblock`, `cryptsetup luksFormat/luksErase`, `pvremove`/`vgremove`/`lvremove`), read-only mount override (`mount -o remount,rw /`), bootloader/firmware overwrites (`grub-install`, `efibootmgr`).
+
 ## 1.0.9
 
 - Pi support: `pi` in `safs.agentForwardingAgents` is now handled by a built-in file-based handler instead of being skipped. SAFS writes the unified MCP router URL to the `pi-mcp-extension` config file (`~/.pi/agent/mcp.json`) with `streamable-http` transport, so Pi can use SAFS remote tools (`mcp_safs_*`) without an `mcp` subcommand.
