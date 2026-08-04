@@ -4,17 +4,14 @@ export const defaultHighRiskCommandPatterns: string[] = [
   // 磁盘 / 分区 / 文件系统操作
   '(?<![\\w./-])mkfs(?:\\.\\w+)?(?:\\s|$)',
   '(?<![\\w./-])(?:fdisk|sfdisk|parted|wipefs|shred)\\b',
-  'dd\\s+(?:(?!of=/dev/null\\b).)*\\bof=/dev/',
+  'dd\\s+(?:(?!\\bof=/dev/(?:null|zero|urandom)\\b).)*\\bof=/dev/(?!\\b(?:null|zero|urandom)\\b)',
   // 关机 / 重启
   '(?<![\\w./-])(?:shutdown|reboot|halt|poweroff)\\b',
   'systemctl\\s+(?:poweroff|reboot|halt)\\b',
   // SysV init 关机 / 重启
   '(?<![\\w./-])(?:init|telinit)\\s+[06]\\b',
-  // 根目录权限变更
-  'chmod\\s+-R\\s+777\\s+/',
-  'chmod\\s+-R\\s+000\\s+/',
-  'chmod\\s+-R\\s+(?:a-x|a-w|a-r)\\s+/',
-  'chown\\s+-R\\s+(?:root|0)\\s+/',
+  // sysrq 紧急关机
+  'echo\\s+o\\s+>\\s*/proc/sysrq-trigger',
   // 杀死系统初始化进程
   'kill\\s+-(?:9|KILL)\\s+1(?:\\s|$)',
   '(?<![\\w./-])pkill\\s+-(?:9|KILL)\\s+init\\b',
@@ -25,31 +22,41 @@ export const defaultHighRiskCommandPatterns: string[] = [
   '(?:echo|printf)\\s+[^>|;]*>[^\\n]*/proc/sys/',
   // 防火墙清空 / 禁用
   '(?<![\\w./-])iptables\\s+-(?:F|X)\\b',
+  'iptables\\s+--flush\\b',
   '(?<![\\w./-])ufw\\s+disable\\b',
   'nft\\s+flush\\s+(?:ruleset|chain|table)',
+  'systemctl\\s+(?:stop|disable)\\s+(?:firewalld|ufw|nftables)\\b',
   // 存储 / 卷毁灭
   '(?<![\\w./-])zpool\\s+destroy\\b',
+  '(?<![\\w./-])zfs\\s+destroy\\b',
   '(?<![\\w./-])mdadm\\s+--(?:stop|zero-superblock)\\b',
   'cryptsetup\\s+luks(?:Format|Erase)\\b',
   '(?<![\\w./-])(?:pvremove|vgremove|lvremove)\\b',
-  // 解除只读挂载
-  'mount\\s+[^|;]*remount\\s*,?\\s*rw\\b',
+  '(?<![\\w./-])sgdisk\\s+-Z\\b',
+  '(?<![\\w./-])blkdiscard\\b',
+  // 解除只读挂载（remount 与 rw 顺序无关）
+  'mount\\s+[^|;]*(?:remount\\b[^|;]*rw\\b|rw\\b[^|;]*remount\\b)',
   // 引导 / 固件覆写
-  '(?<![\\w./-])grub-install\\b',
+  '(?<![\\w./-])grub2?-install\\b',
   '(?<![\\w./-])efibootmgr\\b',
   // 从网络管道执行 shell
-  '\\b(?:curl|wget)\\b.*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b',
+  '\\b(?:curl|wget)\\b.*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh|dash|fish|python3?|perl)\\b',
   // Windows 磁盘 / 分区操作
   '(?<![\\w./-])diskpart\\b',
   'format\\s+[a-z]:',
   // 提权
   '(?<![\\w./-])sudo\\b',
   '(?<![\\w./-])su\\b',
+  '(?<![\\w./-])sudoedit\\b',
   '(?<![\\w./-])(?:doas|pkexec|gksu|gksudo|kdesu|runas)\\b',
   'chmod\\s+(?:[ugoa]*\\+s\\b|[246][0-7]{3}\\b)',
   '\\b(?:setuid|setgid)\\b',
   '(?<![\\w./-])(?:visudo|sudoers)\\b',
   '(?<![\\w./-])(?:passwd|useradd|usermod|userdel|groupadd|groupmod|groupdel)\\b',
+  '(?<![\\w./-])chpasswd\\b',
+  'gpasswd\\s+-a\\b',
+  'adduser\\s+\\S+\\s+(?:sudo|wheel)\\b',
+  'usermod\\s+-aG\\s+(?:sudo|wheel)\\b',
   '(?<![\\w./-])net\\s+(?:user|localgroup)\\b',
   'chattr\\s+[-+][^ ]*i\\b'
 ];
@@ -103,15 +110,20 @@ export function isDangerousDeleteTarget(token: string): boolean {
   return false;
 }
 
+/** 去掉 shell 转义前缀（\rm → rm） */
+function commandName(token: string): string {
+  return token.replace(/^\\+/, '');
+}
+
 /** 解析 rm 命令：收集目标，命中危险目标则返回原因 */
 function matchDangerousRm(command: string): string | undefined {
   const tokens = tokenizeCommand(command);
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] !== 'rm') continue;
+    if (commandName(tokens[i]) !== 'rm') continue;
     const targets: string[] = [];
     for (let j = i + 1; j < tokens.length; j++) {
       const token = tokens[j];
-      if (commandSeparators.has(token) || token === 'rm') break;
+      if (commandSeparators.has(token) || commandName(token) === 'rm') break;
       if (token.startsWith('-') && token !== '--') continue;
       targets.push(token);
     }
@@ -130,7 +142,7 @@ function matchDangerousFind(command: string): string | undefined {
     return undefined;
   }
   const tokens = tokenizeCommand(command);
-  const index = tokens.findIndex((token) => token === 'find');
+  const index = tokens.findIndex((token) => commandName(token) === 'find');
   if (index < 0) return undefined;
   const paths: string[] = [];
   for (let j = index + 1; j < tokens.length; j++) {
@@ -152,11 +164,36 @@ function matchDangerousXargsRm(command: string): string | undefined {
   return undefined;
 }
 
-/** 智能删除分析：rm / find / xargs 的危险删除行为 */
+/** chmod / chown 目标分析：模式/属主后的目标路径危险才拦截 */
+function matchDangerousChmodChown(command: string): string | undefined {
+  const tokens = tokenizeCommand(command);
+  for (let i = 0; i < tokens.length; i++) {
+    const base = commandName(tokens[i]);
+    if (base !== 'chmod' && base !== 'chown') continue;
+    const args: string[] = [];
+    for (let j = i + 1; j < tokens.length; j++) {
+      const token = tokens[j];
+      if (commandSeparators.has(token)
+        || commandName(token) === 'chmod' || commandName(token) === 'chown') break;
+      if (token.startsWith('-') && token !== '--') continue;
+      args.push(token);
+    }
+    // 第一个非标志参数是模式（chmod）或属主（chown），其余是目标路径
+    if (args.length < 2) continue;
+    const dangerous = args.slice(1).filter(isDangerousDeleteTarget);
+    if (dangerous.length > 0) {
+      return `${base} 危险目标: ${dangerous.join(' ')}`;
+    }
+  }
+  return undefined;
+}
+
+/** 智能删除分析：rm / find / xargs / chmod / chown 的危险操作 */
 export function matchHighRiskDelete(command: string): string | undefined {
   return matchDangerousRm(command)
     ?? matchDangerousFind(command)
-    ?? matchDangerousXargsRm(command);
+    ?? matchDangerousXargsRm(command)
+    ?? matchDangerousChmodChown(command);
 }
 
 export function matchHighRiskCommand(
