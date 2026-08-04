@@ -42,6 +42,10 @@ import { setWslBundlePath } from './wsl-bridge';
 import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
+import { appendMcpCommandLog } from './mcp-log';
+import {
+  defaultHighRiskCommandPatterns, matchHighRiskCommand
+} from './high-risk-commands';
 
 const commandPrefix = 'safs';
 const platformAdapter = createPlatformAdapter();
@@ -134,6 +138,18 @@ function planDisplayName(plan: CommandPlan): string {
 
 function redactAgentMcpText(value: string): string {
   return value.replace(/([?&]token=)[^&\s'"\\]+/gi, '$1<hidden>');
+}
+
+function highRiskSettings(): {
+  patterns: string[];
+  action: 'deny' | 'confirm';
+} {
+  return {
+    patterns: settings().get<string[]>(
+      'highRiskCommandPatterns', defaultHighRiskCommandPatterns
+    ),
+    action: settings().get<'deny' | 'confirm'>('highRiskCommandAction', 'deny')
+  };
 }
 
 async function executeAgentMcpCommand(
@@ -847,7 +863,8 @@ async function remoteWrite(input: {
 }
 
 async function executeRemoteCommand(
-  context: vscode.ExtensionContext, input: { command: string; mountName: string; remoteCwd?: string },
+  context: vscode.ExtensionContext,
+  input: { command: string; mountName: string; remoteCwd?: string; source?: string },
   token?: vscode.CancellationToken
 ): Promise<Record<string, unknown>> {
   if (!input.command?.trim()) throw new Error('Remote command must not be empty.');
@@ -857,6 +874,54 @@ async function executeRemoteCommand(
   if (!isRemotePathInsideRoot(folder.remoteRoot, remoteCwd)) {
     throw new Error(`远程工作目录通过符号链接超出工作区：${requestedCwd}`);
   }
+  const source = input.source ?? 'mcp';
+  const logFailure = (error: unknown): void => {
+    bridgeOutput?.appendLine(
+      `[MCP 命令日志] 写入失败：${error instanceof Error ? error.message : String(error)}`
+    );
+  };
+  if (source === 'mcp') {
+    const { patterns, action } = highRiskSettings();
+    const matched = matchHighRiskCommand(input.command, patterns);
+    if (matched) {
+      void appendMcpCommandLog({
+        source: 'high_risk',
+        mountName: mount.name,
+        remoteCwd,
+        command: input.command
+      }).catch(logFailure);
+      if (action === 'deny') {
+        bridgeOutput?.appendLine(
+          `[高危指令拦截] 拒绝执行：${input.command}（规则：${matched}）`
+        );
+        throw new Error(
+          `高危指令已被 SAFS 拦截（规则：${matched}）：${input.command}`
+        );
+      }
+      const approved = await vscode.window.showWarningMessage(
+        `Agent 请求执行高危指令，是否允许？\n\n${input.command}\n\n匹配规则：${matched}`,
+        { modal: true },
+        '允许执行'
+      ) === '允许执行';
+      if (!approved) {
+        bridgeOutput?.appendLine(
+          `[高危指令拦截] 用户拒绝：${input.command}（规则：${matched}）`
+        );
+        throw new Error(
+          `高危指令已被用户拒绝（规则：${matched}）：${input.command}`
+        );
+      }
+      bridgeOutput?.appendLine(
+        `[高危指令拦截] 用户已批准：${input.command}（规则：${matched}）`
+      );
+    }
+  }
+  appendMcpCommandLog({
+    source,
+    mountName: mount.name,
+    remoteCwd,
+    command: input.command
+  }).catch(logFailure);
   const resolved = resolveMount(await readConfig(), mount);
   let credentials: AskpassCredentials | undefined;
   try {
@@ -915,9 +980,9 @@ async function executeRemoteCommand(
 }
 
 async function runRemote(input: {
-  mountName: string; command: string; remoteCwd?: string;
+  mountName: string; command: string; remoteCwd?: string; source?: string;
 }): Promise<unknown> {
-  return executeRemoteCommand(vscodeContext, input);
+  return executeRemoteCommand(vscodeContext, { ...input, source: input.source ?? 'mcp' });
 }
 
 async function remoteSearch(input: {
@@ -932,6 +997,7 @@ async function remoteSearch(input: {
   return executeRemoteCommand(vscodeContext, {
     mountName: input.mountName,
     remoteCwd: folder.remoteRoot,
+    source: 'remote_search',
     command: `grep -rIn --exclude-dir=.git -- ${shellQuote(input.query)} ${
       shellQuote(searchPath)
     } | head -n 1000`
@@ -1768,7 +1834,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   tool<{ mountName?: string; command: string; remoteCwd?: string }>(
     'safs_runRemoteCommand', async (input) =>
-      runRemote({ ...input, mountName: await forwardedMountName(input.mountName) }), true
+      runRemote({
+        ...input,
+        mountName: await forwardedMountName(input.mountName),
+        source: 'command_palette'
+      }), true
   );
 
   // Terminal lifecycle

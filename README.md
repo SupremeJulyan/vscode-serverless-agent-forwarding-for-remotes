@@ -147,3 +147,10 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - `safs.agentForwardingAgents`：选择启用 MCP 转发的 Agent，默认
   `codex` 和 `claudeCode`。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从
   对应的 VS Code Agent 扩展安装路径查找内置 CLI。
+- `safs.highRiskCommandPatterns`：Agent 通过 MCP 请求远程命令时的高危匹配规则（正则数组），
+  默认包含递归删除、磁盘/分区/文件系统操作、关机重启、管道执行远程脚本，以及 `sudo`/`su`/
+  `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按
+  `safs.highRiskCommandAction` 处理；设为 `[]` 可关闭拦截。匹配会忽略引号内的内容，避免搜索
+  “sudo” 这类关键词时误伤。
+- `safs.highRiskCommandAction`：`deny`（默认）直接拒绝高危命令并记录日志；`confirm` 则每次
+  执行前弹窗让用户确认。

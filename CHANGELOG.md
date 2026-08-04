@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.7
+
+- Record every remote command executed through Agent MCP (and SAFS commands such as remote search and the command palette) as an append-only line under `~/.safs/mcp_logs/`, one per-day file.
+- Intercept high-risk commands requested by Agents (destructive disk/delete operations and privilege escalation such as `sudo`/`su`/`setuid`), configurable via `safs.highRiskCommandPatterns`; default action denies them, `safs.highRiskCommandAction` can switch to per-command confirmation.
+
 ## 1.0.6
 
 - Preserve existing remote file permissions when SFTP saves replace a file, while still saving content when the server does not support `chmod`.

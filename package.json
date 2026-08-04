@@ -3,7 +3,7 @@
   "displayName": "SAFS",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -394,11 +394,11 @@
           "scope": "machine",
           "description": "Stable loopback-only Streamable HTTP MCP router port registered with Agents. All VS Code windows must use the same value."
         },
-        "safs.agentForwardingAgents": {
-          "type": "array",
-          "default": [
-            "codex",
-            "claudeCode"
+    "safs.agentForwardingAgents": {
+      "type": "array",
+      "default": [
+        "codex",
+        "claudeCode"
           ],
           "uniqueItems": true,
           "items": {
@@ -406,16 +406,54 @@
             "enum": [
               "codex",
               "claudeCode"
-            ],
-            "enumDescriptions": [
-              "OpenAI Codex",
-              "Anthropic Claude Code"
-            ]
-          },
-          "description": "Agents enabled for Serverless Remote MCP forwarding. The extension first looks for each Agent's MCP-capable CLI command in PATH; if it is not found, it looks inside the corresponding installed VS Code extension."
-        }
-      }
+        ],
+        "enumDescriptions": [
+          "OpenAI Codex",
+          "Anthropic Claude Code"
+        ]
+      },
+      "description": "Agents enabled for Serverless Remote MCP forwarding. The extension first looks for each Agent's MCP-capable CLI command in PATH; if it is not found, it looks inside the corresponding installed VS Code extension."
+    },
+    "safs.highRiskCommandPatterns": {
+      "type": "array",
+      "default": [
+        "rm\\s+-(?:[a-z]*rf[a-z]*|[a-z]*fr[a-z]*)\\b",
+        "(?<![\\w./-])mkfs(?:\\.\\w+)?(?:\\s|$)",
+        "(?<![\\w./-])(?:fdisk|sfdisk|parted|wipefs|shred)\\b",
+        "dd\\s+(?:(?!of=/dev/null\\b).)*\\bof=/dev/",
+        "(?<![\\w./-])(?:shutdown|reboot|halt|poweroff)\\b",
+        "systemctl\\s+(?:poweroff|reboot|halt)\\b",
+        "chmod\\s+-R\\s+777\\s+/",
+        "chown\\s+-R\\s+(?:root|0)\\s+/",
+        "\\b(?:curl|wget)\\b.*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b",
+        "(?<![\\w./-])diskpart\\b",
+        "format\\s+[a-z]:",
+        "(?<![\\w./-])sudo\\b",
+        "(?<![\\w./-])su\\b",
+        "(?<![\\w./-])(?:doas|pkexec|gksu|gksudo|kdesu|runas)\\b",
+        "chmod\\s+(?:[ugoa]*\\+s\\b|[246][0-7]{3}\\b)",
+        "\\b(?:setuid|setgid)\\b",
+        "(?<![\\w./-])(?:visudo|sudoers)\\b",
+        "(?<![\\w./-])(?:passwd|useradd|usermod|userdel|groupadd|groupmod|groupdel)\\b",
+        "(?<![\\w./-])net\\s+(?:user|localgroup)\\b",
+        "chattr\\s+[-+][^ ]*i\\b"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "description": "Regular expressions matched against remote commands requested by Agents. A matching command is denied, or requires confirmation when safs.highRiskCommandAction is \"confirm\". Set to [] to disable interception. Matching ignores quoted strings so search terms are not false positives."
+    },
+    "safs.highRiskCommandAction": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "confirm"
+      ],
+      "default": "deny",
+      "description": "How to handle remote commands matching safs.highRiskCommandPatterns: \"deny\" rejects them without running; \"confirm\" asks the user before each execution."
     }
+  }
+}
   },
   "scripts": {
     "check-types": "tsc --noEmit",
