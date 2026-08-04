@@ -231,6 +231,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
       const temporaryPath = `${remotePath}.safs-${randomBytes(6).toString('hex')}`;
       try {
         await session.writeFile(temporaryPath, content, { create: true, overwrite: false });
+        let existing: import('./session').SftpFileStat | undefined;
         if (!options.overwrite) {
           try {
             await session.stat(remotePath);
@@ -239,8 +240,20 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
             if (error instanceof vscode.FileSystemError) throw error;
             if (errorCode(error) !== 2 && errorCode(error) !== 'ENOENT') throw error;
           }
-        } else if (!options.create) {
-          await session.stat(remotePath);
+        } else {
+          try {
+            existing = await session.stat(remotePath);
+          } catch (error) {
+            if (!options.create || (errorCode(error) !== 2 && errorCode(error) !== 'ENOENT')) {
+              throw error;
+            }
+          }
+        }
+        if (existing?.permissions !== undefined) {
+          // Some SFTP servers do not implement POSIX chmod. Preserve the mode
+          // when possible, but do not prevent the edited content from being
+          // saved when the server rejects this optional metadata operation.
+          await session.chmod(temporaryPath, existing.permissions).catch(() => undefined);
         }
         await session.rename(temporaryPath, remotePath, options.overwrite);
       } catch (error) {

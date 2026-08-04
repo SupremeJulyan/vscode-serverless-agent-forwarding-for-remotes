@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6
+
+- Preserve existing remote file permissions when SFTP saves replace a file, while still saving content when the server does not support `chmod`.
+
 ## 1.0.5
 
 - Remember the last switched directory for each remote configuration and restore both the workspace and terminal there when it is reopened.

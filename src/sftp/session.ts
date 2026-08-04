@@ -36,6 +36,7 @@ export interface SftpSession {
     options: SftpWriteOptions,
     signal?: AbortSignal
   ): Promise<void>;
+  chmod(remotePath: string, mode: number, signal?: AbortSignal): Promise<void>;
   createDirectory(remotePath: string, signal?: AbortSignal): Promise<void>;
   deleteFile(remotePath: string, signal?: AbortSignal): Promise<void>;
   deleteDirectory(remotePath: string, signal?: AbortSignal): Promise<void>;

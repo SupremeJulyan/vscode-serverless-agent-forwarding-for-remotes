@@ -116,6 +116,10 @@ export class Ssh2SftpSession implements SftpSession {
     );
   }
 
+  async chmod(remotePath: string, mode: number, signal?: AbortSignal): Promise<void> {
+    await callback<void>((done) => this.sftp.chmod(remotePath, mode, done), signal);
+  }
+
   async createDirectory(remotePath: string, signal?: AbortSignal): Promise<void> {
     await callback<void>((done) => this.sftp.mkdir(remotePath, done), signal);
   }

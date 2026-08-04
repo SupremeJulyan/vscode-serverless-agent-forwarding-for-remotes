@@ -17,6 +17,7 @@ function fakeSession(
     readDirectory: unused,
     readFile: unused,
     writeFile: unused,
+    chmod: unused,
     createDirectory: unused,
     deleteFile: unused,
     deleteDirectory: unused,
