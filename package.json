@@ -1,6 +1,6 @@
 {
-  "name": "safs",
-  "displayName": "SAFS",
+  "name": "safs-serverless-agent-forwarding",
+  "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
   "version": "1.1.0",

@@ -20,7 +20,7 @@ terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 
 ## Quick start
 
-1. Install `safs-1.0.5.vsix`.
+1. Install `safs-serverless-agent-forwarding-1.1.0.vsix`.
 2. Run `SAFS: Add SSH Config`.
 3. Enter a name, `user@host`, and password or private key.
 4. Run `SAFS: Open Remote Folder`.
@@ -28,7 +28,7 @@ terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 6. Run `SAFS: Disconnect` when finished.
 
 ```sh
-code --install-extension safs-1.0.5.vsix
+code --install-extension safs-serverless-agent-forwarding-1.1.0.vsix
 ```
 
 ## Configuration

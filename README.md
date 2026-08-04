@@ -21,7 +21,7 @@
 
 ## 使用
 
-1. 安装 `safs-1.0.5.vsix`。
+1. 安装 `safs-serverless-agent-forwarding-1.1.0.vsix`。
 2. 运行 `SAFS: 添加 SSH 配置`。
 3. 输入配置名称、`user@host`，并选择密码或私钥认证。
 4. 运行 `SAFS: 打开远程文件夹`。
@@ -29,7 +29,7 @@
 6. 使用 `SAFS: 断开 SFTP 连接` 关闭连接。
 
 ```sh
-code --install-extension safs-1.0.5.vsix
+code --install-extension safs-serverless-agent-forwarding-1.1.0.vsix
 ```
 
 ## 配置
