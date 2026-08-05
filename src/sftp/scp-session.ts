@@ -66,7 +66,7 @@ function typeFromStatName(name: string): SftpFileType {
   return 'unknown';
 }
 
-const modeRe = /^([dls-])([rwxst-]{9})(?:[+.@]|$)/;
+const modeRe = /^([dls-])([rwxstST-]{9})(?:[+.@])?(?:\s|$)/;
 
 function parseLsLongLine(line: string): SftpFileStat | undefined {
   // long-iso ls line:  -rw-r--r-- 1 user group 1234 2006-04-17 14:53 name
@@ -88,6 +88,19 @@ function parseLsLongLine(line: string): SftpFileStat | undefined {
     if (modeString[i] !== '-') permissions |= 1 << (8 - i);
   }
   return { type, size: Number.isFinite(size) ? size : 0, mtime, ctime: mtime, permissions };
+}
+
+function parseLsLongEntry(line: string): SftpDirectoryEntry | undefined {
+  const stat = parseLsLongLine(line);
+  if (!stat) return undefined;
+  const trimmed = line.trim();
+  const modeMatch = modeRe.exec(trimmed)!;
+  const afterMode = trimmed.slice(modeMatch[0].length).trimStart();
+  const fields = afterMode.split(/\s+/);
+  // fields: [links, owner, group, size, date, time, name...]
+  const name = fields.slice(6).join(' ');
+  if (!name) return undefined;
+  return { ...stat, name };
 }
 
 export class ScpSession implements SftpSession {
@@ -213,13 +226,28 @@ export class ScpSession implements SftpSession {
     const result = await this.exec(
       `readlink -f -- ${shellQuote(remotePath)}`, undefined, signal
     );
-    if (result.code !== 0) {
-      const stderr = result.stderr.toString();
-      throw errno(failureCode(stderr), `realpath 失败: ${missingPathDetail(stderr)}`);
+    if (result.code === 0) {
+      const resolved = result.stdout.toString().trim();
+      if (resolved) return resolved;
     }
-    const resolved = result.stdout.toString().trim();
-    if (!resolved) throw new Error(`realpath 返回空路径: ${remotePath}`);
-    return resolved;
+    // Non-GNU servers (BSD/macOS/Solaris) lack `readlink -f`: fall back to
+    // `cd`+`pwd -P` for directories, then to a plain normalized path for
+    // files that exist.
+    const cdResult = await this.exec(
+      `cd -- ${shellQuote(remotePath)} && pwd -P`, undefined, signal
+    );
+    if (cdResult.code === 0) {
+      const resolved = cdResult.stdout.toString().trim();
+      if (resolved) return resolved;
+    }
+    const exists = await this.exec(
+      `test -e -- ${shellQuote(remotePath)}`, undefined, signal
+    );
+    if (exists.code === 0) {
+      return path.posix.normalize(remotePath);
+    }
+    const stderr = result.stderr.toString() || cdResult.stderr.toString();
+    throw errno(failureCode(stderr), `realpath 失败: ${missingPathDetail(stderr)}`);
   }
 
   async stat(remotePath: string, signal?: AbortSignal): Promise<SftpFileStat> {
@@ -260,24 +288,37 @@ export class ScpSession implements SftpSession {
       undefined,
       signal
     );
-    if (result.code !== 0) {
-      const stderr = result.stderr.toString();
+    if (result.code === 0 && result.stdout.length > 0) {
+      const entries: SftpDirectoryEntry[] = [];
+      for (const line of result.stdout.toString().split('\n')) {
+        if (!line) continue;
+        const parts = line.split('|');
+        if (parts.length < 5) continue;
+        const mtime = Math.floor(parseFloat(parts[4]) * 1000);
+        entries.push({
+          name: parts[0],
+          type: typeFromFindLetter(parts[1]),
+          size: Number(parts[2]),
+          permissions: parseInt(parts[3], 8),
+          mtime: Number.isFinite(mtime) ? mtime : Date.now(),
+          ctime: Number.isFinite(mtime) ? mtime : Date.now()
+        });
+      }
+      if (entries.length > 0) return entries;
+    }
+    // Non-GNU servers lack `find -printf`: fall back to `ls -la` parsing.
+    const ls = await this.exec(
+      `ls -la --time-style=long-iso -- ${shellQuote(remotePath)}`, undefined, signal
+    );
+    if (ls.code !== 0) {
+      const stderr = result.code === 0 ? ls.stderr.toString() : result.stderr.toString();
       throw errno(failureCode(stderr), `readDirectory 失败: ${missingPathDetail(stderr)}`);
     }
     const entries: SftpDirectoryEntry[] = [];
-    for (const line of result.stdout.toString().split('\n')) {
-      if (!line) continue;
-      const parts = line.split('|');
-      if (parts.length < 5) continue;
-      const mtime = Math.floor(parseFloat(parts[4]) * 1000);
-      entries.push({
-        name: parts[0],
-        type: typeFromFindLetter(parts[1]),
-        size: Number(parts[2]),
-        permissions: parseInt(parts[3], 8),
-        mtime: Number.isFinite(mtime) ? mtime : Date.now(),
-        ctime: Number.isFinite(mtime) ? mtime : Date.now()
-      });
+    for (const line of ls.stdout.toString().split('\n')) {
+      const parsed = parseLsLongEntry(line);
+      if (!parsed || parsed.name === '.' || parsed.name === '..') continue;
+      entries.push(parsed);
     }
     return entries;
   }

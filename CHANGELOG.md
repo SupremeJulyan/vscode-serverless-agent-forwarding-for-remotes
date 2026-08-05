@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.10
+
+- Cross-platform server support for the SCP fallback: `realpath` now falls
+  back to `cd`+`pwd -P` and then a plain normalized path when `readlink -f` is
+  unavailable (BSD/macOS/Solaris servers), and `readDirectory` falls back to
+  parsing `ls -la --time-style=long-iso` when GNU `find -printf` is missing.
+  The ls parser also handles spaces in names, symlinks and setuid/sticky bits.
+
 ## 1.1.9
 
 - Fix `(SSH) Channel open failure: open failed` / phantom workspace folders on

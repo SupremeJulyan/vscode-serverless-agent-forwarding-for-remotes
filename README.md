@@ -214,7 +214,9 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   `safs.sshClientIdent` 改为 `PuTTY_Release_0.78` 等。
 - 服务器没有 SFTP 子系统（如老版本 OpenSSH 未装 sftp-server 的 NSG 网关）时，
   远程文件夹会自动降级到 SCP/exec 传输（与 MobaXterm 文件浏览器同机制），
-  文件树、读写、搜索与 Agent MCP 工具均可继续使用。
+  文件树、读写、搜索与 Agent MCP 工具均可继续使用。列目录/路径解析优先使用
+  GNU 命令（`find -printf`/`readlink -f`），BSD/macOS/Solaris 等非 GNU 服务器
+  会自动回退到 `ls`/`pwd` 解析。
 - WSL 的 `vpn: true` 配置复用 `wsl-vpn-ssh-bridge` 的 Windows TCP 中继；
   使用该模式前需要安装 bridge。`vpn: false` 时 SFTP 直接连接目标地址。
 

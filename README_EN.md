@@ -242,6 +242,9 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   without sftp-server), remote folders automatically fall back to an
   exec/SCP transport — the same mechanism MobaXterm's file browser uses — so
   the file tree, read/write/search and Agent MCP tools keep working.
+  Directory listing / path resolution prefer GNU commands
+  (`find -printf`/`readlink -f`) and fall back to `ls`/`pwd` parsing on
+  BSD/macOS/Solaris servers.
 - WSL configurations with `vpn: true` reuse the Windows TCP relay supplied by
   `wsl-vpn-ssh-bridge`; install the bridge before using that mode. With
   `vpn: false`, SFTP connects directly.
