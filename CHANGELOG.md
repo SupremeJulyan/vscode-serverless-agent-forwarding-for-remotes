@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.11
+
+- Migrate pi/vscode-pi conversation history: session keys are derived from
+  the agent cwd placeholder path, whose prefix changes across platform
+  switches (WSL ↔ native Windows) or extension renames, making old
+  conversations look lost. On activation the extension now merges session
+  files from legacy keys of the same mount into the current key directory
+  (best-effort, never deletes, skips collisions).
+
 ## 1.1.10
 
 - Cross-platform server support for the SCP fallback: `realpath` now falls

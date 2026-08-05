@@ -35,6 +35,7 @@ import {
 import { connectSftp } from './sftp/client';
 import { defaultSshClientIdent } from './ssh-algorithms';
 import { SftpConnectionPool } from './sftp/connection-pool';
+import { migratePiSessionKeys } from './pi-session-migrate';
 import {
   remotePathForUri, RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider,
   workspacePathForRemote
@@ -1769,6 +1770,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => refreshTree()
   );
   await guard(preloadRemoteWorkspaces);
+  // Merge pi/vscode-pi conversation history from legacy SAFS session keys
+  // (WSL, old extension folder) into the current key of the same mount so
+  // history is not lost after platform/extension migrations.
+  void (async () => {
+    try {
+      const config = await readConfig();
+      await migratePiSessionKeys(config.mounts, (message) =>
+        bridgeOutput?.appendLine(message)
+      );
+    } catch {
+      // History migration is best-effort; never block activation.
+    }
+  })();
   provider = new SftpFileSystemProvider(
     pool,
     registry,
