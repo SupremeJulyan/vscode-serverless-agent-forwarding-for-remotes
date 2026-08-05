@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.1
+
+- Document the full usage flow in README (Chinese and English): open a
+  remote SSH terminal, switch the remote directory with path completion, and
+  enable Agent Forwarding in the correct order (enable forwarding first, then
+  open the remote folder so the Agent plugin in the new window discovers the
+  registered `safs` MCP).
+- Document Agent requirements and verification: the Agent may be a VS Code
+  extension or a desktop app but must run on the same OS platform as SAFS
+  (loopback-only `127.0.0.1` MCP); type `/mcp` in the Agent to confirm the
+  `safs` entry, then opening the remote window binds the Agent conversation
+  to it automatically via `resolve_workspace_execution`.
+- Document multiple remote windows: shared fixed HTTP MCP entry with Router
+  Leader election, `mountName`-less calls bind to the focused, most recently
+  updated window, and how to determine which remote a session is bound to
+  (`resolve_workspace_execution`, `current_remote_workspace`,
+  `list_remote_folders`, `SAFS: Show Status`).
+
 ## 1.1.0
 
 - Read-only MCP tools (`remote_list`, `remote_read`, `remote_search`) now accept paths outside the remote workspace root (e.g. `~/.bashrc`, `/etc/hosts`); they are served directly over SFTP. `remote_write` and `run_remote_command`'s cwd stay restricted to the workspace.

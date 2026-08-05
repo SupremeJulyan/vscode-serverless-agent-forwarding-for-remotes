@@ -5,7 +5,9 @@
 [简体中文](README.md) | [English](README_EN.md)
 
 通过 SFTP 在 VS Code 中直接浏览和编辑远程文件，并通过 SSH 打开远程终端，
-无需在服务器安装 VS Code Server，也无需安装 SSHFS、FUSE 或 WinFsp。
+无需在服务器安装 VS Code Server。开启 Agent 转发后，VS Code Agent 与
+桌面版 Agent（Codex、Claude Code 等）可通过 MCP 直接读写、搜索远程文件，
+并通过 SSH 执行远程命令。适用于内网环境、禁止端口转发的远程服务器。
 
 ## 功能
 
@@ -21,16 +23,85 @@
 
 ## 使用
 
-1. 安装 `safs-serverless-agent-forwarding-1.1.0.vsix`。
-2. 运行 `SAFS: 添加 SSH 配置`。
-3. 输入配置名称、`user@host`，并选择密码或私钥认证。
-4. 运行 `SAFS: 打开远程文件夹`。
-5. 在资源管理器中直接编辑远程文件。
-6. 使用 `SAFS: 断开 SFTP 连接` 关闭连接。
+### 安装
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.1.0.vsix
+code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
 ```
+
+### 添加 SSH 配置并打开远程文件夹
+
+1. 运行 `SAFS: 添加 SSH 配置`。
+2. 输入配置名称、`user@host`，并选择密码或私钥认证。
+3. 运行 `SAFS: 打开远程文件夹`，选择刚添加的配置；也可以在左侧活动栏的
+   SAFS 视图（远程文件夹）中点击连接项上的“打开远程文件夹”按钮。
+4. 远程目录以 `safs://` 虚拟工作区打开，直接在资源管理器中编辑远程文件。
+5. 使用 `SAFS: 断开 SFTP 连接` 关闭连接（或点击连接项上的“断开连接”按钮）。
+
+### 打开远程终端
+
+远程终端通过 SSH 建立，不需要在服务器安装 VS Code Server。
+
+- 在命令面板运行 `SAFS: 打开远程终端`。
+- 或在 SAFS 视图的远程文件夹连接项上点击“打开远程终端”按钮。
+- 终端会在当前远程目录打开：有打开的远程文件时使用其所在目录，否则使用
+  挂载根目录（或上次记住的目录）。终端名称形如 `SSH: <配置名> — <相对路径>`。
+- 配置 `remote_terminal: "open"` 时，打开远程文件夹后会自动连接终端。
+
+### 切换远程目录
+
+- 在命令面板运行 `SAFS: 切换远程目录`。
+- 输入挂载根目录内的路径，或从补全列表选择候选目录后回车，当前窗口会切换
+  到该目录（只能切换到挂载根目录内真实存在的目录）。
+- 每个远程配置会记住最后切换的目录；重新打开远程文件夹时，工作区和终端
+  都会恢复到该目录。
+
+### 启用 Agent 转发
+
+Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌面 App
+（Codex CLI、Claude Code 等），但必须和运行 SAFS 的 VS Code 处于同一个
+操作系统平台：MCP 地址是仅回环可访问的 `127.0.0.1`，跨机器或跨系统无法
+连接。
+
+1. 先在 SAFS 视图的远程文件夹连接项上点击“启用 Agent 转发”按钮（或右键菜单
+   中选择同一命令）。扩展会为检测到的 Agent CLI（默认 `codex` 和 `claude`，
+   可用 `safs.agentForwardingAgents` 扩展，如 `pi`）安装或更新名为 `safs`
+   的固定 HTTP MCP。
+2. 验证注册：打开 Agent 并输入 `/mcp`（或打开其 MCP 管理界面），看到
+   `safs` 条目即表示 MCP 注册成功。Agent 若是 VS Code 扩展，直接在新窗口的
+   Agent 会话中确认即可。
+3. 再运行 `SAFS: 打开远程文件夹` 进入远程目录（或点击连接项上的“打开远程
+   文件夹”按钮）。打开前扩展会先启动固定 HTTP 路由并注册 Agent；新窗口会
+   启动该窗口的动态端口服务，Agent 会话通过 `resolve_workspace_execution`
+   自动绑定当前远程窗口，之后工具调用无需指定 `mountName`。
+4. 重启 Agent 并新建对话（首次安装、更新或移除 MCP 后都需要）。
+5. 之后 Agent 可直接使用远程工具：VS Code Agent 的 `#safsList`、
+   `#safsRead`、`#safsWrite`、`#safsSearch`、`#safsRun`，或 MCP 工具
+   `resolve_workspace_execution`、`list_remote_folders`、`remote_list`、
+   `remote_read`、`remote_write`、`remote_search`、`run_remote_command`。
+6. 关闭转发：点击连接项上的“关闭 Agent 转发”。只有最后一个启用挂载也被
+   关闭后，扩展才会执行 `mcp remove`。
+
+#### 多个远程窗口
+
+- 同时打开多个远程窗口时，所有窗口共用同一个固定 HTTP MCP 入口；窗口之间
+  通过固定端口选举一个 Router Leader，Leader 关闭后其他窗口自动接管。
+- 省略 `mountName` 的工具调用绑定到当前获得焦点且状态最新的窗口；显式传入
+  `mountName` 时选择对应的活动挂载。
+- 每个窗口的动态端口服务只能访问自己绑定的挂载，不能通过请求参数跨窗口
+  访问其他挂载。
+
+#### 确认 Agent 会话绑定哪个远程
+
+- 会话开始时先调用 `resolve_workspace_execution`：返回 JSON 中的
+  `mountName`（以及 `name`、`remoteRoot`、`host`、`focused`）就是当前
+  绑定。MCP 指令要求每个会话先调用它，并复用返回的 `mountName` 保持绑定
+  稳定。
+- 也可调用 `current_remote_workspace` 直接查看当前获得焦点的活动远程
+  文件夹，或用 `list_remote_folders` 查看所有已开启转发的活动挂载。
+- 省略 `mountName` 时，路由器按“获得焦点的窗口优先、其次最近更新”选择：
+  哪个远程窗口处于焦点就绑定哪个；都没有焦点时绑定最近交互的窗口。
+- VS Code 侧可运行 `SAFS: 显示状态` 在输出面板查看各挂载的连接状态。
 
 ## 配置
 

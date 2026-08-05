@@ -5,7 +5,10 @@
 [简体中文](README.md) | [English](README_EN.md)
 
 Browse and edit remote files directly in VS Code over SFTP and open real SSH
-terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
+terminals without installing VS Code Server. Enable Agent Forwarding to let
+VS Code agents and desktop agents (Codex, Claude Code, ...) read, write, and
+search remote files and run remote commands over SSH through MCP. Built for
+intranet hosts and remote servers that forbid port forwarding.
 
 ## Features
 
@@ -18,18 +21,104 @@ terminals without installing VS Code Server, SSHFS, FUSE, or WinFsp.
 - Direct remote list/read/write/search tools for VS Code agents and MCP clients.
 - Runs builds, tests, Git, and system commands remotely over SSH.
 
-## Quick start
+## Usage
 
-1. Install `safs-serverless-agent-forwarding-1.1.0.vsix`.
-2. Run `SAFS: Add SSH Config`.
-3. Enter a name, `user@host`, and password or private key.
-4. Run `SAFS: Open Remote Folder`.
-5. Edit files directly in the Explorer.
-6. Run `SAFS: Disconnect` when finished.
+### Install
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.1.0.vsix
+code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
 ```
+
+### Add an SSH config and open a remote folder
+
+1. Run `SAFS: Add SSH Config`.
+2. Enter a name, `user@host`, and choose password or private-key auth.
+3. Run `SAFS: Open Remote Folder` and pick the config you just added; you can
+   also click the "Open Remote Folder" button on the connection item in the
+   SAFS view (Remote Folders) in the Activity Bar.
+4. The remote directory opens as a `safs://` virtual workspace; edit remote
+   files directly in the Explorer.
+5. Run `SAFS: Disconnect` when finished (or use the "Disconnect" button on
+   the connection item).
+
+### Open a remote terminal
+
+Remote terminals connect over SSH; no VS Code Server is required on the host.
+
+- Run `SAFS: Open Remote Terminal` from the Command Palette.
+- Or click the "Open Remote Terminal" button on a connection item in the SAFS
+  view.
+- The terminal opens in the current remote directory: the directory of the
+  active remote file when there is one, otherwise the mount root (or the last
+  remembered directory). Terminal names look like
+  `SSH: <name> — <relative path>`.
+- With `remote_terminal: "open"`, a terminal is connected automatically after
+  opening the remote folder.
+
+### Switch the remote directory
+
+- Run `SAFS: Switch Remote Directory` from the Command Palette.
+- Type a path inside the mount root, or pick a candidate from the completion
+  list, then press Enter. The current window switches to that directory (only
+  real directories inside the mount root are accepted).
+- Each remote config remembers the last switched directory; reopening the
+  remote folder restores both the workspace and the terminal there.
+
+### Enable Agent Forwarding
+
+The Agent can be a VS Code extension (Copilot Chat, Codex, ...) or a desktop
+app (Codex CLI, Claude Code, ...), but it must run on the same operating
+system platform as the VS Code window hosting SAFS: the MCP endpoint is
+loopback-only (`127.0.0.1`) and cannot be reached across machines or
+platforms.
+
+1. First click the "Enable Agent Forwarding" button on the connection item in
+   the SAFS view (or pick the same command from its context menu). The
+   extension installs or updates the fixed `safs` HTTP MCP for the detected
+   Agent CLIs (default `codex` and `claude`; extend with
+   `safs.agentForwardingAgents`, e.g. `pi`).
+2. Verify the registration: open the Agent and type `/mcp` (or open its MCP
+   management view); seeing the `safs` entry means the MCP was registered
+   successfully. If the Agent is a VS Code extension, just confirm it in the
+   Agent session of the new window.
+3. Then run `SAFS: Open Remote Folder` to enter the remote directory (or click
+   the "Open Remote Folder" button on the connection item). Before creating
+   the new window, the extension starts the fixed HTTP router and registers
+   the Agent. The new window starts its dynamic-port service, and the Agent
+   conversation binds to the remote window automatically via
+   `resolve_workspace_execution`; tool calls no longer need `mountName`.
+4. Restart the Agent and start a new conversation (required after installing,
+   updating, or removing MCP).
+5. The Agent can now use the remote tools directly: `#safsList`, `#safsRead`,
+   `#safsWrite`, `#safsSearch`, and `#safsRun` for VS Code agents, or the MCP
+   tools `resolve_workspace_execution`, `list_remote_folders`, `remote_list`,
+   `remote_read`, `remote_write`, `remote_search`, and `run_remote_command`.
+6. To disable: click "Disable Agent Forwarding" on the connection item. The
+   extension runs `mcp remove` only after the last enabled mount is disabled.
+
+#### Multiple remote windows
+
+- When several remote windows are open, they all share the same fixed HTTP MCP
+  entry; the windows elect one Router Leader on the fixed port, and another
+  window takes over when the leader exits.
+- Tool calls without `mountName` bind to the focused, most recently updated
+  window; an explicit `mountName` selects that active mount.
+- Each window's dynamic-port service can only access its own mount and cannot
+  reach other mounts through request parameters.
+
+#### Determine which remote the Agent session is bound to
+
+- Call `resolve_workspace_execution` at the start of the conversation: the
+  `mountName` in the returned JSON (with `name`, `remoteRoot`, `host`, and
+  `focused`) is the current binding. The MCP instructions require calling it
+  first and reusing the returned `mountName` to keep the binding stable.
+- `current_remote_workspace` returns the focused active remote folder
+  directly; `list_remote_folders` lists all active Agent-forwarded mounts.
+- Without `mountName`, the router prefers the focused window, then the most
+  recently updated one: the remote window that has focus wins; when none has
+  focus, the most recently interacted window is used.
+- On the VS Code side, run `SAFS: Show Status` to see each mount's connection
+  state in the output panel.
 
 ## Configuration
 
