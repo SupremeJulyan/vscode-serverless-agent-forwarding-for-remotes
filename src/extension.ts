@@ -430,14 +430,9 @@ async function promptRemoteDirectory(
 ): Promise<string | undefined> {
   const picker = vscode.window.createQuickPick<vscode.QuickPickItem>();
   picker.title = `切换远程目录：${mountName}`;
-  picker.placeholder = `点击 / 回车填入路径，按“确认”进入`;
+  picker.placeholder = `点击补全项填入路径（可逐级浏览），回车进入`;
   picker.value = currentPath.endsWith('/') ? currentPath : `${currentPath}/`;
   picker.matchOnDescription = true;
-  const confirmButton: vscode.QuickInputButton = {
-    iconPath: vscode.Uri.joinPath(vscodeContext.extensionUri, 'resources', 'confirm-button.svg'),
-    tooltip: '确认进入该目录'
-  };
-  picker.buttons = [confirmButton];
   let requestId = 0;
 
   const updateSuggestions = async (value: string): Promise<void> => {
@@ -481,20 +476,11 @@ async function promptRemoteDirectory(
       }
     });
     picker.onDidAccept(() => {
-      // 回车只负责把选中的补全项填入输入框，不进入；
-      // 无选中项时保持输入框内容不变（进入只通过“确认”按钮）。
-      const selected = picker.selectedItems[0];
-      const label = selected && typeof selected.label === 'string' ? selected.label : undefined;
-      if (label && label !== picker.value) {
-        picker.value = label;
-      }
-    });
-    picker.onDidTriggerButton((button) => {
-      if (button === confirmButton) {
-        accepted = true;
-        picker.hide();
-        resolve(picker.value);
-      }
+      // 回车 → 进入。点击/方向键选中项已通过 onDidChangeSelection 填入
+      // 输入框，所以这里直接取输入框内容即可（未选中时即用户输入）。
+      accepted = true;
+      picker.hide();
+      resolve(picker.value);
     });
     picker.onDidHide(() => {
       picker.dispose();

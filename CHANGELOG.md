@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.15
+
+- Switch Remote Directory picker: drop the confirm button. Clicking (or
+  arrow-selecting) a completion item fills the path into the input box and
+  refreshes the dropdown with its subdirectories; Enter switches directly.
+
+## 1.1.14
+
+- Fix the invisible "确认" quick-input button: `context-fill` is not
+  supported for Uri-based SVG icons (renders transparent), switched to a
+  solid fill with a font size that fits the 16px button.
+
 ## 1.1.13
 
 - Switch Remote Directory picker: clicking a completion item or pressing Enter
