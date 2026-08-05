@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+- Switch Remote Directory: replaced the completion dropdown with **Tab
+  completion** — type a path, press Tab to complete it to the first matching
+  remote directory (or the shared prefix when several match, then to the
+  first entry when the prefix is exhausted), Enter switches. No dropdown, no
+  click behavior.
+- The safs workspace URI now uses the **mount config name directly as the
+  authority** (e.g. `safs://node37/…`) when the name is URI-safe, so VS Code's
+  status-bar remote indicator shows `node37` instead of `m-6e6f64653337`.
+  Names with uppercase/spaces still use the legacy hex form, and old hex
+  URIs keep decoding.
+
 ## 1.1.15
 
 - Switch Remote Directory picker: drop the confirm button. Clicking (or

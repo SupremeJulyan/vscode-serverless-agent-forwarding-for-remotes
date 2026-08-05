@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.1.15",
+  "version": "1.2.0",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -486,7 +486,14 @@
           "description": "How to handle remote commands matching safs.highRiskCommandPatterns: \"deny\" rejects them without running; \"confirm\" asks the user before each execution."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "key": "tab",
+        "command": "safs.completeRemoteDirectory",
+        "when": "safs.directoryPickerVisible"
+      }
+    ]
   },
   "scripts": {
     "check-types": "tsc --noEmit",

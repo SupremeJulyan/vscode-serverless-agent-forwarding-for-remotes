@@ -10,22 +10,26 @@ export interface RemoteUriLocation {
 function encodeMountAuthority(mountName: string): string {
   if (!mountName) throw new Error('Remote folder name must not be empty');
   // URI authorities are case-insensitive and URL parsers normalize hostnames
-  // to lowercase. Use lowercase hexadecimal rather than case-sensitive
-  // base64url so the mount identifier survives that normalization.
+  // to lowercase. Use the plain mount name when it already is a safe,
+  // lowercase authority so VS Code shows the config name directly in the
+  // status-bar/remote indicator; fall back to lowercase hexadecimal for
+  // anything else so the identifier survives that normalization.
+  if (/^[a-z0-9][a-z0-9._-]*$/.test(mountName)) return mountName;
   return `m-${Buffer.from(mountName, 'utf8').toString('hex')}`;
 }
 
 function decodeMountAuthority(authority: string): string {
-  if (!authority.startsWith('m-')) throw new Error(`Invalid remote URI authority: ${authority}`);
-  const encoded = authority.slice(2);
-  if (!encoded || encoded.length % 2 !== 0 || !/^[0-9a-f]+$/.test(encoded)) {
-    throw new Error(`Invalid remote URI authority: ${authority}`);
+  if (authority.startsWith('m-')) {
+    const encoded = authority.slice(2);
+    if (encoded && encoded.length % 2 === 0 && /^[0-9a-f]+$/.test(encoded)) {
+      // Legacy format: lowercase-hex encoded mount name. All URIs created
+      // before the plain-name change use this form, so decode it
+      // unconditionally (a plain mount literally named "m-<hex>" is
+      // pathological and out of scope).
+      return Buffer.from(encoded, 'hex').toString('utf8');
+    }
   }
-  const mountName = Buffer.from(encoded, 'hex').toString('utf8');
-  if (encodeMountAuthority(mountName) !== authority) {
-    throw new Error(`Invalid remote URI authority: ${authority}`);
-  }
-  return mountName;
+  return authority;
 }
 
 export function normalizeRemotePath(remotePath: string): string {

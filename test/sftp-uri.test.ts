@@ -15,13 +15,19 @@ test('round-trips remote folder names and unusual POSIX paths', () => {
   assert.equal(uri.includes('#'), false);
 });
 
-test('uses a case-insensitive-safe authority for ASCII mount names', () => {
+test('uses the config name as the authority when it is URI-safe', () => {
   const uri = remoteUri('gkn', '/home/alice');
-  assert.equal(uri, 'safs://m-676b6e/home/alice');
+  assert.equal(uri, 'safs://gkn/home/alice');
   assert.deepEqual(parseRemoteUri(uri), {
     mountName: 'gkn',
     remotePath: '/home/alice'
   });
+  // Unsafe names (uppercase/space) fall back to the legacy hex authority.
+  const hex = remoteUri('My Host', '/home');
+  assert.match(hex, /^safs:\/\/m-[0-9a-f]+\//);
+  assert.deepEqual(parseRemoteUri(hex), { mountName: 'My Host', remotePath: '/home' });
+  // Legacy hex authorities still decode (backward compatibility).
+  assert.equal(parseRemoteUri('safs://m-676b6e/home/alice').mountName, 'gkn');
 });
 
 test('normalizes remote paths with POSIX rules on every local platform', () => {
@@ -45,9 +51,12 @@ test('resolves dot and relative roots through the server realpath result', () =>
 
 test('rejects malformed or unrelated remote URIs', () => {
   assert.throws(() => parseRemoteUri('file:///srv/project'), /Unsupported remote URI scheme/);
-  assert.throws(() => parseRemoteUri('safs://project/srv'), /Invalid remote URI authority/);
   assert.throws(
     () => parseRemoteUri(`${remoteUri('project', '/srv')}?secret=value`),
+    /Invalid remote workspace URI/
+  );
+  assert.throws(
+    () => parseRemoteUri('safs://user@project/srv'),
     /Invalid remote workspace URI/
   );
 });

@@ -430,65 +430,94 @@ async function promptRemoteDirectory(
 ): Promise<string | undefined> {
   const picker = vscode.window.createQuickPick<vscode.QuickPickItem>();
   picker.title = `切换远程目录：${mountName}`;
-  picker.placeholder = `点击补全项填入路径（可逐级浏览），回车进入`;
+  picker.placeholder = `输入路径，Tab 补全，回车进入`;
   picker.value = currentPath.endsWith('/') ? currentPath : `${currentPath}/`;
-  picker.matchOnDescription = true;
-  let requestId = 0;
-
-  const updateSuggestions = async (value: string): Promise<void> => {
-    const id = ++requestId;
-    const typed = value.trim();
-    const absolute = typed.startsWith('/')
-      ? path.posix.normalize(typed)
-      : path.posix.resolve(currentPath, typed || '.');
-    const directory = typed.endsWith('/') ? absolute : path.posix.dirname(absolute);
-    if (!isRemotePathInsideRoot(remoteRoot, directory)) {
-      picker.items = [];
-      return;
-    }
-    picker.busy = true;
-    try {
-      const entries = await session.readDirectory(directory);
-      if (id !== requestId) return;
-      picker.items = entries
-        .filter((entry) => entry.type === 'directory' || entry.type === 'symbolic-link')
-        .sort((left, right) => left.name.localeCompare(right.name))
-        .map((entry) => ({
-          label: `${path.posix.join(directory, entry.name)}/`,
-          description: entry.type === 'symbolic-link' ? '符号链接目录' : '远程目录'
-        }));
-    } catch {
-      if (id === requestId) picker.items = [];
-    } finally {
-      if (id === requestId) picker.busy = false;
-    }
-  };
-
+  // No items => no dropdown; completion is driven by the Tab keybinding.
+  picker.items = [];
+  const state: DirectoryPickerState = { picker, session, remoteRoot, currentPath };
+  activeDirectoryPicker = state;
+  void vscode.commands.executeCommand('setContext', directoryPickerContextKey, true);
   return new Promise<string | undefined>((resolve) => {
     let accepted = false;
-    picker.onDidChangeValue((value) => void updateSuggestions(value));
-    // 点击（或方向键选择）补全项 → 把完整路径填入输入框，
-    // 并触发 onDidChangeValue 自动刷新出该目录的子目录，可逐级浏览。
-    picker.onDidChangeSelection((selected) => {
-      const item = selected[0];
-      if (item && typeof item.label === 'string' && item.label !== picker.value) {
-        picker.value = item.label;
-      }
-    });
     picker.onDidAccept(() => {
-      // 回车 → 进入。点击/方向键选中项已通过 onDidChangeSelection 填入
-      // 输入框，所以这里直接取输入框内容即可（未选中时即用户输入）。
       accepted = true;
+      clearActiveDirectoryPicker(state);
       picker.hide();
       resolve(picker.value);
     });
     picker.onDidHide(() => {
+      clearActiveDirectoryPicker(state);
       picker.dispose();
       if (!accepted) resolve(undefined);
     });
     picker.show();
-    void updateSuggestions(picker.value);
   });
+}
+
+// ---- Tab completion for the directory picker ----
+
+const directoryPickerContextKey = 'safs.directoryPickerVisible';
+
+interface DirectoryPickerState {
+  picker: vscode.QuickPick<vscode.QuickPickItem>;
+  session: import('./sftp/session').SftpSession;
+  remoteRoot: string;
+  currentPath: string;
+}
+
+let activeDirectoryPicker: DirectoryPickerState | undefined;
+
+function clearActiveDirectoryPicker(state: DirectoryPickerState): void {
+  if (activeDirectoryPicker === state) {
+    activeDirectoryPicker = undefined;
+    void vscode.commands.executeCommand('setContext', directoryPickerContextKey, false);
+  }
+}
+
+function commonPrefix(names: string[]): string {
+  let prefix = names[0] ?? '';
+  for (const name of names.slice(1)) {
+    let i = 0;
+    while (i < prefix.length && i < name.length && prefix[i] === name[i]) i++;
+    prefix = prefix.slice(0, i);
+    if (!prefix) break;
+  }
+  return prefix;
+}
+
+async function completeRemoteDirectory(): Promise<void> {
+  const state = activeDirectoryPicker;
+  if (!state) return;
+  const { picker, session, remoteRoot, currentPath } = state;
+  const typed = picker.value.trim();
+  const absolute = typed.startsWith('/')
+    ? path.posix.normalize(typed)
+    : path.posix.resolve(currentPath, typed || '.');
+  if (!isRemotePathInsideRoot(remoteRoot, absolute)) return;
+  const [parent, base] = typed.endsWith('/') || absolute === remoteRoot
+    ? [absolute, '']
+    : [path.posix.dirname(absolute), path.posix.basename(absolute)];
+  try {
+    const entries = (await session.readDirectory(parent))
+      .filter((entry) => entry.type === 'directory' || entry.type === 'symbolic-link')
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right));
+    if (base) {
+      const matches = entries.filter((name) => name.startsWith(base));
+      if (matches.length === 1) {
+        picker.value = `${parent}/${matches[0]}/`;
+      } else if (matches.length > 1) {
+        const common = commonPrefix(matches);
+        picker.value = common.length > base.length
+          ? `${parent}/${common}`
+          : `${parent}/${matches[0]}/`;
+      }
+    } else if (entries.length > 0) {
+      picker.value = `${parent}/${entries[0]}/`;
+    }
+  } catch {
+    // Completion is best-effort; ignore remote failures.
+  }
 }
 
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
@@ -1826,6 +1855,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     tree.refresh();
   });
   command('switchRemoteDirectory', switchRemoteDirectory);
+  command('completeRemoteDirectory', completeRemoteDirectory);
   command('openTerminal', () => openTerminal(context, undefined, undefined, undefined, true));
   command('openTerminalItem', (mount) =>
     openTerminal(context, mount, undefined, undefined, true));
