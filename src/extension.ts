@@ -430,9 +430,14 @@ async function promptRemoteDirectory(
 ): Promise<string | undefined> {
   const picker = vscode.window.createQuickPick<vscode.QuickPickItem>();
   picker.title = `切换远程目录：${mountName}`;
-  picker.placeholder = `输入 ${remoteRoot} 内的路径，选择候选目录以补全`;
+  picker.placeholder = `输入路径，或点击补全项填入并逐级浏览；回车 / ✓ 进入`;
   picker.value = currentPath.endsWith('/') ? currentPath : `${currentPath}/`;
   picker.matchOnDescription = true;
+  const confirmButton: vscode.QuickInputButton = {
+    iconPath: new vscode.ThemeIcon('check'),
+    tooltip: '进入该目录'
+  };
+  picker.buttons = [confirmButton];
   let requestId = 0;
 
   const updateSuggestions = async (value: string): Promise<void> => {
@@ -467,11 +472,33 @@ async function promptRemoteDirectory(
   return new Promise<string | undefined>((resolve) => {
     let accepted = false;
     picker.onDidChangeValue((value) => void updateSuggestions(value));
+    // 点击（或方向键选择）补全项 → 把完整路径填入输入框，
+    // 并触发 onDidChangeValue 自动刷新出该目录的子目录，可逐级浏览。
+    picker.onDidChangeSelection((selected) => {
+      const item = selected[0];
+      if (item && typeof item.label === 'string' && item.label !== picker.value) {
+        picker.value = item.label;
+      }
+    });
     picker.onDidAccept(() => {
-      accepted = true;
-      const value = picker.selectedItems[0]?.label ?? picker.value;
-      picker.hide();
-      resolve(value);
+      // 回车：有选中项且输入框尚未填入它 → 先填入；
+      // 否则（已填入或无选中项）→ 确认进入输入框内容。
+      const selected = picker.selectedItems[0];
+      const label = selected && typeof selected.label === 'string' ? selected.label : undefined;
+      if (label && label !== picker.value) {
+        picker.value = label;
+      } else {
+        accepted = true;
+        picker.hide();
+        resolve(picker.value);
+      }
+    });
+    picker.onDidTriggerButton((button) => {
+      if (button === confirmButton) {
+        accepted = true;
+        picker.hide();
+        resolve(picker.value);
+      }
     });
     picker.onDidHide(() => {
       picker.dispose();

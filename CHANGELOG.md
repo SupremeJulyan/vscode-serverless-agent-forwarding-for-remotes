@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.12
+
+- Switch Remote Directory picker: clicking (or Enter-ing) a completion item
+  now fills the full path into the input box and refreshes the dropdown with
+  that directory's subdirectories for step-by-step browsing; Enter again (or
+  the new ✓ confirm button) actually switches. Enter with no item selected
+  still switches to the typed path directly.
+
 ## 1.1.11
 
 - Migrate pi/vscode-pi conversation history: session keys are derived from
