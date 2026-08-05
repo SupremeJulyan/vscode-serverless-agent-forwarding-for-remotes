@@ -33,6 +33,7 @@ import {
   writeLastRemoteDirectory
 } from './agent-cwd';
 import { connectSftp } from './sftp/client';
+import { defaultSshClientIdent } from './ssh-algorithms';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import {
   remotePathForUri, RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider,
@@ -85,7 +86,13 @@ const openingTerminalIds = new Set<string>();
 const managedRemoteTerminals = new Map<vscode.Terminal, {
   mount: MountConfig;
   remoteCwd: string;
+  retryWithSystemSsh?: boolean;
 }>();
+
+// Channel-level failures mean the server rejects the ssh2 client's pty/shell
+// negotiation (common on NSG/gateway appliances). Fall back to the system ssh
+// CLI in that case; auth failures must NOT fall back (same credentials).
+const builtinSshFallbackPattern = /pseudo-terminal|open shell|start subsystem|channel open/i;
 
 class ConfigActionRequiredError extends Error {
   constructor(
@@ -501,6 +508,13 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   if (!reopen || terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
     return;
   }
+  if (reopen.retryWithSystemSsh) {
+    void vscode.window.showInformationMessage(
+      `SAFS: 内置终端与该服务器不兼容，已改用系统 SSH 重连“${reopen.mount.name}”。`
+    );
+    await openTerminal(vscodeContext, reopen.mount, reopen.remoteCwd, undefined, true, true);
+    return;
+  }
   const selected = await vscode.window.showInformationMessage(
     `远程终端“${terminal.name}”已退出。`,
     reconnectRemoteTerminalAction
@@ -512,7 +526,7 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
 
 async function openTerminal(
   context: vscode.ExtensionContext, requestedMount?: MountConfig, requestedRemoteCwd?: string,
-  loadedConfig?: BridgeConfig, forceNew = false
+  loadedConfig?: BridgeConfig, forceNew = false, forceSystemSsh = false
 ): Promise<{ terminal: vscode.Terminal; created: boolean } | undefined> {
   const config = loadedConfig ?? await readConfig();
   const location = requestedMount ? undefined : currentRemoteLocation();
@@ -565,17 +579,32 @@ async function openTerminal(
     });
     const terminalCommand = await resolveExecutable(plan.command, plan.env);
     const terminalStartedAt = performance.now();
-    const useBuiltinSsh = platformAdapter.kind === 'windows'
+    const useBuiltinSsh = !forceSystemSsh
+      && platformAdapter.kind === 'windows'
       && Boolean(resolved.hostConfig.password)
       && !resolved.hostConfig.private_key_path;
     const terminal = useBuiltinSsh
-      ? vscode.window.createTerminal({
-        name: terminalName,
-        pty: new Ssh2Terminal(
-          context, resolved.hostConfig, resolved.hostConfig.password!, remoteCwd
-        ),
-        isTransient: true
-      })
+      ? (() => {
+        let created!: vscode.Terminal;
+        const pty = new Ssh2Terminal(
+          context, resolved.hostConfig, resolved.hostConfig.password!, remoteCwd,
+          (error) => {
+            // Server rejected the pty/shell negotiation (gateway appliance):
+            // mark this terminal for a system-ssh retry instead of the
+            // built-in ssh2 transport.
+            if (builtinSshFallbackPattern.test(error.message)) {
+              const entry = managedRemoteTerminals.get(created);
+              if (entry) entry.retryWithSystemSsh = true;
+            }
+          }
+        );
+        created = vscode.window.createTerminal({
+          name: terminalName,
+          pty,
+          isTransient: true
+        });
+        return created;
+      })()
       : vscode.window.createTerminal({
         name: terminalName,
         shellPath: terminalCommand,
@@ -1650,7 +1679,13 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
       return;
     }
     output.appendLine(`[错误] ${message}`);
-    await vscode.window.showErrorMessage(`SAFS: ${message}`);
+    const errorHint =
+      /All configured authentication methods failed/i.test(message)
+        ? '：认证失败，请检查用户名/密码是否正确（或改用私钥认证）'
+        : /Unable to start subsystem/i.test(message)
+          ? '：服务器未提供 SFTP 子系统（可能仅支持 SSH 终端/跳板，或网关策略禁止文件传输）。请在服务器 sshd_config 中启用 Subsystem sftp，或改用支持 SFTP 的目标主机；如需 SSH 终端可尝试“SAFS: 打开远程终端”'
+          : '';
+    await vscode.window.showErrorMessage(`SAFS: ${message}${errorHint}`);
   }
 }
 
@@ -1718,7 +1753,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   let refreshTree: () => void = () => undefined;
   pool = new SftpConnectionPool(
     async (hostName, signal) =>
-      connectSftp(await resolvedHost(context, hostName), platformAdapter.kind === 'wsl', signal),
+      connectSftp(
+        await resolvedHost(context, hostName),
+        platformAdapter.kind === 'wsl',
+        signal,
+        settings().get<string>('sshClientIdent', defaultSshClientIdent)
+      ),
     () => refreshTree()
   );
   await guard(preloadRemoteWorkspaces);

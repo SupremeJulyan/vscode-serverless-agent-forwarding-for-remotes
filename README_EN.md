@@ -224,6 +224,24 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 - Local command-line programs cannot access `safs://` files.
 - Extensions that only support `file://` workspaces may be unavailable.
 - SFTP has no native change notifications, so external changes are polled.
+- When a server only offers legacy host keys (`ssh-rsa`/`ssh-dss`, disabled by
+  default since OpenSSH 8.8), the extension automatically re-enables them on
+  every connection path (system `ssh`, WSL bridge, built-in SFTP/terminal).
+- When a server only accepts `keyboard-interactive` auth (e.g. NSG/company
+  gateways), both the SFTP and terminal paths answer the interactive prompts
+  with the configured password automatically.
+- When the built-in terminal is rejected at the pty/shell level (e.g. NSG
+  gateway appliances), the extension automatically retries with the system
+  `ssh` CLI.
+- Some NSG/gateways whitelist SSH clients by identification string (MobaXterm
+  works because it uses a PuTTY banner; `ssh2js` gets rejected). The
+  extension now presents itself as `OpenSSH_9.6` by default on SFTP/built-in
+  terminal connections; set `safs.sshClientIdent` to e.g. `PuTTY_Release_0.78`
+  if the default is still rejected.
+- When the server has no SFTP subsystem (e.g. old-OpenSSH NSG gateways
+  without sftp-server), remote folders automatically fall back to an
+  exec/SCP transport — the same mechanism MobaXterm's file browser uses — so
+  the file tree, read/write/search and Agent MCP tools keep working.
 - WSL configurations with `vpn: true` reuse the Windows TCP relay supplied by
   `wsl-vpn-ssh-bridge`; install the bridge before using that mode. With
   `vpn: false`, SFTP connects directly.

@@ -3,7 +3,10 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Client, ConnectConfig, FileEntryWithStats, SFTPWrapper, Stats } from 'ssh2';
 import { expandHome, HostConfig } from '../config';
+import { keyboardInteractivePasswordReplies } from '../authentication';
+import { defaultSshClientIdent, serverHostKeyAlgorithms } from '../ssh-algorithms';
 import { vpnRelayPoolPath } from '../wsl-bridge';
+import { ScpSession } from './scp-session';
 import {
   SftpDirectoryEntry, SftpFileStat, SftpFileType, SftpSession, SftpWriteOptions
 } from './session';
@@ -207,8 +210,9 @@ async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
 export async function connectSftp(
   host: HostConfig,
   useWslVpnRelay = false,
-  signal?: AbortSignal
-): Promise<Ssh2SftpSession> {
+  signal?: AbortSignal,
+  clientIdent = defaultSshClientIdent
+): Promise<SftpSession> {
   if (signal?.aborted) throw abortError();
   const relay = useWslVpnRelay && host.vpn ? await acquireWslVpnRelay(host) : undefined;
   let relayReleased = false;
@@ -226,6 +230,9 @@ export async function connectSftp(
     port: relay?.port ?? host.port ?? 22,
     username: host.user,
     password: host.password,
+    tryKeyboard: true,
+    ident: clientIdent,
+    algorithms: { serverHostKey: serverHostKeyAlgorithms },
     keepaliveInterval: 15_000,
     keepaliveCountMax: 3,
     readyTimeout: 30_000
@@ -234,7 +241,7 @@ export async function connectSftp(
     config.privateKey = await readFile(expandHome(host.private_key_path));
   }
   const client = new Client();
-  return new Promise<Ssh2SftpSession>((resolve, reject) => {
+  return new Promise<SftpSession>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
       signal?.removeEventListener('abort', abort);
@@ -254,6 +261,20 @@ export async function connectSftp(
     const ready = () => {
       client.sftp((error, sftp) => {
         if (error) {
+          // Server has no SFTP subsystem (e.g. NSG gateway without
+          // sftp-server): fall back to an exec/SCP session on the same
+          // connection, like MobaXterm's file browser does.
+          if (/Unable to start subsystem/i.test(error.message)) {
+            if (settled) {
+              sftp?.end();
+              client.end();
+              return;
+            }
+            settled = true;
+            cleanup();
+            resolve(new ScpSession(host.name, client, releaseRelay));
+            return;
+          }
           finishError(error);
           return;
         }
@@ -268,6 +289,15 @@ export async function connectSftp(
       });
     };
     signal?.addEventListener('abort', abort, { once: true });
+    // Some servers (e.g. NSG/company gateways) only accept
+    // keyboard-interactive auth; answer their prompts with the configured
+    // password just like the terminal path does.
+    client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+      const replies = host.password
+        ? keyboardInteractivePasswordReplies(prompts, host.password)
+        : undefined;
+      finish(replies ?? []);
+    });
     client.once('ready', ready);
     client.once('error', failed);
     try {

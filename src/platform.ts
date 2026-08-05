@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import { HostConfig } from './config';
+import { legacySshAlgorithmArgs } from './ssh-algorithms';
 import { sshBridgePath } from './wsl-bridge';
 
 export type PlatformKind = 'windows' | 'macos' | 'linux' | 'wsl';
@@ -53,6 +54,9 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
 
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {
   const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
+  // Some servers only offer legacy host keys (ssh-rsa/ssh-dss); OpenSSH 8.8+
+  // rejects them by default, so re-enable them explicitly.
+  args.push(...legacySshAlgorithmArgs);
   // ControlMaster=auto reuses a healthy master and lets OpenSSH fall back to a
   // direct connection when the control socket cannot be used.
   args.push(...connectionReuseArgs(options));

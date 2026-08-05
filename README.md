@@ -204,6 +204,17 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - 本地命令行程序不能直接访问 `safs://` 文件。
 - 只支持 `file://` 工作区的第三方 VS Code 扩展可能无法使用。
 - SFTP 没有原生文件变更通知，扩展使用定时轮询检测外部修改。
+- 目标服务器只提供旧式主机密钥（`ssh-rsa`/`ssh-dss`，OpenSSH 8.8+ 默认禁用）时，
+  扩展会在所有连接路径（系统 `ssh`、WSL bridge、内置 SFTP/终端）自动重新启用这些算法。
+- 服务器只接受 `keyboard-interactive` 认证（如 NSG/公司网关）时，SFTP 与终端路径
+  都会用配置的密码自动应答交互式提示。
+- 内置终端被服务器拒绝 pty/shell（如 NSG 网关设备）时，会自动改用系统 `ssh` 重连。
+- 部分 NSG/网关按客户端标识白名单放行（MobaXterm 用 PuTTY 标识可以连，ssh2js 被拒）。
+  插件默认把 SFTP/内置终端的客户端标识伪装为 `OpenSSH_9.6`，可用设置
+  `safs.sshClientIdent` 改为 `PuTTY_Release_0.78` 等。
+- 服务器没有 SFTP 子系统（如老版本 OpenSSH 未装 sftp-server 的 NSG 网关）时，
+  远程文件夹会自动降级到 SCP/exec 传输（与 MobaXterm 文件浏览器同机制），
+  文件树、读写、搜索与 Agent MCP 工具均可继续使用。
 - WSL 的 `vpn: true` 配置复用 `wsl-vpn-ssh-bridge` 的 Windows TCP 中继；
   使用该模式前需要安装 bridge。`vpn: false` 时 SFTP 直接连接目标地址。
 

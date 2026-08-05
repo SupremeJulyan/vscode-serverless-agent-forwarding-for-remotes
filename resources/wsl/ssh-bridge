@@ -150,7 +150,13 @@ target_port="${VPN_TARGET_PORT:-$target_port}"
   || die "SSH 端口必须是 1-65535 的整数"
 
 # ── SSH options ──────────────────────────────────────────────────────────────
-ssh_options=(-o StrictHostKeyChecking=accept-new)
+# OpenSSH 8.8+ rejects ssh-rsa/ssh-dss host keys by default; some servers only
+# offer those legacy algorithms (e.g. 10.68.0.1), so re-enable them.
+ssh_options=(
+  -o StrictHostKeyChecking=accept-new
+  -o HostKeyAlgorithms=+ssh-rsa,ssh-dss
+  -o PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss
+)
 if [[ "${WSL_VPN_SSH_CONNECTION_REUSE:-1}" != 0 ]]; then
   ssh_options+=(
     -o ControlMaster=auto

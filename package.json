@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.1.1",
+  "version": "1.1.8",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -392,6 +392,11 @@
           "type": "string",
           "default": "~/.safs/config.json",
           "description": "Configuration file path. Defaults to ~/.safs/config.json on all platforms."
+        },
+        "safs.sshClientIdent": {
+          "type": "string",
+          "default": "OpenSSH_9.6",
+          "markdownDescription": "SSH 客户端标识字符串（`SSH-2.0-` 之后的部分）。部分 NSG/网关按客户端指纹白名单放行，默认的 `ssh2js` 标识可能被拒绝（表现为 `Unable to start subsystem: sftp` / `Unable to request a pseudo-terminal`）。默认伪装为 `OpenSSH_9.6`；如仍被拒可尝试 `PuTTY_Release_0.78`（MobaXterm 同款）等常见客户端标识。"
         },
         "safs.reuseSshConnection": {
           "type": "boolean",

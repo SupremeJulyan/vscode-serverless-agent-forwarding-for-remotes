@@ -4,6 +4,7 @@ import { Client, ClientChannel, ConnectConfig, HostVerifier } from 'ssh2';
 import * as vscode from 'vscode';
 import { expandHome, HostConfig } from './config';
 import { keyboardInteractivePasswordReplies } from './authentication';
+import { defaultSshClientIdent, serverHostKeyAlgorithms } from './ssh-algorithms';
 import { ssh2RemoteCommand } from './ssh-command';
 
 const trustedHostKeysState = 'safs.trustedSsh2HostKeys';
@@ -58,9 +59,12 @@ async function connectConfig(
     ...(host.private_key_path
       ? { privateKey: await readFile(expandHome(host.private_key_path)) }
       : {}),
+    ident: vscode.workspace.getConfiguration('safs')
+      .get<string>('sshClientIdent', defaultSshClientIdent),
     readyTimeout: 20_000,
     keepaliveInterval: 15_000,
     keepaliveCountMax: 3,
+    algorithms: { serverHostKey: serverHostKeyAlgorithms },
     hostVerifier: hostVerifierFor(context, host)
   };
 }
@@ -151,7 +155,8 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
     private readonly context: vscode.ExtensionContext,
     private readonly host: HostConfig,
     password: string,
-    private readonly remoteCwd?: string
+    private readonly remoteCwd?: string,
+    private readonly onFailed?: (error: Error) => void
   ) {
     this.password = password;
   }
@@ -165,9 +170,12 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
       username: this.host.user,
       password: this.password,
       tryKeyboard: true,
+      ident: vscode.workspace.getConfiguration('safs')
+        .get<string>('sshClientIdent', defaultSshClientIdent),
       readyTimeout: 20_000,
       keepaliveInterval: 15_000,
       keepaliveCountMax: 3,
+      algorithms: { serverHostKey: serverHostKeyAlgorithms },
       hostVerifier: hostVerifierFor(this.context, this.host)
     };
     this.client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
@@ -212,6 +220,7 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
   }
 
   private fail(error: Error): void {
+    this.onFailed?.(error);
     this.writeEmitter.fire(`\r\nSAFS: ${error.message}\r\n`);
     this.finish(1);
   }

@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.1.8
+
+- Fix "无法打开…找不到该文件" when clicking remote files on SCP-fallback
+  sessions: `realpath` now canonicalizes files as well as directories
+  (`readlink -f` instead of `cd`+`pwd`), matching SFTP semantics the provider
+  relies on. Error codes are also refined so only genuine missing paths are
+  reported as not-found (permission and other failures keep their real cause).
+
+## 1.1.7
+
+- SCP fallback filesystem: when the server has no SFTP subsystem (e.g. NSG
+  gateways running old OpenSSH without sftp-server, like 10.68.0.1), the
+  extension now automatically falls back to an exec/SCP session on the same
+  connection — the same mechanism MobaXterm's file browser uses. The remote
+  folder, file tree, read/write/search and Agent MCP tools all keep working
+  over the legacy SCP protocol plus shell commands (find/stat/mv/mkdir/rm).
+  Verified end-to-end against a real sftp-less gateway.
+
+## 1.1.6
+
+- New setting `safs.sshClientIdent` (default `OpenSSH_9.6`): the client
+  identification sent after `SSH-2.0-` on all ssh2 connections (SFTP,
+  built-in terminal, remote commands). Some NSG/gateway appliances whitelist
+  well-known SSH clients (OpenSSH, PuTTY/MobaXterm…) and reject unusual ones
+  like `ssh2js`, producing `Unable to start subsystem: sftp` / `Unable to
+  request a pseudo-terminal` even though the server supports SFTP. If the
+  default is still rejected, try `PuTTY_Release_0.78` (the same banner
+  MobaXterm uses).
+
+## 1.1.5
+
+- Terminal auto-fallback: when the built-in ssh2 terminal is rejected by the
+  server at the channel level (`Unable to request a pseudo-terminal` /
+  `Unable to open shell` — typical of NSG/gateway appliances), the extension
+  automatically retries with the system `ssh` CLI instead of giving up.
+  Auth/network failures do not trigger the fallback.
+
+## 1.1.4
+
+- Clearer error when the server refuses to start the SFTP subsystem
+  (`Unable to start subsystem: sftp`): the dialog now explains that the host
+  provides no SFTP subsystem (SSH-terminal-only / gateway policy), points to
+  `Subsystem sftp` in sshd_config, and suggests trying the SSH terminal.
+
+## 1.1.3
+
+- Fix `SAFS: All configured authentication methods failed` when opening a
+  remote folder whose server only accepts `keyboard-interactive` auth (e.g.
+  NSG/company gateways): `connectSftp` now enables `tryKeyboard` and answers
+  the interactive prompts with the configured password, matching the terminal
+  path. Auth failures now show a Chinese hint to check the username/password.
+
+## 1.1.2
+
+- Fix `Unable to negotiate ... no matching host key type found` (Their offer:
+  `ssh-rsa,ssh-dss`) against legacy servers: re-enable `ssh-rsa`/`ssh-dss`
+  host key and user key algorithms on every connection path — system `ssh`
+  CLI, the bundled WSL `ssh-bridge`, and the ssh2-based SFTP/terminal
+  connections. Modern algorithms stay preferred.
+
 ## 1.1.1
 
 - Document the full usage flow in README (Chinese and English): open a
