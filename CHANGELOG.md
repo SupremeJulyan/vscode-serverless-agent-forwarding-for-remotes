@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.13
+
+- Switch Remote Directory picker: clicking a completion item or pressing Enter
+  now only fills the path into the input box (refreshing the dropdown with
+  the directory's children for step-by-step browsing); switching happens
+  exclusively via the "确认" button at the right end of the input box
+  (text-rendered SVG button, replaces the checkmark icon).
+
 ## 1.1.12
 
 - Switch Remote Directory picker: clicking (or Enter-ing) a completion item
