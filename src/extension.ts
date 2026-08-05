@@ -1142,10 +1142,17 @@ async function preloadRemoteWorkspaces(): Promise<void> {
   if (workspaces.length === 0) return;
   const config = await readConfig();
   for (const workspace of workspaces) {
-    const location = parseRemoteUri(workspace.uri.toString());
-    const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
-    if (!mount) continue;
-    await ensureFolder(mount);
+    try {
+      const location = parseRemoteUri(workspace.uri.toString());
+      const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+      if (!mount) continue;
+      await ensureFolder(mount);
+    } catch (error) {
+      // A broken/stale workspace folder must not block the rest of the
+      // window or pop an error dialog on every startup.
+      const detail = error instanceof Error ? error.message : String(error);
+      bridgeOutput?.appendLine(`[工作区预载] ${workspace.uri.toString()}: ${detail}`);
+    }
   }
 }
 

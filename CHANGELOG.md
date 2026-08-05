@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.9
+
+- Fix `(SSH) Channel open failure: open failed` / phantom workspace folders on
+  SCP-fallback sessions: NSG gateways reject excess concurrent channels per
+  connection, and VS Code fires many parallel explorer/stat/watch calls at
+  window startup. ScpSession now serializes channel-opening operations (max 5
+  concurrent) and retries transient channel refusals once. Workspace
+  preloading also tolerates per-mount failures without a startup error dialog.
+
 ## 1.1.8
 
 - Fix "无法打开…找不到该文件" when clicking remote files on SCP-fallback

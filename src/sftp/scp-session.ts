@@ -93,6 +93,13 @@ function parseLsLongLine(line: string): SftpFileStat | undefined {
 export class ScpSession implements SftpSession {
   readonly transport = 'scp' as const;
   private alive = true;
+  // The gateway (old OpenSSH/NSG) rejects excess concurrent channels on one
+  // connection with "(SSH) Channel open failure: open failed". Serialize
+  // channel-opening operations so VS Code's parallel explorer/stat/watch
+  // calls stay under the server's per-connection limit.
+  private static readonly maxConcurrentChannels = 5;
+  private channelPermits = ScpSession.maxConcurrentChannels;
+  private readonly channelWaiters: Array<() => void> = [];
 
   constructor(
     readonly hostName: string,
@@ -113,7 +120,47 @@ export class ScpSession implements SftpSession {
     return this.alive;
   }
 
-  private exec(
+  private async acquireChannel(): Promise<void> {
+    while (this.channelPermits <= 0) {
+      await new Promise<void>((resolve) => this.channelWaiters.push(resolve));
+    }
+    this.channelPermits--;
+  }
+
+  private releaseChannel(): void {
+    this.channelPermits++;
+    this.channelWaiters.shift()?.();
+  }
+
+  private async exec(
+    command: string, stdinData?: Uint8Array, signal?: AbortSignal
+  ): Promise<ExecResult> {
+    await this.acquireChannel();
+    try {
+      return await this.execUnbounded(command, stdinData, signal);
+    } finally {
+      this.releaseChannel();
+    }
+  }
+
+  private async execUnbounded(
+    command: string, stdinData?: Uint8Array, signal?: AbortSignal
+  ): Promise<ExecResult> {
+    // Transient server-side channel refusal: retry once after a short pause.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.execOnce(command, stdinData, signal);
+      } catch (error) {
+        const retryable = /Channel open failure|channel open failed/i.test(
+          error instanceof Error ? error.message : String(error)
+        );
+        if (!retryable || attempt >= 1) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+
+  private execOnce(
     command: string, stdinData?: Uint8Array, signal?: AbortSignal
   ): Promise<ExecResult> {
     return new Promise<ExecResult>((resolve, reject) => {
@@ -353,7 +400,16 @@ export class ScpSession implements SftpSession {
   }
 
   /** Legacy SCP download: `scp -f <path>`, parse the C<mode> <size> <name> header. */
-  private scpRead(remotePath: string, signal?: AbortSignal): Promise<Uint8Array> {
+  private async scpRead(remotePath: string, signal?: AbortSignal): Promise<Uint8Array> {
+    await this.acquireChannel();
+    try {
+      return await this.scpReadUnbounded(remotePath, signal);
+    } finally {
+      this.releaseChannel();
+    }
+  }
+
+  private scpReadUnbounded(remotePath: string, signal?: AbortSignal): Promise<Uint8Array> {
     return new Promise<Uint8Array>((resolve, reject) => {
       if (signal?.aborted) {
         reject(abortError());
@@ -437,7 +493,18 @@ export class ScpSession implements SftpSession {
   }
 
   /** Legacy SCP upload: `scp -t <dir>`, send `C<mode> <size> <name>` + data. */
-  private scpWrite(
+  private async scpWrite(
+    targetDir: string, baseName: string, content: Buffer, mode: number, signal?: AbortSignal
+  ): Promise<void> {
+    await this.acquireChannel();
+    try {
+      return await this.scpWriteUnbounded(targetDir, baseName, content, mode, signal);
+    } finally {
+      this.releaseChannel();
+    }
+  }
+
+  private scpWriteUnbounded(
     targetDir: string, baseName: string, content: Buffer, mode: number, signal?: AbortSignal
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
