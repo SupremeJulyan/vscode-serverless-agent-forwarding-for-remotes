@@ -151,12 +151,31 @@ target_port="${VPN_TARGET_PORT:-$target_port}"
 
 # ── SSH options ──────────────────────────────────────────────────────────────
 # OpenSSH 8.8+ rejects ssh-rsa/ssh-dss host keys by default; some servers only
-# offer those legacy algorithms (e.g. 10.68.0.1), so re-enable them.
+# offer those legacy algorithms (e.g. 10.68.0.1), so re-enable them. The exact
+# flags depend on the installed client: PubkeyAcceptedAlgorithms exists only
+# since OpenSSH 8.5 (older clients abort with "Bad configuration option"),
+# and OpenSSH 10.0 removed DSA entirely, where listing ssh-dss is a syntax
+# error.
+ssh_version_line="$(ssh -V 2>&1 || true)"
+ssh_major=""
+ssh_minor=""
+if [[ "$ssh_version_line" =~ OpenSSH_([0-9]+)\.([0-9]+) ]]; then
+  ssh_major="${BASH_REMATCH[1]}"
+  ssh_minor="${BASH_REMATCH[2]}"
+fi
+legacy_host_keys=(ssh-rsa ssh-dss)
+if [[ -n "$ssh_major" ]] && (( 10#$ssh_major >= 10 )); then
+  legacy_host_keys=(ssh-rsa)
+fi
+legacy_host_keys_joined="$(IFS=,; printf '%s' "${legacy_host_keys[*]}")"
 ssh_options=(
   -o StrictHostKeyChecking=accept-new
-  -o HostKeyAlgorithms=+ssh-rsa,ssh-dss
-  -o PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss
+  -o "HostKeyAlgorithms=+${legacy_host_keys_joined}"
 )
+if [[ -z "$ssh_major" ]] \
+  || (( 10#$ssh_major > 8 || (10#$ssh_major == 8 && 10#$ssh_minor >= 5) )); then
+  ssh_options+=(-o "PubkeyAcceptedAlgorithms=+${legacy_host_keys_joined}")
+fi
 if [[ "${WSL_VPN_SSH_CONNECTION_REUSE:-1}" != 0 ]]; then
   ssh_options+=(
     -o ControlMaster=auto

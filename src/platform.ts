@@ -55,8 +55,10 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {
   const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
   // Some servers only offer legacy host keys (ssh-rsa/ssh-dss); OpenSSH 8.8+
-  // rejects them by default, so re-enable them explicitly.
-  args.push(...legacySshAlgorithmArgs);
+  // rejects them by default, so re-enable them explicitly. The exact flags
+  // are adapted to the installed client (see ssh-algorithms.ts), because old
+  // OpenSSH rejects PubkeyAcceptedAlgorithms and OpenSSH 10+ rejects ssh-dss.
+  args.push(...legacySshAlgorithmArgs());
   // ControlMaster=auto reuses a healthy master and lets OpenSSH fall back to a
   // direct connection when the control socket cannot be used.
   args.push(...connectionReuseArgs(options));

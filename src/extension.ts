@@ -33,7 +33,7 @@ import {
   writeLastRemoteDirectory
 } from './agent-cwd';
 import { connectSftp } from './sftp/client';
-import { defaultSshClientIdent } from './ssh-algorithms';
+import { defaultSshClientIdent, ensureSshCapabilities } from './ssh-algorithms';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import { migratePiSessionKeys } from './pi-session-migrate';
 import {
@@ -563,6 +563,16 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   }
 }
 
+/**
+ * Warm the OpenSSH capability cache used to build legacy algorithm flags.
+ * WSL terminals go through the bundled bridge script, which does its own
+ * version probing, so they do not need this.
+ */
+async function warmSshCliCapabilities(): Promise<void> {
+  if (platformAdapter.kind === 'wsl') return;
+  await ensureSshCapabilities(await resolveExecutable('ssh'));
+}
+
 async function openTerminal(
   context: vscode.ExtensionContext, requestedMount?: MountConfig, requestedRemoteCwd?: string,
   loadedConfig?: BridgeConfig, forceNew = false, forceSystemSsh = false
@@ -611,6 +621,10 @@ async function openTerminal(
       }
     }
     const bridgePasswordEnv = await bridgeMasterPasswordEnv(context, resolved.hostConfig);
+    // Probe the installed OpenSSH first so the legacy algorithm flags in the
+    // plan match what this client understands (macOS/Linux ship a wide range
+    // of OpenSSH versions, and old or new clients reject the fixed flags).
+    await warmSshCliCapabilities();
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
       bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
@@ -1033,6 +1047,7 @@ async function executeRemoteCommand(
           throw error;
         }
       } else {
+        await warmSshCliCapabilities();
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
           bridgeConfigPath: configPath()

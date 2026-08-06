@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1
+
+- Fix remote terminals failing to launch on macOS/Linux (exit code 255):
+  `PubkeyAcceptedAlgorithms` is only passed when the installed OpenSSH knows
+  it (8.5+), and `ssh-dss` is dropped when the client no longer supports it
+  (OpenSSH 10+ removed DSA entirely). Affected old clients include macOS
+  Big Sur/Catalina (OpenSSH 8.1) and older Linux distros; OpenSSH 10+ is
+  used by macOS Tahoe. The bundled WSL bridge applies the same gating.
+
 ## 1.2.0
 
 - Switch Remote Directory: replaced the completion dropdown with **Tab
