@@ -1,13 +1,29 @@
 # Changelog
 
+## 1.2.7
+
+- Code review cleanup:
+  - Remove unused `defaultAgentMcpPort` export.
+  - Remove unused `stripGatewayMotd` export (the incremental `MotdStripper`
+    covers streaming channels).
+  - Add `transport = 'sftp'` to `Ssh2SftpSession` for parity with the SCP
+    session.
+  - Unify the SFTP-unusable / retryable-handshake patterns in `client.ts`
+    and drop the unreachable `throw lastError` after the retry loop.
+
+## 1.2.6
 ## 1.2.6
 
 - Fix `Packet length … exceeds max length` on NSG gateways that inject a MOTD
-  banner into every SSH channel (e.g. 10.68.0.101: `  … 一×17 …
+  banner into every SSH channel (e.g. 10.68.0.101: `
+ 
+ … 一×17 …
   |核数:128 …`). The banner corrupts the SFTP version handshake and SCP
   headers, so the extension now (1) falls back to the exec/SCP session for
   this error class too, and (2) strips the gateway MOTD prefix (detected by
-  its ` ` signature, cut at the box-bottom line) from exec, SCP-read and
+  its `
+ 
+` signature, cut at the box-bottom line) from exec, SCP-read and
   SCP-write streams. Verified end-to-end on the real gateway: remote folder,
   listing, read/write all work.
 - Remove the 1.2.5 raw-bytes sniffer: attaching a data listener to ssh2's

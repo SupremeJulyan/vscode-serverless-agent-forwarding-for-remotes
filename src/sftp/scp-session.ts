@@ -56,13 +56,6 @@ function missingPathDetail(stderr: string): string {
 const motdSignature = Buffer.from([0x0d, 0x20, 0x0d, 0x20]);
 const motdTerminator = Buffer.from([0xe4, 0xb8, 0x80, 0x0d, 0x0a]); // 一 + CRLF
 
-export function stripGatewayMotd(data: Buffer): Buffer {
-  if (data.length < 4 || !data.subarray(0, 4).equals(motdSignature)) return data;
-  const idx = data.indexOf(motdTerminator);
-  if (idx === -1) return data;
-  return data.subarray(idx + motdTerminator.length);
-}
-
 /**
  * Incremental variant for streaming channels: feeds chunks, strips the MOTD
  * prefix once its terminator is observed, then forwards the payload.

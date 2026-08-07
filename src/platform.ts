@@ -5,15 +5,6 @@ import { sshBridgePath } from './wsl-bridge';
 
 export type PlatformKind = 'windows' | 'macos' | 'linux' | 'wsl';
 
-export function defaultAgentMcpPort(platform: PlatformKind): number {
-  switch (platform) {
-    case 'windows': return 9848;
-    case 'wsl': return 9849;
-    case 'linux': return 9850;
-    case 'macos': return 9851;
-  }
-}
-
 export function platformExtensionStateKey(name: string, platform: PlatformKind): string {
   return `safs.${name}.${platform}`;
 }

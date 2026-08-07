@@ -59,6 +59,7 @@ function callback<T>(
 }
 
 export class Ssh2SftpSession implements SftpSession {
+  readonly transport = 'sftp' as const;
   private alive = true;
 
   constructor(
@@ -207,11 +208,18 @@ async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
   };
 }
 
-/** Errors worth retrying: the gateway returned garbage during the handshake. */
-function isRetryableHandshakeError(error: unknown): boolean {
-  return /packet length|exchange encryption keys|wrong packet|bad packet/i.test(
-    error instanceof Error ? error.message : String(error)
-  );
+/** Errors meaning the SFTP subsystem is unusable: the server rejects it or
+ * a gateway MOTD/`garbage corrupts the version handshake. These trigger the
+ * exec/SCP fallback. */
+const sftpUnusablePattern =
+  /Unable to start subsystem|packet length|wrong packet|bad packet|exchange encryption keys/i;
+
+/** Handshake-stage errors worth retrying with a fresh connection. */
+const retryableHandshakePattern =
+  /packet length|wrong packet|bad packet|exchange encryption keys/i;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function connectSftp(
@@ -250,21 +258,20 @@ export async function connectSftp(
   // Some NSG/gateways intermittently inject garbage during the SSH handshake
   // ("Packet length … exceeds max length"). Retry with fresh connections a
   // few times before giving up; the VPN relay stays up across attempts.
-  let lastError: unknown;
-  for (let attempt = 0; ; attempt++) {
+  let attempt = 0;
+  while (true) {
     try {
       return await attemptConnect(host, config, releaseRelay, signal);
     } catch (error) {
-      lastError = error;
       if (signal?.aborted) throw error;
-      if (!isRetryableHandshakeError(error) || attempt >= 2) {
+      if (!retryableHandshakePattern.test(errorMessage(error)) || attempt >= 2) {
         await releaseRelay();
         throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      attempt++;
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
     }
   }
-  throw lastError;
 }
 
 function attemptConnect(
@@ -298,7 +305,7 @@ function attemptConnect(
           // MOTD banner corrupts the SFTP version handshake ("Packet length
           // … exceeds max length"). Fall back to an exec/SCP session on the
           // same connection, like MobaXterm's file browser does.
-          if (/Unable to start subsystem|packet length|wrong packet|bad packet|exchange encryption keys/i.test(error.message)) {
+          if (sftpUnusablePattern.test(error.message)) {
             if (settled) {
               sftp?.end();
               client.end();
