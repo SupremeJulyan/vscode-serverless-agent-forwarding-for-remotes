@@ -6,4 +6,5 @@ tsconfig.json
 esbuild.js
 node_modules/**
 *.vsix
-package-lock.json
+*.png
+!images/icon.png

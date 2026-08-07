@@ -895,13 +895,26 @@ function forwardedWindowMountName(
 }
 
 function toolPath(folder: RemoteFolder, value = '.'): string {
+  // Relative tool paths resolve against the current remote directory
+  // (kept in sync by SAFS: 切换远程目录), while still being validated
+  // against the mount root.
+  const base = currentWorkspacePath(folder);
   const resolved = value.startsWith('/')
     ? path.posix.normalize(value)
-    : path.posix.resolve(folder.remoteRoot, value);
+    : path.posix.resolve(base, value);
   if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) {
     throw new Error(`路径超出远程工作区：${value}`);
   }
   return resolved;
+}
+
+/** The remote directory currently open in this window, or the mount root. */
+function currentWorkspacePath(folder: RemoteFolder): string {
+  const location = currentRemoteLocation();
+  if (location && location.mountName === folder.mountName) {
+    return location.remotePath;
+  }
+  return folder.remoteRoot;
 }
 
 /**
@@ -1349,10 +1362,11 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
           const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
           if (!mount) return null;
           const folder = await ensureFolder(mount);
+          const workspacePath = currentWorkspacePath(folder);
           return {
             name: mount.name,
-            workspaceUri: folderUri(folder),
-            remoteRoot: folder.remoteRoot,
+            workspaceUri: folderUri(folder, workspacePath),
+            remoteRoot: workspacePath,
             host: mount.host
           };
         },

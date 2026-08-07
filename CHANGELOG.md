@@ -8,6 +8,12 @@
   (OpenSSH 10+ removed DSA entirely). Affected old clients include macOS
   Big Sur/Catalina (OpenSSH 8.1) and older Linux distros; OpenSSH 10+ is
   used by macOS Tahoe. The bundled WSL bridge applies the same gating.
+- Keep Agent MCP tool paths in sync with the switched remote directory:
+  `resolve_workspace_execution` / `current_remote_workspace` now report the
+  currently open remote directory instead of the mount root, and relative
+  paths in `remote_list` / `remote_read` / `remote_write` / `remote_search` /
+  `run_remote_command` (including the default `remoteCwd`) resolve against it.
+  Validation still applies against the mount root.
 
 ## 1.2.0
 
