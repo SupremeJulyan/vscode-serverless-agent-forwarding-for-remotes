@@ -43,6 +43,53 @@ function missingPathDetail(stderr: string): string {
     : stderr.trim() || '远程命令执行失败';
 }
 
+/**
+ * Some NSG gateways inject a fixed MOTD banner at the start of every SSH
+ * channel, e.g.:
+ *   \r \r … 一×17\n \|用户类型:包时间用户\n \|核数:128\n
+ *   \|到期时间:2029/07/02\n 一×17\r\n
+ * It is pure text, so shell output still works, but it corrupts binary
+ * protocols (SFTP version packets, SCP headers) by prefixing garbage.
+ * Detect it by its leading "\r \r" signature and strip up to the box-bottom
+ * line (a 一 run followed by CRLF) before parsing the real payload.
+ */
+const motdSignature = Buffer.from([0x0d, 0x20, 0x0d, 0x20]);
+const motdTerminator = Buffer.from([0xe4, 0xb8, 0x80, 0x0d, 0x0a]); // 一 + CRLF
+
+export function stripGatewayMotd(data: Buffer): Buffer {
+  if (data.length < 4 || !data.subarray(0, 4).equals(motdSignature)) return data;
+  const idx = data.indexOf(motdTerminator);
+  if (idx === -1) return data;
+  return data.subarray(idx + motdTerminator.length);
+}
+
+/**
+ * Incremental variant for streaming channels: feeds chunks, strips the MOTD
+ * prefix once its terminator is observed, then forwards the payload.
+ */
+class MotdStripper {
+  private pending = Buffer.alloc(0);
+  private done = false;
+
+  push(chunk: Buffer): Buffer[] {
+    if (this.done) return [chunk];
+    this.pending = Buffer.concat([this.pending, chunk]);
+    if (this.pending.length < 4) return [];
+    if (!this.pending.subarray(0, 4).equals(motdSignature)) {
+      this.done = true;
+      const out = this.pending;
+      this.pending = Buffer.alloc(0);
+      return [out];
+    }
+    const idx = this.pending.indexOf(motdTerminator);
+    if (idx === -1) return [];
+    this.done = true;
+    const out = this.pending.subarray(idx + motdTerminator.length);
+    this.pending = Buffer.alloc(0);
+    return [out];
+  }
+}
+
 /** Map a remote command's stderr to an SFTP-like status code for the provider. */
 function failureCode(stderr: string): number {
   if (/no such file|not found|does not exist/i.test(stderr)) return 2;
@@ -200,7 +247,10 @@ export class ScpSession implements SftpSession {
         }
         const stdout: Buffer[] = [];
         const stderr: Buffer[] = [];
-        stream.on('data', (chunk: Buffer) => stdout.push(chunk));
+        const motdStripper = new MotdStripper();
+        stream.on('data', (chunk: Buffer) => {
+          for (const part of motdStripper.push(chunk)) stdout.push(part);
+        });
         stream.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
         stream.once('close', (code: number | undefined) => {
           if (settled) return;
@@ -477,8 +527,11 @@ export class ScpSession implements SftpSession {
         let buffer = Buffer.alloc(0);
         let state: 'header' | 'data' | 'term' = 'header';
         let expected = 0;
+        const motdStripper = new MotdStripper();
         stream.on('data', (chunk: Buffer) => {
-          buffer = Buffer.concat([buffer, chunk]);
+          for (const part of motdStripper.push(chunk)) {
+            buffer = Buffer.concat([buffer, part]);
+          }
           if (state === 'header') {
             const newline = buffer.indexOf(0x0a);
             if (newline === -1) return;
@@ -572,8 +625,11 @@ export class ScpSession implements SftpSession {
         stream.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
         let buffer = Buffer.alloc(0);
         let acknowledged = false;
+        const motdStripper = new MotdStripper();
         stream.on('data', (chunk: Buffer) => {
-          buffer = Buffer.concat([buffer, chunk]);
+          for (const part of motdStripper.push(chunk)) {
+            buffer = Buffer.concat([buffer, part]);
+          }
           if (!acknowledged && buffer.length >= 1) {
             if (buffer[0] !== 0) {
               const detail = Buffer.concat(stderrChunks).toString().trim();

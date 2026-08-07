@@ -274,18 +274,6 @@ function attemptConnect(
   signal?: AbortSignal
 ): Promise<SftpSession> {
   const client = new Client();
-  // Snoop the first bytes the server sends so handshake failures can be
-  // diagnosed: the packet-length error alone does not reveal what the
-  // gateway actually responded with.
-  let rawPrefix = Buffer.alloc(0);
-  const attachRawSniffer = () => {
-    const socket = (client as unknown as { _sock?: NodeJS.ReadableStream })._sock;
-    socket?.on('data', (chunk: Buffer) => {
-      if (rawPrefix.length < 96) {
-        rawPrefix = Buffer.concat([rawPrefix, chunk]).subarray(0, 96);
-      }
-    });
-  };
   return new Promise<SftpSession>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -298,13 +286,6 @@ function attemptConnect(
       settled = true;
       cleanup();
       client.end();
-      if (rawPrefix.length > 0 && /packet length|wrong packet|bad packet|exchange encryption keys/i.test(error.message)) {
-        const detail = new Error(
-          `${error.message}（服务器首包 hex: ${rawPrefix.toString('hex')}）`
-        );
-        reject(detail);
-        return;
-      }
       reject(error);
     };
     const failed = (error: Error) => finishError(error);
@@ -312,10 +293,12 @@ function attemptConnect(
     const ready = () => {
       client.sftp((error, sftp) => {
         if (error) {
-          // Server has no SFTP subsystem (e.g. NSG gateway without
-          // sftp-server): fall back to an exec/SCP session on the same
-          // connection, like MobaXterm's file browser does.
-          if (/Unable to start subsystem/i.test(error.message)) {
+          // Server has no usable SFTP subsystem: either it rejects the
+          // subsystem request (NSG gateways without sftp-server) or a gateway
+          // MOTD banner corrupts the SFTP version handshake ("Packet length
+          // … exceeds max length"). Fall back to an exec/SCP session on the
+          // same connection, like MobaXterm's file browser does.
+          if (/Unable to start subsystem|packet length|wrong packet|bad packet|exchange encryption keys/i.test(error.message)) {
             if (settled) {
               sftp?.end();
               client.end();
@@ -353,8 +336,6 @@ function attemptConnect(
     client.once('error', failed);
     try {
       client.connect(config);
-      // The socket only exists after connect() starts; grab it on the next tick.
-      setImmediate(attachRawSniffer);
     } catch (error) {
       finishError(error instanceof Error ? error : new Error(String(error)));
     }

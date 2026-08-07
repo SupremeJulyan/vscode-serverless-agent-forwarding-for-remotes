@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.6
+
+- Fix `Packet length … exceeds max length` on NSG gateways that inject a MOTD
+  banner into every SSH channel (e.g. 10.68.0.101: `  … 一×17 …
+  |核数:128 …`). The banner corrupts the SFTP version handshake and SCP
+  headers, so the extension now (1) falls back to the exec/SCP session for
+  this error class too, and (2) strips the gateway MOTD prefix (detected by
+  its ` ` signature, cut at the box-bottom line) from exec, SCP-read and
+  SCP-write streams. Verified end-to-end on the real gateway: remote folder,
+  listing, read/write all work.
+- Remove the 1.2.5 raw-bytes sniffer: attaching a data listener to ssh2's
+  socket corrupted packet parsing and reproduced the very error it was meant
+  to diagnose.
+
+## 1.2.5
 ## 1.2.5
 
 - Handshake-failure diagnostics: when a gateway responds with invalid SSH

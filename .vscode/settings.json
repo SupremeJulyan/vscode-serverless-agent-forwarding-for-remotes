@@ -1,4 +1,4 @@
 {
     "remote.autoForwardPortsFallback": 0,
-    "pendant.runtimeSource": "bundled"
+    "pendant.runtimeSource": "external"
 }
