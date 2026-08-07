@@ -177,6 +177,28 @@ if [[ -z "$ssh_major" ]] \
   || (( 10#$ssh_major > 8 || (10#$ssh_major == 8 && 10#$ssh_minor >= 5) )); then
   ssh_options+=(-o "PubkeyAcceptedAlgorithms=+${legacy_host_keys_joined}")
 fi
+# 显式 KexAlgorithms 可抑制 OpenSSH 10+ 对旧服务器的 post-quantum 警告。
+# 列表按客户端 `ssh -Q kex` 能力过滤（老客户端不认识的算法会直接报错）。
+kex_preferred=(sntrup761x25519-sha512 sntrup761x25519-sha512@openssh.com \
+  mlkem768x25519-sha256 curve25519-sha256 curve25519-sha256@libssh.org \
+  ecdh-sha2-nistp256 ecdh-sha2-nistp384 ecdh-sha2-nistp521 \
+  diffie-hellman-group-exchange-sha256 diffie-hellman-group14-sha256 \
+  diffie-hellman-group16-sha512 diffie-hellman-group18-sha512 \
+  diffie-hellman-group-exchange-sha1 diffie-hellman-group14-sha1 \
+  diffie-hellman-group1-sha1)
+kex_supported="$(ssh -Q kex 2>/dev/null | tr -d '\r')"
+if [[ -n "$kex_supported" ]]; then
+  kex_list=()
+  for algo in "${kex_preferred[@]}"; do
+    if grep -qx "$algo" <<<"$kex_supported"; then
+      kex_list+=("$algo")
+    fi
+  done
+  if ((${#kex_list[@]})); then
+    kex_joined="$(IFS=,; printf '%s' "${kex_list[*]}")"
+    ssh_options+=(-o "KexAlgorithms=${kex_joined}")
+  fi
+fi
 if [[ "${WSL_VPN_SSH_CONNECTION_REUSE:-1}" != 0 ]]; then
   ssh_options+=(
     -o ControlMaster=auto

@@ -1,6 +1,6 @@
 import * as os from 'node:os';
 import { HostConfig } from './config';
-import { legacySshAlgorithmArgs } from './ssh-algorithms';
+import { kexAlgorithmsArgs, legacySshAlgorithmArgs } from './ssh-algorithms';
 import { sshBridgePath } from './wsl-bridge';
 
 export type PlatformKind = 'windows' | 'macos' | 'linux' | 'wsl';
@@ -50,6 +50,9 @@ function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptio
   // are adapted to the installed client (see ssh-algorithms.ts), because old
   // OpenSSH rejects PubkeyAcceptedAlgorithms and OpenSSH 10+ rejects ssh-dss.
   args.push(...legacySshAlgorithmArgs());
+  // An explicit KexAlgorithms list suppresses OpenSSH 10+'s post-quantum
+  // warning that otherwise spams the terminal on legacy servers.
+  args.push(...kexAlgorithmsArgs());
   // ControlMaster=auto reuses a healthy master and lets OpenSSH fall back to a
   // direct connection when the control socket cannot be used.
   args.push(...connectionReuseArgs(options));

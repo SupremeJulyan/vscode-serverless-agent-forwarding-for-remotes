@@ -66,6 +66,8 @@ export interface SshCapabilities {
   version?: [number, number];
   /** Signature algorithms from `ssh -Q sig`; undefined when the query fails. */
   sigAlgorithms?: Set<string>;
+  /** KEX algorithms from `ssh -Q kex`; undefined when the query fails. */
+  kexAlgorithms?: Set<string>;
 }
 
 const capabilityCache = new Map<string, Promise<SshCapabilities>>();
@@ -96,6 +98,17 @@ async function detectSshCapabilities(
     );
   } catch {
     caps.sigAlgorithms = undefined;
+  }
+  try {
+    const { stdout } = await execFileAsync(sshPath, ['-Q', 'kex'], {
+      env: { ...process.env, ...env },
+      windowsHide: true
+    });
+    caps.kexAlgorithms = new Set(
+      stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    );
+  } catch {
+    caps.kexAlgorithms = undefined;
   }
   return caps;
 }
@@ -149,4 +162,47 @@ export function legacySshAlgorithmArgsFor(caps: SshCapabilities | undefined): st
  */
 export function legacySshAlgorithmArgs(): string[] {
   return legacySshAlgorithmArgsFor(lastCapabilities);
+}
+
+/**
+ * KEX algorithms in preference order: post-quantum first (suppresses the
+ * OpenSSH 10+ "not using a post-quantum key exchange" warning on legacy
+ * servers), then modern, then legacy group-exchange/group1 for old gateways.
+ * Filtered by what the installed client actually supports (`ssh -Q kex`).
+ */
+const preferredKexAlgorithms = [
+  'sntrup761x25519-sha512',
+  'sntrup761x25519-sha512@openssh.com',
+  'mlkem768x25519-sha256',
+  'curve25519-sha256',
+  'curve25519-sha256@libssh.org',
+  'ecdh-sha2-nistp256',
+  'ecdh-sha2-nistp384',
+  'ecdh-sha2-nistp521',
+  'diffie-hellman-group-exchange-sha256',
+  'diffie-hellman-group14-sha256',
+  'diffie-hellman-group16-sha512',
+  'diffie-hellman-group18-sha512',
+  'diffie-hellman-group-exchange-sha1',
+  'diffie-hellman-group14-sha1',
+  'diffie-hellman-group1-sha1'
+];
+
+/**
+ * Returns `-o KexAlgorithms=…` for the probed client, or nothing when the
+ * client cannot be queried (old OpenSSH, where no PQ warning exists anyway).
+ * Setting the list explicitly suppresses OpenSSH 10+'s post-quantum warning
+ * that would otherwise spam the terminal when connecting to legacy servers.
+ */
+export function kexAlgorithmsArgsFor(caps: SshCapabilities | undefined): string[] {
+  const supported = caps?.kexAlgorithms;
+  if (!supported) return [];
+  const list = preferredKexAlgorithms.filter((algorithm) => supported.has(algorithm));
+  if (list.length === 0) return [];
+  return ['-o', `KexAlgorithms=${list.join(',')}`];
+}
+
+/** KEX algorithm args for the probed ssh client (no-op before the probe). */
+export function kexAlgorithmsArgs(): string[] {
+  return kexAlgorithmsArgsFor(lastCapabilities);
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  legacySshAlgorithmArgsFor, parseSshVersion, SshCapabilities
+  kexAlgorithmsArgsFor, legacySshAlgorithmArgsFor, parseSshVersion, SshCapabilities
 } from '../src/ssh-algorithms';
 
 test('parses OpenSSH version strings from macOS, Linux and Windows', () => {
@@ -58,4 +58,29 @@ test('unknown client version keeps the previous permissive defaults', () => {
     '-o', 'HostKeyAlgorithms=+ssh-rsa,ssh-dss',
     '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss'
   ]);
+});
+
+test('builds a capability-filtered KexAlgorithms list to suppress the PQ warning', () => {
+  const caps: SshCapabilities = {
+    sshPath: '/usr/bin/ssh',
+    version: [10, 3],
+    sigAlgorithms: new Set(['ssh-ed25519', 'ssh-rsa']),
+    kexAlgorithms: new Set([
+      'curve25519-sha256', 'ecdh-sha2-nistp256', 'diffie-hellman-group14-sha1',
+      'diffie-hellman-group-exchange-sha1', 'sntrup761x25519-sha512'
+    ])
+  };
+  const args = kexAlgorithmsArgsFor(caps);
+  assert.equal(args.length, 2);
+  assert.equal(args[0], '-o');
+  const list = args[1].replace('KexAlgorithms=', '');
+  // PQ first, then modern, then legacy; unknown ones filtered out.
+  assert.ok(list.startsWith('sntrup761x25519-sha512,curve25519-sha256'));
+  assert.ok(list.includes('diffie-hellman-group14-sha1'));
+  assert.ok(!list.includes('mlkem768x25519-sha256')); // not supported by client
+});
+
+test('no KexAlgorithms option when the client cannot be queried', () => {
+  assert.deepEqual(kexAlgorithmsArgsFor(undefined), []);
+  assert.deepEqual(kexAlgorithmsArgsFor({ sshPath: '/usr/bin/ssh' }), []);
 });

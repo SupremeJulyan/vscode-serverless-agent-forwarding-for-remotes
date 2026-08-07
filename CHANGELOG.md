@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0
+
+- Config entries in the explorer are no longer click-to-connect (prevents
+  accidental connections); open them via the context menu or the command
+  palette instead.
+- Connection and Agent-forwarding states now show as ✓/✗ in the tree
+  (details remain in the tooltip).
+- Enabling Agent forwarding shows a bottom-right progress notification while
+  the MCP servers are being registered on first use.
+- Suppress OpenSSH 10+'s post-quantum KEX warning on legacy servers: an
+  explicit capability-filtered `KexAlgorithms` list (PQ first, then modern,
+  then legacy group exchange) is passed on the system `ssh` path and the WSL
+  bridge, so `** WARNING: connection is not using a post-quantum key
+  exchange algorithm **` no longer spams the terminal.
+
+## 1.2.8
 ## 1.2.8
 
 - Hide the `cd -- '…'` line printed when a remote terminal opens on Windows

@@ -1138,7 +1138,9 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
       : connectionState === 'connecting' || connectionState === 'reconnecting'
         ? '连接中'
         : connectionState === 'error' ? '连接错误' : '未连接';
-    item.description = `SFTP：${connectionLabel} · Agent 转发：${aiForwarded ? '已开启' : '已关闭'}`;
+    // 状态统一用 ✓/✗ 简洁显示（详细信息在 tooltip 中）；
+    // 不设 command，防止点击条目误连远程目录（通过右键菜单/命令面板打开）。
+    item.description = `SFTP：${connected ? '✓' : '✗'} · Agent：${aiForwarded ? '✓' : '✗'}`;
     item.contextValue = [
       'safs.connection',
       connected ? 'connected' : 'disconnected',
@@ -1153,12 +1155,9 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
       '',
       `SFTP：${connectionLabel}`,
       aiForwarded ? 'Agent 转发：已开启' : 'Agent 转发：已关闭',
+      '',
+      '右键可打开远程文件夹 / 终端 / 断开。'
     ].join('\n'));
-    item.command = {
-      command: `${commandPrefix}.openFolderItem`,
-      title: '打开远程文件夹',
-      arguments: [mount]
-    };
     return item;
   }
 
@@ -1678,46 +1677,53 @@ async function configureDetectedAgents(
 }
 
 async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): Promise<void> {
-  const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
-  if (enabledValue) enabled.add(mount.name);
-  else enabled.delete(mount.name);
-  await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
-  agentTrace(
-    'Preference',
-    `挂载 ${mount.name} Agent 转发标记已设为${enabledValue ? '启用' : '关闭'}`
-  );
-  const current = currentRemoteLocation();
-  let integrationSucceeded = true;
-  if (!enabledValue && current?.mountName === mount.name) {
-    agentTrace('Preference', `当前窗口绑定 ${mount.name}，正在停止 MCP 并移除发现记录`);
-    await mcp?.stop();
-    await agentWorkspacePublisher.remove();
-  }
-  if (enabledValue) {
-    await prepareAgentCwd(mount);
-    agentTrace('Preference', '先启动固定 HTTP 路由并注册 Agent，再启动当前窗口服务');
-    startAgentHttpRouterLeadership(vscodeContext);
-    integrationSucceeded = await configureDetectedAgents(vscodeContext, true);
-    if (current?.mountName === mount.name) {
-      const server = await ensureAgentMcpServer(vscodeContext);
-      if (!server.portUnavailable) await publishAgentWorkspace(vscodeContext);
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: enabledValue
+      ? `正在启用“${mount.name}”的 Agent 转发（注册 MCP）…`
+      : `正在关闭“${mount.name}”的 Agent 转发…`
+  }, async () => {
+    const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
+    if (enabledValue) enabled.add(mount.name);
+    else enabled.delete(mount.name);
+    await vscodeContext.globalState.update(aiForwardMountsKey, [...enabled]);
+    agentTrace(
+      'Preference',
+      `挂载 ${mount.name} Agent 转发标记已设为${enabledValue ? '启用' : '关闭'}`
+    );
+    const current = currentRemoteLocation();
+    let integrationSucceeded = true;
+    if (!enabledValue && current?.mountName === mount.name) {
+      agentTrace('Preference', `当前窗口绑定 ${mount.name}，正在停止 MCP 并移除发现记录`);
+      await mcp?.stop();
+      await agentWorkspacePublisher.remove();
     }
-  } else if (enabled.size === 0) {
-    agentTrace('Preference', '已无启用挂载，移除固定 MCP 注册');
-    integrationSucceeded = await configureDetectedAgents(vscodeContext, false);
-    await stopAgentHttpRouterLeadership();
-  }
-  void vscode.window.showInformationMessage(
-    `"${mount.name}" Agent 转发已${enabledValue ? '启用' : '关闭'}。${enabledValue
-      ? integrationSucceeded
-        ? '固定 HTTP MCP 已注册；当前远程窗口可用时会立即启动转发服务。'
-        : '固定 MCP 未全部配置成功，请查看输出。'
-      : enabled.size === 0
+    if (enabledValue) {
+      await prepareAgentCwd(mount);
+      agentTrace('Preference', '先启动固定 HTTP 路由并注册 Agent，再启动当前窗口服务');
+      startAgentHttpRouterLeadership(vscodeContext);
+      integrationSucceeded = await configureDetectedAgents(vscodeContext, true);
+      if (current?.mountName === mount.name) {
+        const server = await ensureAgentMcpServer(vscodeContext);
+        if (!server.portUnavailable) await publishAgentWorkspace(vscodeContext);
+      }
+    } else if (enabled.size === 0) {
+      agentTrace('Preference', '已无启用挂载，移除固定 MCP 注册');
+      integrationSucceeded = await configureDetectedAgents(vscodeContext, false);
+      await stopAgentHttpRouterLeadership();
+    }
+    void vscode.window.showInformationMessage(
+      `"${mount.name}" Agent 转发已${enabledValue ? '启用' : '关闭'}。${enabledValue
         ? integrationSucceeded
-          ? '所有转发均已关闭，固定 MCP 已移除。'
-          : '所有转发均已关闭，但固定 MCP 移除失败，请查看输出。'
-        : '其他已启用挂载继续共用固定 MCP。'}`
-  );
+          ? '固定 HTTP MCP 已注册；当前远程窗口可用时会立即启动转发服务。'
+          : '固定 MCP 未全部配置成功，请查看输出。'
+        : enabled.size === 0
+          ? integrationSucceeded
+            ? '所有转发均已关闭，固定 MCP 已移除。'
+            : '所有转发均已关闭，但固定 MCP 移除失败，请查看输出。'
+          : '其他已启用挂载继续共用固定 MCP。'}`
+    );
+  });
 }
 
 async function prepareAgentCwd(mount: MountConfig): Promise<void> {
