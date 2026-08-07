@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.4
+
+- Fix WSL terminals failing to open with `EACCES` when the packaged
+  `ssh-bridge` lost its executable bit. VSIX archives built on Windows (and
+  checkouts without the git exec bit) store the script with mode 0666, so
+  spawning it as the terminal shell failed even though the remote folder
+  (SFTP, which never uses the bridge) still opened. The extension now
+  re-asserts mode 0755 on `ssh-bridge` at activation.
+
 ## 1.2.3
 
 - WSL robustness: the bundled ssh-bridge no longer hard-requires `flock`

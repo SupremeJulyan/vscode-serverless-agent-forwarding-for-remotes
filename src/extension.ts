@@ -43,7 +43,7 @@ import {
 import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
 } from './sftp/uri';
-import { setWslBundlePath } from './wsl-bridge';
+import { ensureWslBridgeExecutable, setWslBundlePath } from './wsl-bridge';
 import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
@@ -1827,8 +1827,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString()).join(', ') || '<none>'
   }`);
 
-  // WSL: point the bundled scripts at resources/wsl/
+  // WSL: point the bundled scripts at resources/wsl/. VSIX packaging can
+  // strip the executable bit from ssh-bridge (Windows builds store 0666), so
+  // re-assert it before any terminal spawns the bridge.
   setWslBundlePath(vscode.Uri.joinPath(context.extensionUri, 'resources', 'wsl').fsPath);
+  await ensureWslBridgeExecutable();
   await ensureSystemDependencies();
 
   registry = new RemoteFolderRegistry();

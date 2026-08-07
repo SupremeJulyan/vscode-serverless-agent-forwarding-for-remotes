@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { chmod } from 'node:fs/promises';
 
 let bundleRoot: string | undefined;
 
@@ -11,6 +12,25 @@ let bundleRoot: string | undefined;
  */
 export function setWslBundlePath(resolvedPath: string): void {
   bundleRoot = resolvedPath;
+}
+
+/**
+ * Make sure the bundled ssh-bridge script is executable.
+ *
+ * VS Code spawns the bridge directly as the terminal shell. VSIX packages
+ * created on Windows (or via checkouts that lost the git exec bit) store the
+ * script with mode 0666, which makes the spawn fail with EACCES — the remote
+ * folder still opens because SFTP never touches the bridge. Re-assert 0755 at
+ * activation so terminals work regardless of how the extension was packaged.
+ */
+export async function ensureWslBridgeExecutable(): Promise<void> {
+  if (!bundleRoot) throw new Error('WSL bundle path not initialised');
+  try {
+    await chmod(path.join(bundleRoot, 'ssh-bridge'), 0o755);
+  } catch {
+    // Never block activation: on non-POSIX hosts chmod may be a no-op, and
+    // if the script is already executable this call does nothing anyway.
+  }
 }
 
 /**
