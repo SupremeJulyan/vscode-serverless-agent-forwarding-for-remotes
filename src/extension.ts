@@ -547,11 +547,18 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   if (!reopen || terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
     return;
   }
+  // Reconnect into the remote directory currently open in this window
+  // (kept in sync by SAFS: 切换远程目录), falling back to the cwd the
+  // terminal was originally opened with.
+  const location = currentRemoteLocation();
+  const remoteCwd = location && location.mountName === reopen.mount.name
+    ? location.remotePath
+    : reopen.remoteCwd;
   if (reopen.retryWithSystemSsh) {
     void vscode.window.showInformationMessage(
       `SAFS: 内置终端与该服务器不兼容，已改用系统 SSH 重连“${reopen.mount.name}”。`
     );
-    await openTerminal(vscodeContext, reopen.mount, reopen.remoteCwd, undefined, true, true);
+    await openTerminal(vscodeContext, reopen.mount, remoteCwd, undefined, true, true);
     return;
   }
   const selected = await vscode.window.showInformationMessage(
@@ -559,7 +566,7 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
     reconnectRemoteTerminalAction
   );
   if (selected === reconnectRemoteTerminalAction) {
-    await openTerminal(vscodeContext, reopen.mount, reopen.remoteCwd, undefined, true);
+    await openTerminal(vscodeContext, reopen.mount, remoteCwd, undefined, true);
   }
 }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2
+
+- Reconnecting a closed remote terminal now `cd`s into the remote directory
+  currently open in the window (kept in sync by SAFS: 切换远程目录) instead
+  of the cwd the terminal was originally opened with.
+
 ## 1.2.1
 
 - Fix remote terminals failing to launch on macOS/Linux (exit code 255):
