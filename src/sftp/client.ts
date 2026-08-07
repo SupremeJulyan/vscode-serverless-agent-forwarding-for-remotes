@@ -274,6 +274,18 @@ function attemptConnect(
   signal?: AbortSignal
 ): Promise<SftpSession> {
   const client = new Client();
+  // Snoop the first bytes the server sends so handshake failures can be
+  // diagnosed: the packet-length error alone does not reveal what the
+  // gateway actually responded with.
+  let rawPrefix = Buffer.alloc(0);
+  const attachRawSniffer = () => {
+    const socket = (client as unknown as { _sock?: NodeJS.ReadableStream })._sock;
+    socket?.on('data', (chunk: Buffer) => {
+      if (rawPrefix.length < 96) {
+        rawPrefix = Buffer.concat([rawPrefix, chunk]).subarray(0, 96);
+      }
+    });
+  };
   return new Promise<SftpSession>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -286,6 +298,13 @@ function attemptConnect(
       settled = true;
       cleanup();
       client.end();
+      if (rawPrefix.length > 0 && /packet length|wrong packet|bad packet|exchange encryption keys/i.test(error.message)) {
+        const detail = new Error(
+          `${error.message}（服务器首包 hex: ${rawPrefix.toString('hex')}）`
+        );
+        reject(detail);
+        return;
+      }
       reject(error);
     };
     const failed = (error: Error) => finishError(error);
@@ -334,6 +353,8 @@ function attemptConnect(
     client.once('error', failed);
     try {
       client.connect(config);
+      // The socket only exists after connect() starts; grab it on the next tick.
+      setImmediate(attachRawSniffer);
     } catch (error) {
       finishError(error instanceof Error ? error : new Error(String(error)));
     }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.5
+
+- Handshake-failure diagnostics: when a gateway responds with invalid SSH
+  data ("Packet length … exceeds max length"), the error now includes the
+  first bytes the server actually sent (hex), making it possible to identify
+  the responding device/route (e.g. a captive portal or VPN route to the
+  wrong host) instead of guessing from the generic packet-length message.
+
 ## 1.2.4
 
 - Fix WSL terminals failing to open with `EACCES` when the packaged
