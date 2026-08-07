@@ -1766,7 +1766,9 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
         ? '：认证失败，请检查用户名/密码是否正确（或改用私钥认证）'
         : /Unable to start subsystem/i.test(message)
           ? '：服务器未提供 SFTP 子系统（可能仅支持 SSH 终端/跳板，或网关策略禁止文件传输）。请在服务器 sshd_config 中启用 Subsystem sftp，或改用支持 SFTP 的目标主机；如需 SSH 终端可尝试“SAFS: 打开远程终端”'
-          : '';
+          : /packet length|exchange encryption keys|wrong packet|bad packet/i.test(message)
+            ? '：服务器在 SSH 握手阶段返回了无效数据（网关/NSG 可能瞬断或该端口不是 SSH 服务），已自动重试 3 次仍失败'
+            : '';
     await vscode.window.showErrorMessage(`SAFS: ${message}${errorHint}`);
   }
 }

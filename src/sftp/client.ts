@@ -207,6 +207,13 @@ async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
   };
 }
 
+/** Errors worth retrying: the gateway returned garbage during the handshake. */
+function isRetryableHandshakeError(error: unknown): boolean {
+  return /packet length|exchange encryption keys|wrong packet|bad packet/i.test(
+    error instanceof Error ? error.message : String(error)
+  );
+}
+
 export async function connectSftp(
   host: HostConfig,
   useWslVpnRelay = false,
@@ -240,6 +247,32 @@ export async function connectSftp(
   if (host.private_key_path) {
     config.privateKey = await readFile(expandHome(host.private_key_path));
   }
+  // Some NSG/gateways intermittently inject garbage during the SSH handshake
+  // ("Packet length … exceeds max length"). Retry with fresh connections a
+  // few times before giving up; the VPN relay stays up across attempts.
+  let lastError: unknown;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await attemptConnect(host, config, releaseRelay, signal);
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted) throw error;
+      if (!isRetryableHandshakeError(error) || attempt >= 2) {
+        await releaseRelay();
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+function attemptConnect(
+  host: HostConfig,
+  config: ConnectConfig,
+  releaseRelay: () => Promise<void>,
+  signal?: AbortSignal
+): Promise<SftpSession> {
   const client = new Client();
   return new Promise<SftpSession>((resolve, reject) => {
     let settled = false;
@@ -253,7 +286,6 @@ export async function connectSftp(
       settled = true;
       cleanup();
       client.end();
-      void releaseRelay();
       reject(error);
     };
     const failed = (error: Error) => finishError(error);
@@ -303,7 +335,6 @@ export async function connectSftp(
     try {
       client.connect(config);
     } catch (error) {
-      void releaseRelay();
       finishError(error instanceof Error ? error : new Error(String(error)));
     }
   });

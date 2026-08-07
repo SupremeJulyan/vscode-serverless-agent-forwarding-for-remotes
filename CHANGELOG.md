@@ -8,6 +8,11 @@
   spawning it as the terminal shell failed even though the remote folder
   (SFTP, which never uses the bridge) still opened. The extension now
   re-asserts mode 0755 on `ssh-bridge` at activation.
+- Retry SSH handshakes when an NSG/gateway injects garbage during the first
+  connection ("Packet length … exceeds max length of 262144"): `connectSftp`
+  now retries with fresh connections (up to 3 attempts, VPN relay kept)
+  before failing, and the error dialog explains that the server returned
+  invalid SSH handshake data.
 
 ## 1.2.3
 
