@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.8
+
+- Hide the `cd -- '…'` line printed when a remote terminal opens on Windows
+  (built-in ssh2 terminal): the working directory is now applied as part of
+  the remote command (`cd -- '…' && exec "${SHELL:-/bin/sh}" -l`) with a pty
+  — the same mechanism the system `ssh` paths use — instead of typing the cd
+  into the interactive shell. The `--` option terminator is kept so paths
+  starting with `-` still work. Verified interactive shells on gknzy/gsxzy/
+  yxzy gateways (no cd echo, cwd correct, prompts working).
+
+## 1.2.7
 ## 1.2.7
 
 - Code review cleanup:

@@ -186,8 +186,18 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
     });
     this.client.once('ready', () => {
       this.password = undefined;
-      this.client.shell({
-        term: 'xterm-256color', cols: this.dimensions.columns, rows: this.dimensions.rows
+      // Run the cd as part of the remote command (with a pty) instead of
+      // typing it into the shell: `ssh -t host "cd -- '…' && exec …"` does
+      // not echo the cd, whereas typing it into an interactive shell does.
+      const loginCommand = this.remoteCwd
+        ? `cd -- ${shellQuote(this.remoteCwd)} && exec "\${SHELL:-/bin/sh}" -l`
+        : `exec "\${SHELL:-/bin/sh}" -l`;
+      this.client.exec(loginCommand, {
+        pty: {
+          term: 'xterm-256color',
+          cols: this.dimensions.columns,
+          rows: this.dimensions.rows
+        }
       }, (error, stream) => {
         if (error) {
           this.fail(error);
@@ -197,7 +207,6 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
         stream.on('data', (chunk: Buffer) => this.writeEmitter.fire(chunk.toString()));
         stream.stderr.on('data', (chunk: Buffer) => this.writeEmitter.fire(chunk.toString()));
         stream.once('close', () => this.finish(0));
-        if (this.remoteCwd) stream.write(`cd -- ${shellQuote(this.remoteCwd)}\r`);
       });
     });
     this.client.once('error', (error) => this.fail(error));
