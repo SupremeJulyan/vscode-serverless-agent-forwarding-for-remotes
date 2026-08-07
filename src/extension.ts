@@ -1556,7 +1556,7 @@ async function configureDetectedAgents(
       });
       continue;
     }
-    const status = await runAgentMcpOperation(def, 'get', undefined, mcpRunner);
+    const status = await runAgentMcpOperation(def, command, 'get', undefined, mcpRunner);
     const output = `${status.stdout}\n${status.stderr}`;
     const fixedExists = status.exitCode === 0;
     const supportsMcp = agentSupportsMcpFor(def, status);
@@ -1617,7 +1617,7 @@ async function configureDetectedAgents(
   ].filter(Boolean).join(' '));
   const failures: string[] = [];
   for (const state of needsDisable) {
-    const result = await runAgentMcpOperation(state.def, 'remove', undefined, mcpRunner);
+    const result = await runAgentMcpOperation(state.def, state.command!, 'remove', undefined, mcpRunner);
     if (result.exitCode === 0) {
       configured.delete(`${state.def.cliName}:safs`);
       bridgeOutput?.appendLine(
@@ -1630,7 +1630,7 @@ async function configureDetectedAgents(
   for (const state of needsSetup) {
     let canAdd = true;
     if (state.fixedExists) {
-      const removed = await runAgentMcpOperation(state.def, 'remove', undefined, mcpRunner);
+      const removed = await runAgentMcpOperation(state.def, state.command!, 'remove', undefined, mcpRunner);
       if (removed.exitCode !== 0) {
         canAdd = false;
         failures.push(
@@ -1639,7 +1639,7 @@ async function configureDetectedAgents(
       }
     }
     if (canAdd) {
-      const result = await runAgentMcpOperation(state.def, 'add', routerUrl!, mcpRunner);
+      const result = await runAgentMcpOperation(state.def, state.command!, 'add', routerUrl!, mcpRunner);
       if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
         failures.push(`${state.def.displayName}: ${result.stderr || result.stdout}`);
       } else {

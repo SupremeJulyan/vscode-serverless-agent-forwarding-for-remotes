@@ -289,6 +289,7 @@ export function agentSupportsMcpFor(
  */
 export async function runAgentMcpOperation(
   def: AgentDefinition,
+  command: string,
   op: 'get' | 'add' | 'remove',
   url: string | undefined,
   runner: AgentMcpCliRunner,
@@ -309,5 +310,8 @@ export async function runAgentMcpOperation(
     : op === 'add'
       ? def.mcp.add(serverName, url!)
       : def.mcp.remove(serverName);
-  return runner.run(def.cliName, args);
+  // `command` is the resolved CLI path (PATH lookup or the VS Code extension's
+  // bundled binary), not the bare cliName — spawning the bare name fails with
+  // ENOENT when the CLI is only available inside a VS Code extension.
+  return runner.run(command, args);
 }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.3
+
+- WSL robustness: the bundled ssh-bridge no longer hard-requires `flock`
+  (minimal WSL distros ship without util-linux), and the VPN relay pool
+  falls back to a `mkdir`-based lock and a hand-built `\\wsl$\<distro>\...`
+  path when `flock`/`wslpath` are missing. Fixes terminals failing to open
+  with exit code 1 ("缺少命令 'flock'") on stripped-down WSL distros.
+- Fix Agent MCP registration spawning the bare CLI name instead of the
+  resolved binary: `run_agent_mcp_operation` now runs the resolved command
+  (PATH lookup or the VS Code extension's bundled CLI), so Claude Code with
+  only the extension-installed binary works (previously `spawn claude
+  ENOENT`).
+
 ## 1.2.2
 
 - Reconnecting a closed remote terminal now `cd`s into the remote directory

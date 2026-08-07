@@ -78,9 +78,9 @@ test('runAgentMcpOperation prefers handler over CLI', async () => {
     run: async (command, args) => { calls.push(`cli:${command}:${args.join(' ')}`); return result(0); },
     log: () => {}
   };
-  await runAgentMcpOperation(handlerDef, 'get', undefined, runner);
-  await runAgentMcpOperation(handlerDef, 'add', 'http://x', runner);
-  await runAgentMcpOperation(handlerDef, 'remove', undefined, runner);
+  await runAgentMcpOperation(handlerDef, 'pi', 'get', undefined, runner);
+  await runAgentMcpOperation(handlerDef, 'pi', 'add', 'http://x', runner);
+  await runAgentMcpOperation(handlerDef, 'pi', 'remove', undefined, runner);
   assert.deepEqual(calls, ['get', 'add', 'remove']);
 });
 
@@ -91,13 +91,13 @@ test('runAgentMcpOperation falls back to CLI for command-based agents', async ()
     run: async (command, args) => { calls.push(`${command} ${args.join(' ')}`); return result(0); },
     log: () => {}
   };
-  await runAgentMcpOperation(codex, 'add', 'http://x', runner);
-  await runAgentMcpOperation(codex, 'get', undefined, runner);
-  await runAgentMcpOperation(codex, 'remove', undefined, runner);
+  await runAgentMcpOperation(codex, '/opt/codex', 'add', 'http://x', runner);
+  await runAgentMcpOperation(codex, '/opt/codex', 'get', undefined, runner);
+  await runAgentMcpOperation(codex, '/opt/codex', 'remove', undefined, runner);
   assert.deepEqual(calls, [
-    'codex mcp add safs --url http://x',
-    'codex mcp get safs',
-    'codex mcp remove safs'
+    '/opt/codex mcp add safs --url http://x',
+    '/opt/codex mcp get safs',
+    '/opt/codex mcp remove safs'
   ]);
 });
 

@@ -71,7 +71,8 @@ bridge_performance_now bridge_started_at
 # ── Config resolution ───────────────────────────────────────────────────────
 config_file="${WSL_VPN_SSH_CONFIG:-${HOME:?}/.safs/config.json}"
 
-for command in ssh python3 flock; do
+# flock 仅在中继池使用，且中继池已有 mkdir 锁兜底，不作为基础依赖。
+for command in ssh python3; do
   command -v "$command" >/dev/null 2>&1 || die "缺少命令 '$command'"
 done
 
