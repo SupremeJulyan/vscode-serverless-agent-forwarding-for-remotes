@@ -3,8 +3,7 @@
 ## 1.3.2
 
 - Activity-bar icon: replaced the generic remote glyph with a "SAFS" logo
-  (bold letters) plus a remote-connection variant — a two-node network link
-  badge and a connection bus with endpoint nodes.
+  (bold letters) crossed horizontally by a single remote-transfer arrow.
 
 ## 1.3.1
 ## 1.3.1
