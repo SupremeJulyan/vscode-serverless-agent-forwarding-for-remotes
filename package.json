@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -58,7 +58,7 @@
       },
       {
         "command": "safs.switchRemoteDirectory",
-        "title": "SAFS: 切换远程目录",
+        "title": "SAFS: 打开远程目录",
         "icon": "$(folder-opened)"
       },
       {

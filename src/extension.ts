@@ -416,9 +416,11 @@ async function switchRemoteDirectory(): Promise<void> {
   const localRoot = localRootForFolder(folder);
   await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
   await writeLastRemoteDirectory(localRoot, folder.remoteRoot, resolved);
-  agentTrace('Open', `当前窗口切换远程目录：${location.remotePath} -> ${resolved}`);
+  agentTrace('Open', `打开新窗口远程目录：${location.remotePath} -> ${resolved}`);
+  // Open the chosen directory in a NEW window and keep the current one open
+  // (the current window keeps its own directory and MCP binding).
   await vscode.commands.executeCommand(
-    'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), false
+    'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), true
   );
 }
 
@@ -429,7 +431,7 @@ async function promptRemoteDirectory(
   mountName: string
 ): Promise<string | undefined> {
   const picker = vscode.window.createQuickPick<vscode.QuickPickItem>();
-  picker.title = `切换远程目录：${mountName}`;
+  picker.title = `打开远程目录：${mountName}`;
   picker.placeholder = `输入路径，Tab 补全，回车进入`;
   picker.value = currentPath.endsWith('/') ? currentPath : `${currentPath}/`;
   // No items => no dropdown; completion is driven by the Tab keybinding.

@@ -55,13 +55,15 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
 - With `remote_terminal: "open"`, a terminal is connected automatically after
   opening the remote folder.
 
-### Switch the remote directory
+### Open the remote directory
 
-- Run `SAFS: Switch Remote Directory` from the Command Palette.
+- Run `SAFS: Open Remote Directory` from the Command Palette.
 - Type a path inside the mount root, or pick a candidate from the completion
-  list, then press Enter. The current window switches to that directory (only
-  real directories inside the mount root are accepted).
-- Each remote config remembers the last switched directory; reopening the
+  list, then press Enter. The directory opens in a **new window** (only real
+  directories inside the mount root are accepted); the current window stays
+  open, and each window's Agent-forwarding/MCP stays bound to its own
+  directory.
+- Each remote config remembers the last opened directory; reopening the
   remote folder restores both the workspace and the terminal there.
 
 ### Enable Agent Forwarding

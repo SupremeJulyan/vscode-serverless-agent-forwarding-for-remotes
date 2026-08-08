@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1
+
+- Rename `SAFS: 切换远程目录` to `SAFS: 打开远程目录`: choosing a directory
+  now opens it in a **new window** and keeps the current window open (each
+  window keeps its own directory and Agent-forwarding/MCP binding), instead
+  of replacing the current window.
+
+## 1.3.0
 ## 1.3.0
 
 - Config entries in the explorer are no longer click-to-connect (prevents
