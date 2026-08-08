@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.2
+
+- Activity-bar icon: replaced the generic remote glyph with a "SAFS" logo
+  (bold letters) plus a remote-connection variant — a two-node network link
+  badge and a connection bus with endpoint nodes.
+
+## 1.3.1
 ## 1.3.1
 
 - Rename `SAFS: 切换远程目录` to `SAFS: 打开远程目录`: choosing a directory
