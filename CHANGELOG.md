@@ -3,7 +3,8 @@
 ## 1.3.2
 
 - Activity-bar icon: replaced the generic remote glyph with a "SAFS" logo
-  (bold letters) crossed horizontally by a single remote-transfer arrow.
+  (bold letters) over a thin double-headed remote-transfer arrow (the arrow
+  sits behind the letters, visible in the gaps and at both ends).
 
 ## 1.3.1
 ## 1.3.1
