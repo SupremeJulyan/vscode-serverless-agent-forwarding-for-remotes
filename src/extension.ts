@@ -88,6 +88,8 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   mount: MountConfig;
   remoteCwd: string;
   retryWithSystemSsh?: boolean;
+  /** 内置 ssh2 终端实例：live-sync 用它安全补发 cd（shell 就绪前入队）。 */
+  pty?: import('./ssh2-terminal').Ssh2Terminal;
 }>();
 
 // 重开远程窗口后，首次远程文件激活时无条件把自动连接的终端移到该文件目录
@@ -572,7 +574,12 @@ async function syncTerminalToActiveFile(uri: vscode.Uri): Promise<void> {
     for (const [terminal, info] of managedRemoteTerminals) {
       if (info.mount.name !== location.mountName || info.remoteCwd === fileDir) continue;
       info.remoteCwd = fileDir;
-      terminal.sendText(`cd -- ${shellQuote(fileDir)}`, true);
+      if (info.pty) {
+        // 内置终端：shell 通道就绪前入队，就绪后补发，避免 cd 被丢弃。
+        info.pty.sendInput(`cd -- ${shellQuote(fileDir)}\r`);
+      } else {
+        terminal.sendText(`cd -- ${shellQuote(fileDir)}`, true);
+      }
       synced = true;
     }
     // 只有真正把终端移过去后才消费重开标志；否则（终端尚未创建等时序）
@@ -729,6 +736,7 @@ async function openTerminal(
       && platformAdapter.kind === 'windows'
       && Boolean(resolved.hostConfig.password)
       && !resolved.hostConfig.private_key_path;
+    let builtinPty: import('./ssh2-terminal').Ssh2Terminal | undefined;
     const terminal = useBuiltinSsh
       ? (() => {
         let created!: vscode.Terminal;
@@ -749,6 +757,7 @@ async function openTerminal(
           pty,
           isTransient: true
         });
+        builtinPty = pty;
         return created;
       })()
       : vscode.window.createTerminal({
@@ -766,7 +775,7 @@ async function openTerminal(
         isTransient: true
       });
     performanceLine(`${mount.name} SSH 终端创建（不含远端握手）`, terminalStartedAt);
-    managedRemoteTerminals.set(terminal, { mount, remoteCwd });
+    managedRemoteTerminals.set(terminal, { mount, remoteCwd, pty: builtinPty });
     if (credentials) {
       const disposable = vscode.window.onDidCloseTerminal((closed) => {
         if (closed === terminal) {

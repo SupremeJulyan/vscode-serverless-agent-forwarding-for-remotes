@@ -150,6 +150,8 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
   private dimensions: vscode.TerminalDimensions = { columns: 80, rows: 24 };
   private password?: string;
   private closed = false;
+  /** 待 shell 通道就绪后补发的输入（live-sync 的 cd 可能早于连接完成）。 */
+  private pendingInput = '';
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -207,6 +209,11 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
         stream.on('data', (chunk: Buffer) => this.writeEmitter.fire(chunk.toString()));
         stream.stderr.on('data', (chunk: Buffer) => this.writeEmitter.fire(chunk.toString()));
         stream.once('close', () => this.finish(0));
+        // 补发连接建立期间排队（live-sync）的输入，避免 cd 被丢弃。
+        if (this.pendingInput) {
+          stream.write(this.pendingInput);
+          this.pendingInput = '';
+        }
       });
     });
     this.client.once('error', (error) => this.fail(error));
@@ -215,6 +222,18 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
 
   handleInput(data: string): void {
     this.stream?.write(data);
+  }
+
+  /**
+   * 写入远程终端；shell 通道尚未建立时先入队，建立后补发。
+   * 供 live-sync（终端跟随打开文件）在 SSH 连接完成前安全调用。
+   */
+  sendInput(data: string): void {
+    if (this.stream) {
+      this.stream.write(data);
+    } else {
+      this.pendingInput += data;
+    }
   }
 
   setDimensions(dimensions: vscode.TerminalDimensions): void {

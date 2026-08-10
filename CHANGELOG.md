@@ -15,6 +15,11 @@
   is now consumed only when a terminal is actually moved; a non-blocking
   deferred check (1.5s) covers the file-before-terminal timing window, and
   opening the terminal directly at the file's directory clears the flag.
+- Fix the remaining intermittent case: when the restored file tab activates
+  before the SSH shell channel is ready, the `cd` sent by live-sync was
+  dropped. The built-in ssh2 terminal now queues input until the shell
+  channel is open and then delivers it, so the terminal reliably lands in
+  the file's directory.
 
 ## 1.3.3
 
