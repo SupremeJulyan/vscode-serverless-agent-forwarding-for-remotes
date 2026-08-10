@@ -487,8 +487,8 @@
         },
         "safs.terminalFollowsActiveFile": {
           "type": "boolean",
-          "default": false,
-          "markdownDescription": "开启远程终端时，若当前窗口有打开的远程文件，终端自动进入**该文件所在目录**（默认 `false`：进入当前远程目录/工作区根）。重开远程窗口时配合标签页恢复，终端会跟随上次打开的文件。"
+          "default": true,
+          "markdownDescription": "开启远程终端时，若当前窗口有打开的远程文件，终端自动进入**该文件所在目录**（默认 `true`：进入当前远程目录/工作区根）。重开远程窗口时配合标签页恢复，终端会跟随上次打开的文件。"
         }
       }
     },

@@ -3,7 +3,7 @@
 ## 1.3.3
 ## 1.3.3
 
-- New setting `safs.terminalFollowsActiveFile` (default `false`): when a
+- New setting `safs.terminalFollowsActiveFile` (default `true`): when a
   remote terminal opens, it automatically enters the directory of the
   currently open remote file. With it enabled, reopening a remote window
   restores the previous file tab and the terminal follows that file's

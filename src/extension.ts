@@ -646,7 +646,7 @@ async function openTerminal(
   const remoteRoot = folder.remoteRoot;
   let remoteCwd = requestedRemoteCwd
     ?? (location?.mountName === mount.name ? location.remotePath : folder.remoteRoot);
-  if (settings().get<boolean>('terminalFollowsActiveFile', false)) {
+  if (settings().get<boolean>('terminalFollowsActiveFile', true)) {
     // 终端开启时跟随当前打开的远程文件所在目录（新方案）。
     const fileDirectory = await activeRemoteFileDirectory(mount.name);
     if (fileDirectory) remoteCwd = fileDirectory;
@@ -2051,7 +2051,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
     const uri = editor?.document.uri;
     if (!uri || uri.scheme !== remoteFileSystemScheme) return;
-    if (!settings().get<boolean>('terminalFollowsActiveFile', false)) return;
+    if (!settings().get<boolean>('terminalFollowsActiveFile', true)) return;
     void syncTerminalToActiveFile(uri);
   }));
 
