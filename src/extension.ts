@@ -90,6 +90,11 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   retryWithSystemSsh?: boolean;
 }>();
 
+// 重开远程窗口后，首次远程文件激活时无条件把自动连接的终端移到该文件目录
+// （配合标签页恢复，与 safs.terminalFollowsActiveFile 无关）；后续切换文件
+// 是否同步才由该设置控制。
+const restoredFileSyncPending = new Set<string>();
+
 // Channel-level failures mean the server rejects the ssh2 client's pty/shell
 // negotiation (common on NSG/gateway appliances). Fall back to the system ssh
 // CLI in that case; auth failures must NOT fall back (same credentials).
@@ -559,6 +564,11 @@ async function syncTerminalToActiveFile(uri: vscode.Uri): Promise<void> {
     if (!folder) return;
     const filePath = remotePathForUri(folder, location.remotePath);
     const fileDir = path.posix.dirname(filePath);
+    // 重开窗口后首次文件激活：无条件跟随（配合标签页恢复，一次性）。
+    const restoreFollow = restoredFileSyncPending.delete(location.mountName);
+    const follows = settings().get<boolean>('terminalFollowsActiveFile', false)
+      || restoreFollow;
+    if (!follows) return;
     for (const [terminal, info] of managedRemoteTerminals) {
       if (info.mount.name !== location.mountName || info.remoteCwd === fileDir) continue;
       info.remoteCwd = fileDir;
@@ -646,8 +656,9 @@ async function openTerminal(
   const remoteRoot = folder.remoteRoot;
   let remoteCwd = requestedRemoteCwd
     ?? (location?.mountName === mount.name ? location.remotePath : folder.remoteRoot);
-  if (settings().get<boolean>('terminalFollowsActiveFile', true)) {
-    // 终端开启时跟随当前打开的远程文件所在目录（新方案）。
+  if (settings().get<boolean>('terminalFollowsActiveFile', false)
+    || restoredFileSyncPending.has(mount.name)) {
+    // 设置开启，或重开远程窗口的自动连接：终端跟随当前打开的远程文件目录。
     const fileDirectory = await activeRemoteFileDirectory(mount.name);
     if (fileDirectory) remoteCwd = fileDirectory;
   }
@@ -1257,6 +1268,8 @@ async function restoreRemoteWorkspaces(): Promise<void> {
       );
     }
     if (mount.remote_terminal === 'open') {
+      // 标记：本次自动连接后，首次远程文件激活时无条件跟随其目录（标签页恢复）。
+      restoredFileSyncPending.add(mount.name);
       await openTerminal(vscodeContext, mount, openedRemotePath);
     }
   }
@@ -2047,11 +2060,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await guard(restoreRemoteWorkspaces);
   tree.refresh();
 
-  // 每次切换到远程文件时，若设置开启，同步终端到文件所在目录。
+  // 每次切换到远程文件时：若设置开启则同步终端；重开窗口后首次文件激活
+  // 也无条件跟随（配合标签页恢复）。
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
     const uri = editor?.document.uri;
     if (!uri || uri.scheme !== remoteFileSystemScheme) return;
-    if (!settings().get<boolean>('terminalFollowsActiveFile', true)) return;
     void syncTerminalToActiveFile(uri);
   }));
 

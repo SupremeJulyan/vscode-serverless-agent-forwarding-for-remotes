@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.4
+
+- `safs.terminalFollowsActiveFile` defaults back to `false`. The restore
+  behavior is now unconditional: reopening a remote window restores the
+  previous file tab and the auto-connected terminal follows that file's
+  directory even with the setting off (one-shot, no blocking wait). With the
+  setting `true`, every terminal open and every remote-file switch also
+  syncs the terminal to the file's directory.
+
+## 1.3.3
 ## 1.3.3
 ## 1.3.3
 
