@@ -8,11 +8,12 @@
   currently open remote file. With it enabled, reopening a remote window
   restores the previous file tab and the terminal follows that file's
   directory (up to 2s wait for the editor restore) instead of the workspace
-  root. The auto-connect terminal also waits for the restored file tab
-  (up to 8s) before opening.
+  root.
 - Live sync: with the same setting enabled, every time the active editor
   switches to a remote file, the mount's remote terminals automatically
-  `cd` into that file's directory (only when the directory changes).
+  `cd` into that file's directory (only when the directory changes). This
+  also covers window restore — the terminal opens immediately and moves to
+  the restored file's directory once its tab becomes active (no wait).
 
 ## 1.3.2
 ## 1.3.2

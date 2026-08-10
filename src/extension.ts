@@ -524,52 +524,26 @@ async function completeRemoteDirectory(): Promise<void> {
 
 /**
  * Returns the remote directory containing the currently open remote file of
- * the given mount. Waits up to ~2s for the restored editor, because during
- * window restore the terminal may open before VS Code has re-activated the
- * previously open file tab.
+ * the given mount, or undefined when none is active. No waiting: if the
+ * terminal opens before the restored file tab is active, the live-sync
+ * listener moves the terminal there once the editor becomes active.
  */
 async function activeRemoteFileDirectory(mountName: string): Promise<string | undefined> {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const editor = vscode.window.activeTextEditor
-      ?? vscode.window.visibleTextEditors.find(
-        (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
-      );
-    const uri = editor?.document.uri;
-    if (uri?.scheme === remoteFileSystemScheme) {
-      try {
-        const location = parseRemoteUri(uri.toString());
-        if (location.mountName !== mountName) return undefined;
-        const folder = registry.get(mountName);
-        if (!folder) return undefined;
-        const filePath = remotePathForUri(folder, location.remotePath);
-        return path.posix.dirname(filePath);
-      } catch {
-        return undefined;
-      }
-    }
-    if (editor) return undefined; // 有活动编辑器但不是远程文件，不等待
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return undefined;
-}
-
-/** Waits until a remote file of the given mount is (re)activated in this window. */
-async function waitForRemoteEditor(mountName: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const editor = vscode.window.activeTextEditor
-      ?? vscode.window.visibleTextEditors.find(
-        (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
-      );
-    const uri = editor?.document.uri;
-    if (uri?.scheme === remoteFileSystemScheme) {
-      try {
-        if (parseRemoteUri(uri.toString()).mountName === mountName) return;
-      } catch {
-        return;
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+  const editor = vscode.window.activeTextEditor
+    ?? vscode.window.visibleTextEditors.find(
+      (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
+    );
+  const uri = editor?.document.uri;
+  if (uri?.scheme !== remoteFileSystemScheme) return undefined;
+  try {
+    const location = parseRemoteUri(uri.toString());
+    if (location.mountName !== mountName) return undefined;
+    const folder = registry.get(mountName);
+    if (!folder) return undefined;
+    const filePath = remotePathForUri(folder, location.remotePath);
+    return path.posix.dirname(filePath);
+  } catch {
+    return undefined;
   }
 }
 
@@ -1283,11 +1257,6 @@ async function restoreRemoteWorkspaces(): Promise<void> {
       );
     }
     if (mount.remote_terminal === 'open') {
-      if (settings().get<boolean>('terminalFollowsActiveFile', false)) {
-        // 自动连接路径：窗口刚恢复时文件标签页可能还没成为活动编辑器，
-        // 先等远程文件就绪（最多 8s），让终端能跟随它所在目录。
-        await waitForRemoteEditor(mount.name, 8000);
-      }
       await openTerminal(vscodeContext, mount, openedRemotePath);
     }
   }
