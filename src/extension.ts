@@ -553,6 +553,48 @@ async function activeRemoteFileDirectory(mountName: string): Promise<string | un
   return undefined;
 }
 
+/** Waits until a remote file of the given mount is (re)activated in this window. */
+async function waitForRemoteEditor(mountName: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const editor = vscode.window.activeTextEditor
+      ?? vscode.window.visibleTextEditors.find(
+        (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
+      );
+    const uri = editor?.document.uri;
+    if (uri?.scheme === remoteFileSystemScheme) {
+      try {
+        if (parseRemoteUri(uri.toString()).mountName === mountName) return;
+      } catch {
+        return;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
+/**
+ * Live-sync: when the active editor switches to a remote file, send `cd` to
+ * every managed terminal of that mount so the terminal follows the file's
+ * directory (only when the directory actually changed, to avoid noise).
+ */
+async function syncTerminalToActiveFile(uri: vscode.Uri): Promise<void> {
+  try {
+    const location = parseRemoteUri(uri.toString());
+    const folder = registry.get(location.mountName);
+    if (!folder) return;
+    const filePath = remotePathForUri(folder, location.remotePath);
+    const fileDir = path.posix.dirname(filePath);
+    for (const [terminal, info] of managedRemoteTerminals) {
+      if (info.mount.name !== location.mountName || info.remoteCwd === fileDir) continue;
+      info.remoteCwd = fileDir;
+      terminal.sendText(`cd -- ${shellQuote(fileDir)}`, true);
+    }
+  } catch {
+    // Transient resolution failures are ignored.
+  }
+}
+
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
   const resolveLocation = (location: { mountName: string; remotePath: string }) => {
     const folder = registry.get(location.mountName);
@@ -1241,6 +1283,11 @@ async function restoreRemoteWorkspaces(): Promise<void> {
       );
     }
     if (mount.remote_terminal === 'open') {
+      if (settings().get<boolean>('terminalFollowsActiveFile', false)) {
+        // 自动连接路径：窗口刚恢复时文件标签页可能还没成为活动编辑器，
+        // 先等远程文件就绪（最多 8s），让终端能跟随它所在目录。
+        await waitForRemoteEditor(mount.name, 8000);
+      }
       await openTerminal(vscodeContext, mount, openedRemotePath);
     }
   }
@@ -2030,6 +2077,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Restore workspaces on startup
   await guard(restoreRemoteWorkspaces);
   tree.refresh();
+
+  // 每次切换到远程文件时，若设置开启，同步终端到文件所在目录。
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
+    const uri = editor?.document.uri;
+    if (!uri || uri.scheme !== remoteFileSystemScheme) return;
+    if (!settings().get<boolean>('terminalFollowsActiveFile', false)) return;
+    void syncTerminalToActiveFile(uri);
+  }));
 
   // Agent MCP: keep one in-extension fixed HTTP router alive, then start the
   // dynamic backend only in an enabled remote window.

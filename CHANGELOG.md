@@ -1,13 +1,18 @@
 # Changelog
 
 ## 1.3.3
+## 1.3.3
 
 - New setting `safs.terminalFollowsActiveFile` (default `false`): when a
   remote terminal opens, it automatically enters the directory of the
   currently open remote file. With it enabled, reopening a remote window
   restores the previous file tab and the terminal follows that file's
   directory (up to 2s wait for the editor restore) instead of the workspace
-  root.
+  root. The auto-connect terminal also waits for the restored file tab
+  (up to 8s) before opening.
+- Live sync: with the same setting enabled, every time the active editor
+  switches to a remote file, the mount's remote terminals automatically
+  `cd` into that file's directory (only when the directory changes).
 
 ## 1.3.2
 ## 1.3.2
