@@ -223,6 +223,7 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 
 ## 设置
 
+- `safs.terminalFollowsActiveFile`：开启远程终端时跟随当前打开的远程文件所在目录（默认 `false`）
 - `safs.configPath`
 - `safs.reuseSshConnection`
 - `safs.sftp.cacheTtl`

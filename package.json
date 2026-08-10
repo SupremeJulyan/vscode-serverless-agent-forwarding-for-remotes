@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -484,6 +484,11 @@
           ],
           "default": "deny",
           "description": "How to handle remote commands matching safs.highRiskCommandPatterns: \"deny\" rejects them without running; \"confirm\" asks the user before each execution."
+        },
+        "safs.terminalFollowsActiveFile": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "开启远程终端时，若当前窗口有打开的远程文件，终端自动进入**该文件所在目录**（默认 `false`：进入当前远程目录/工作区根）。重开远程窗口时配合标签页恢复，终端会跟随上次打开的文件。"
         }
       }
     },

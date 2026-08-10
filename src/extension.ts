@@ -522,6 +522,37 @@ async function completeRemoteDirectory(): Promise<void> {
   }
 }
 
+/**
+ * Returns the remote directory containing the currently open remote file of
+ * the given mount. Waits up to ~2s for the restored editor, because during
+ * window restore the terminal may open before VS Code has re-activated the
+ * previously open file tab.
+ */
+async function activeRemoteFileDirectory(mountName: string): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const editor = vscode.window.activeTextEditor
+      ?? vscode.window.visibleTextEditors.find(
+        (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
+      );
+    const uri = editor?.document.uri;
+    if (uri?.scheme === remoteFileSystemScheme) {
+      try {
+        const location = parseRemoteUri(uri.toString());
+        if (location.mountName !== mountName) return undefined;
+        const folder = registry.get(mountName);
+        if (!folder) return undefined;
+        const filePath = remotePathForUri(folder, location.remotePath);
+        return path.posix.dirname(filePath);
+      } catch {
+        return undefined;
+      }
+    }
+    if (editor) return undefined; // 有活动编辑器但不是远程文件，不等待
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return undefined;
+}
+
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
   const resolveLocation = (location: { mountName: string; remotePath: string }) => {
     const folder = registry.get(location.mountName);
@@ -597,8 +628,13 @@ async function openTerminal(
   // to the SSH login directory and cannot be compared directly with the
   // absolute paths stored in remote workspace URIs.
   const remoteRoot = folder.remoteRoot;
-  const remoteCwd = requestedRemoteCwd
+  let remoteCwd = requestedRemoteCwd
     ?? (location?.mountName === mount.name ? location.remotePath : folder.remoteRoot);
+  if (settings().get<boolean>('terminalFollowsActiveFile', false)) {
+    // 终端开启时跟随当前打开的远程文件所在目录（新方案）。
+    const fileDirectory = await activeRemoteFileDirectory(mount.name);
+    if (fileDirectory) remoteCwd = fileDirectory;
+  }
   const remoteRelative = remoteCwd ? path.posix.relative(remoteRoot, remoteCwd) : '';
   const terminalName = remoteRelative
     ? `SSH: ${mount.name} — ${remoteRelative}`

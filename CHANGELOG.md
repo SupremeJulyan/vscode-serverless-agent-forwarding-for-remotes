@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.3
+
+- New setting `safs.terminalFollowsActiveFile` (default `false`): when a
+  remote terminal opens, it automatically enters the directory of the
+  currently open remote file. With it enabled, reopening a remote window
+  restores the previous file tab and the terminal follows that file's
+  directory (up to 2s wait for the editor restore) instead of the workspace
+  root.
+
+## 1.3.2
 ## 1.3.2
 
 - Activity-bar icon: replaced the generic remote glyph with a clean bold
