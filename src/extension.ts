@@ -564,19 +564,36 @@ async function syncTerminalToActiveFile(uri: vscode.Uri): Promise<void> {
     if (!folder) return;
     const filePath = remotePathForUri(folder, location.remotePath);
     const fileDir = path.posix.dirname(filePath);
-    // 重开窗口后首次文件激活：无条件跟随（配合标签页恢复，一次性）。
-    const restoreFollow = restoredFileSyncPending.delete(location.mountName);
+    const restoreFollow = restoredFileSyncPending.has(location.mountName);
     const follows = settings().get<boolean>('terminalFollowsActiveFile', false)
       || restoreFollow;
     if (!follows) return;
+    let synced = false;
     for (const [terminal, info] of managedRemoteTerminals) {
       if (info.mount.name !== location.mountName || info.remoteCwd === fileDir) continue;
       info.remoteCwd = fileDir;
       terminal.sendText(`cd -- ${shellQuote(fileDir)}`, true);
+      synced = true;
     }
+    // 只有真正把终端移过去后才消费重开标志；否则（终端尚未创建等时序）
+    // 保留标志，等待下一次文件激活或延迟补检。
+    if (synced) restoredFileSyncPending.delete(location.mountName);
   } catch {
     // Transient resolution failures are ignored.
   }
+}
+
+/** 非阻塞延迟补检：覆盖“文件标签页先激活、终端后创建”的时序窗口。 */
+function deferRestoreFollow(mountName: string): void {
+  setTimeout(() => {
+    void (async () => {
+      if (!restoredFileSyncPending.has(mountName)) return;
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (uri?.scheme === remoteFileSystemScheme) {
+        await syncTerminalToActiveFile(uri);
+      }
+    })();
+  }, 1500);
 }
 
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
@@ -660,7 +677,11 @@ async function openTerminal(
     || restoredFileSyncPending.has(mount.name)) {
     // 设置开启，或重开远程窗口的自动连接：终端跟随当前打开的远程文件目录。
     const fileDirectory = await activeRemoteFileDirectory(mount.name);
-    if (fileDirectory) remoteCwd = fileDirectory;
+    if (fileDirectory) {
+      remoteCwd = fileDirectory;
+      // openTerminal 已直接把终端放到文件目录，后续无需再补检。
+      restoredFileSyncPending.delete(mount.name);
+    }
   }
   const remoteRelative = remoteCwd ? path.posix.relative(remoteRoot, remoteCwd) : '';
   const terminalName = remoteRelative
@@ -1271,6 +1292,8 @@ async function restoreRemoteWorkspaces(): Promise<void> {
       // 标记：本次自动连接后，首次远程文件激活时无条件跟随其目录（标签页恢复）。
       restoredFileSyncPending.add(mount.name);
       await openTerminal(vscodeContext, mount, openedRemotePath);
+      // 非阻塞补检，覆盖“文件先激活、终端后创建/事件先于监听器注册”的时序。
+      deferRestoreFollow(mount.name);
     }
   }
 }

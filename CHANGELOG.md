@@ -8,9 +8,14 @@
   directory even with the setting off (one-shot, no blocking wait). With the
   setting `true`, every terminal open and every remote-file switch also
   syncs the terminal to the file's directory.
+- Fix the intermittent restore-follow: the one-shot "restored file" flag was
+  consumed by the first file-activation event even when the auto-connected
+  terminal did not exist yet (file tab restored before the terminal was
+  created), so the terminal sometimes stayed on the workspace root. The flag
+  is now consumed only when a terminal is actually moved; a non-blocking
+  deferred check (1.5s) covers the file-before-terminal timing window, and
+  opening the terminal directly at the file's directory clears the flag.
 
-## 1.3.3
-## 1.3.3
 ## 1.3.3
 
 - New setting `safs.terminalFollowsActiveFile` (default `true`): when a
@@ -26,12 +31,10 @@
   the restored file's directory once its tab becomes active (no wait).
 
 ## 1.3.2
-## 1.3.2
 
 - Activity-bar icon: replaced the generic remote glyph with a clean bold
   "SAFS" letters-only logo.
 
-## 1.3.1
 ## 1.3.1
 
 - Rename `SAFS: 切换远程目录` to `SAFS: 打开远程目录`: choosing a directory
@@ -39,7 +42,6 @@
   window keeps its own directory and Agent-forwarding/MCP binding), instead
   of replacing the current window.
 
-## 1.3.0
 ## 1.3.0
 
 - Config entries in the explorer are no longer click-to-connect (prevents
@@ -56,7 +58,6 @@
   exchange algorithm **` no longer spams the terminal.
 
 ## 1.2.8
-## 1.2.8
 
 - Hide the `cd -- '…'` line printed when a remote terminal opens on Windows
   (built-in ssh2 terminal): the working directory is now applied as part of
@@ -66,7 +67,6 @@
   starting with `-` still work. Verified interactive shells on gknzy/gsxzy/
   yxzy gateways (no cd echo, cwd correct, prompts working).
 
-## 1.2.7
 ## 1.2.7
 
 - Code review cleanup:
@@ -78,7 +78,6 @@
   - Unify the SFTP-unusable / retryable-handshake patterns in `client.ts`
     and drop the unreachable `throw lastError` after the retry loop.
 
-## 1.2.6
 ## 1.2.6
 
 - Fix `Packet length … exceeds max length` on NSG gateways that inject a MOTD
@@ -97,7 +96,6 @@
   socket corrupted packet parsing and reproduced the very error it was meant
   to diagnose.
 
-## 1.2.5
 ## 1.2.5
 
 - Handshake-failure diagnostics: when a gateway responds with invalid SSH
