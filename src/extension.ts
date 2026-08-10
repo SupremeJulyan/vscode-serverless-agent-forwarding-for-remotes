@@ -680,15 +680,13 @@ async function openTerminal(
   const remoteRoot = folder.remoteRoot;
   let remoteCwd = requestedRemoteCwd
     ?? (location?.mountName === mount.name ? location.remotePath : folder.remoteRoot);
-  if (settings().get<boolean>('terminalFollowsActiveFile', false)
-    || restoredFileSyncPending.has(mount.name)) {
-    // 设置开启，或重开远程窗口的自动连接：终端跟随当前打开的远程文件目录。
-    const fileDirectory = await activeRemoteFileDirectory(mount.name);
-    if (fileDirectory) {
-      remoteCwd = fileDirectory;
-      // openTerminal 已直接把终端放到文件目录，后续无需再补检。
-      restoredFileSyncPending.delete(mount.name);
-    }
+  // 打开终端始终跟随当前打开的远程文件所在目录（无条件，含重开窗口归位）；
+  // 仅“切换/打开文件时实时 cd”才由 safs.terminalFollowsActiveFile 控制。
+  const fileDirectory = await activeRemoteFileDirectory(mount.name);
+  if (fileDirectory) {
+    remoteCwd = fileDirectory;
+    // openTerminal 已直接把终端放到文件目录，重开归位无需再补检。
+    restoredFileSyncPending.delete(mount.name);
   }
   const remoteRelative = remoteCwd ? path.posix.relative(remoteRoot, remoteCwd) : '';
   const terminalName = remoteRelative

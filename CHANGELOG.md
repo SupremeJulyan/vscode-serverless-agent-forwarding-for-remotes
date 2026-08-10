@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.5
+
+- Opening a remote terminal (command, auto-connect or after reopening a
+  window) now always follows the currently open remote file's directory,
+  regardless of `safs.terminalFollowsActiveFile`. The setting (default
+  `false`) now only controls the live sync: when `true`, switching/opening a
+  remote file also real-time `cd`s the terminal into that file's directory.
+
+## 1.3.4
 ## 1.3.4
 
 - `safs.terminalFollowsActiveFile` defaults back to `false`. The restore
