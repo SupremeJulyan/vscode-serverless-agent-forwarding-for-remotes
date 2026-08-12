@@ -11,6 +11,10 @@
   action again to stop the sync.
 - Command renamed to **同步…** (no prefix); the sync-directory picker always
   opens at the user's home directory.
+- Sync progress shows in the bottom-center status bar: "正在同步…" on
+  start, "远程(保存/删除/重命名/建目录) → 本地" on remote changes, and
+  "本地(新建/修改/删除) → 远程" on local changes.
+- Status-bar item renamed to **SAFS SFTP**.
 
 ## 1.3.5
 ## 1.3.5

@@ -2031,7 +2031,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     (message) => bridgeOutput?.appendLine(`[远程同步] ${message}`),
-    () => saveSyncTasks()
+    () => saveSyncTasks(),
+    // 同步进度显示在 VS Code 底部中间（短暂消息，如“正在下载…”）。
+    (message) => void vscode.window.setStatusBarMessage(message, 3000)
   );
   // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
   for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
@@ -2224,7 +2226,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Status bar
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.name = 'SAFS';
-  statusBar.text = '$(remote) Serverless SFTP';
+  statusBar.text = '$(remote) SAFS SFTP';
   statusBar.tooltip = '打开 SFTP 远程文件夹';
   statusBar.command = `${commandPrefix}.openFolder`;
   statusBar.show();

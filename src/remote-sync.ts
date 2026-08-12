@@ -101,7 +101,8 @@ export class RemoteSyncManager {
       uri: vscode.Uri
     ) => { mountName: string; remotePath: string } | undefined,
     private readonly log: (message: string) => void = () => undefined,
-    private readonly onTaskChanged: () => void = () => undefined
+    private readonly onTaskChanged: () => void = () => undefined,
+    private readonly status: (message: string) => void = () => undefined
   ) {}
 
   list(): RemoteSyncTask[] {
@@ -146,6 +147,10 @@ export class RemoteSyncManager {
     const resolved = this.resolveRemote(uri);
     if (!resolved) return;
     if (this.remoteUploading.has(resolved.remotePath)) return;
+    const kindLabels: Record<RemoteMutationKind, string> = {
+      write: '保存', delete: '删除', rename: '重命名', mkdir: '建目录'
+    };
+    this.status(`远程${kindLabels[kind]} → 本地`);
     for (const task of this.tasks.values()) {
       if (task.mountName !== resolved.mountName) continue;
       if (!isRemotePathInsideRoot(task.remotePath, resolved.remotePath)) continue;
@@ -192,6 +197,7 @@ export class RemoteSyncManager {
 
   /** 首次/恢复时的增量基线同步（一次，非轮询）。 */
   private async baseline(task: RemoteSyncTask): Promise<void> {
+    this.status(`正在同步: ${task.remotePath} → ${task.localDir}`);
     try {
       const session = await this.getSession(task.mountName);
       const lines = await scanRemote(session, task.remotePath);
@@ -290,8 +296,7 @@ export class RemoteSyncManager {
     return rel ? path.posix.join(task.remotePath, rel.split(path.sep).join('/')) : task.remotePath;
   }
 
-  private async onLocalCreated(task: RemoteSyncTask, uri: vscode.Uri): Promise<void> {
-    const localPath = uri.fsPath;
+  private async uploadLocal(task: RemoteSyncTask, localPath: string): Promise<void> {
     if (this.localDownloading.has(localPath)) return;
     const remoteFull = this.remoteTargetFor(task, localPath);
     if (this.remoteUploading.has(remoteFull)) return;
@@ -314,8 +319,14 @@ export class RemoteSyncManager {
     }
   }
 
+  private async onLocalCreated(task: RemoteSyncTask, uri: vscode.Uri): Promise<void> {
+    this.status(`本地新建 → 远程: ${this.remoteTargetFor(task, uri.fsPath)}`);
+    await this.uploadLocal(task, uri.fsPath);
+  }
+
   private async onLocalChanged(task: RemoteSyncTask, uri: vscode.Uri): Promise<void> {
-    await this.onLocalCreated(task, uri);
+    this.status(`本地修改 → 远程: ${this.remoteTargetFor(task, uri.fsPath)}`);
+    await this.uploadLocal(task, uri.fsPath);
   }
 
   private async onLocalDeleted(task: RemoteSyncTask, uri: vscode.Uri): Promise<void> {
@@ -323,6 +334,7 @@ export class RemoteSyncManager {
     if (this.localDownloading.has(localPath)) return;
     const remoteFull = this.remoteTargetFor(task, localPath);
     if (this.remoteUploading.has(remoteFull)) return;
+    this.status(`本地删除 → 远程: ${remoteFull}`);
     const session = await this.getSession(task.mountName);
     try {
       await session.deleteFile(remoteFull).catch(() => session.deleteDirectory(remoteFull));
