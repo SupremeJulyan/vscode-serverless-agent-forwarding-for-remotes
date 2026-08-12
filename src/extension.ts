@@ -36,6 +36,7 @@ import { connectSftp } from './sftp/client';
 import { defaultSshClientIdent, ensureSshCapabilities } from './ssh-algorithms';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import { migratePiSessionKeys } from './pi-session-migrate';
+import { RemoteSyncManager, RemoteSyncTask } from './remote-sync';
 import {
   remotePathForUri, RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider,
   workspacePathForRemote
@@ -91,6 +92,19 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   /** 内置 ssh2 终端实例：live-sync 用它安全补发 cd（shell 就绪前入队）。 */
   pty?: import('./ssh2-terminal').Ssh2Terminal;
 }>();
+
+let syncManager: RemoteSyncManager | undefined;
+const syncTasksKey = 'safs.syncTasks';
+
+function saveSyncTasks(): void {
+  if (!syncManager) return;
+  void vscodeContext.globalState.update(
+    syncTasksKey,
+    syncManager.list().map(({ mountName, remotePath, localDir, fingerprintLines }) => ({
+      mountName, remotePath, localDir, fingerprintLines
+    }))
+  );
+}
 
 // 重开远程窗口后，首次远程文件激活时无条件把自动连接的终端移到该文件目录
 // （配合标签页恢复，与 safs.terminalFollowsActiveFile 无关）；后续切换文件
@@ -601,6 +615,54 @@ function deferRestoreFollow(mountName: string): void {
       }
     })();
   }, 1500);
+}
+
+// ---- 远程同步到本地 ----
+
+async function syncToLocal(uri?: vscode.Uri): Promise<void> {
+  const resolvedUri = uri && uri.scheme === remoteFileSystemScheme
+    ? uri
+    : vscode.window.activeTextEditor?.document.uri;
+  if (!resolvedUri || resolvedUri.scheme !== remoteFileSystemScheme) {
+    throw new Error('请先在远程文件/目录上右键使用“同步到本地”');
+  }
+  const location = parseRemoteUri(resolvedUri.toString());
+  const folder = registry.get(location.mountName);
+  if (!folder) throw new Error(`远程挂载未连接：${location.mountName}`);
+  const remotePath = remotePathForUri(folder, location.remotePath);
+  const manager = syncManager;
+  if (!manager) throw new Error('远程同步尚未就绪');
+  if (manager.has(location.mountName, remotePath)) {
+    const choice = await vscode.window.showInformationMessage(
+      `“${remotePath}”已在同步中。`, '停止同步'
+    );
+    if (choice === '停止同步') {
+      manager.remove(location.mountName, remotePath);
+      saveSyncTasks();
+    }
+    return;
+  }
+  const picked = await vscode.window.showOpenDialog({
+    title: '选择同步目标目录',
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: '选择目录'
+  });
+  if (!picked || picked.length === 0) return;
+  // 本地目标：远程目录 → 所选目录下的同名子目录；远程文件 → 同名文件。
+  const baseName = path.posix.basename(remotePath);
+  const localTarget = path.join(picked[0].fsPath, baseName);
+  const task: RemoteSyncTask = {
+    mountName: location.mountName,
+    remotePath,
+    localDir: localTarget
+  };
+  manager.add(task);
+  saveSyncTasks();
+  await manager.syncNow(location.mountName, remotePath);
+  void vscode.window.showInformationMessage(
+    `已开始同步：${remotePath} → ${localTarget}`
+  );
 }
 
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
@@ -1951,6 +2013,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       ),
     () => refreshTree()
   );
+  // 远程文件/目录 → 本地自动同步管理器。
+  syncManager = new RemoteSyncManager(
+    async (mountName) => {
+      const folder = registry.get(mountName);
+      if (!folder) throw new Error(`远程挂载未连接：${mountName}`);
+      return pool.get(folder.hostName);
+    },
+    Math.max(1, settings().get<number>('syncInterval', 3)) * 1000,
+    (message) => bridgeOutput?.appendLine(`[远程同步] ${message}`)
+  );
+  // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
+  for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
+    syncManager.add(task);
+  }
   await guard(preloadRemoteWorkspaces);
   // Merge pi/vscode-pi conversation history from legacy SAFS session keys
   // (WSL, old extension folder) into the current key of the same mount so
@@ -1981,7 +2057,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       isReadonly: false
     }),
     vscode.window.registerTreeDataProvider(`${commandPrefix}.mounts`, tree),
-    { dispose: () => void pool.close() }
+    { dispose: () => { void pool.close(); syncManager?.dispose(); } }
   );
 
   const command = (name: string, callback: (...args: never[]) => Promise<unknown>) => {
@@ -2000,6 +2076,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   command('switchRemoteDirectory', switchRemoteDirectory);
   command('completeRemoteDirectory', completeRemoteDirectory);
+  command('syncToLocal', (uri) => syncToLocal(uri as vscode.Uri | undefined));
   command('openTerminal', () => openTerminal(context, undefined, undefined, undefined, true));
   command('openTerminalItem', (mount) =>
     openTerminal(context, mount, undefined, undefined, true));

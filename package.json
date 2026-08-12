@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -121,6 +121,11 @@
         "command": "safs.deleteConfigItem",
         "title": "删除配置",
         "icon": "$(trash)"
+      },
+      {
+        "command": "safs.syncToLocal",
+        "title": "SAFS: 同步到本地…",
+        "icon": "$(cloud-download)"
       }
     ],
     "viewsContainers": {
@@ -169,6 +174,10 @@
         },
         {
           "command": "safs.addSshConfig"
+        },
+        {
+          "command": "safs.syncToLocal",
+          "when": "resourceScheme == safs"
         }
       ],
       "view/title": [
@@ -248,6 +257,13 @@
           "command": "safs.deleteConfigItem",
           "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
           "group": "safs@5"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "safs.syncToLocal",
+          "when": "resourceScheme == safs",
+          "group": "safs@1"
         }
       ]
     },
@@ -489,6 +505,12 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "切换/打开远程文件时，实时把远程终端 `cd` 到文件所在目录（默认 `false`）。无论该设置如何，**打开远程终端**和**重开远程窗口**都会跟随当前打开的远程文件目录。"
+        },
+        "safs.syncInterval": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "description": "远程目录/文件同步到本地的检查间隔（秒）"
         }
       }
     },

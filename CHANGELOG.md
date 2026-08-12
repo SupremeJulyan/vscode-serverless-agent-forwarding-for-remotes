@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.6
+
+- New context-menu action on remote files/directories: **SAFS: 同步到本地…**.
+  Pick a local directory and the extension keeps it in sync with the
+  selected remote path — it polls every `safs.syncInterval` seconds (default
+  3) and, on any change, downloads new/modified entries and deletes local
+  files that disappeared remotely. Tasks survive window reloads (incremental
+  resume via persisted fingerprints); use the same action again to stop the
+  sync.
+
+## 1.3.5
 ## 1.3.5
 
 - Opening a remote terminal (command, auto-connect or after reopening a
