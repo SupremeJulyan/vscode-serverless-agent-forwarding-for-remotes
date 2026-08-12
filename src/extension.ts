@@ -95,7 +95,6 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
 
 let syncManager: RemoteSyncManager | undefined;
 const syncTasksKey = 'safs.syncTasks';
-const lastSyncDirKey = 'safs.lastSyncLocalDir';
 
 function saveSyncTasks(): void {
   if (!syncManager) return;
@@ -648,18 +647,13 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
     canSelectFolders: true,
     canSelectMany: false,
     openLabel: '选择目录',
-    // 默认打开上次同步使用的本地目录（避免每次从用户目录开始）；
-    // 没有则用本地工作区目录。
-    defaultUri: vscodeContext.globalState.get<string>(lastSyncDirKey)
-      ? vscode.Uri.file(vscodeContext.globalState.get<string>(lastSyncDirKey)!)
-      : vscode.workspace.workspaceFolders?.find((folder) => folder.uri.scheme === 'file')?.uri
+    // 固定打开用户家目录。
+    defaultUri: vscode.Uri.file(os.homedir())
   });
   if (!picked || picked.length === 0) return;
   // 本地目标：远程目录 → 所选目录下的同名子目录；远程文件 → 同名文件。
   const baseName = path.posix.basename(remotePath);
   const localTarget = path.join(picked[0].fsPath, baseName);
-  // 记住本次选择的目标目录，下次选择同步目录时默认打开这里。
-  await vscodeContext.globalState.update(lastSyncDirKey, picked[0].fsPath);
   const task: RemoteSyncTask = {
     mountName: location.mountName,
     remotePath,

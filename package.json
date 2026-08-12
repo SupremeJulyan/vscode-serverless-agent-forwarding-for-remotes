@@ -124,7 +124,7 @@
       },
       {
         "command": "safs.syncToLocal",
-        "title": "SAFS: 同步…",
+        "title": "同步…",
         "icon": "$(cloud-download)"
       }
     ],
