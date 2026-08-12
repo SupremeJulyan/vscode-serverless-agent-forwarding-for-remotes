@@ -117,7 +117,10 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
     private readonly pool: SftpConnectionPool,
     private readonly registry: RemoteFolderRegistry,
     private readonly cacheTtlMs: number,
-    watchIntervalMs: number
+    watchIntervalMs: number,
+    private readonly onMutation?: (
+      uri: vscode.Uri, kind: 'write' | 'delete' | 'rename' | 'mkdir', targetUri?: vscode.Uri
+    ) => void
   ) {
     this.watchTimer = setInterval(() => void this.pollWatches(), watchIntervalMs);
     this.watchTimer.unref();
@@ -265,6 +268,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
         { type: vscode.FileChangeType.Changed, uri },
         { type: vscode.FileChangeType.Changed, uri: vscode.Uri.joinPath(uri, '..') }
       ]);
+      this.onMutation?.(uri, 'write');
     } catch (error) {
       providerError(error, uri);
     }
@@ -276,6 +280,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
       await session.createDirectory(remotePath);
       this.invalidate(uri);
       this.changes.fire([{ type: vscode.FileChangeType.Created, uri }]);
+      this.onMutation?.(uri, 'mkdir');
     } catch (error) {
       providerError(error, uri);
     }
@@ -311,6 +316,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
       }
       this.invalidate(uri);
       this.changes.fire([{ type: vscode.FileChangeType.Deleted, uri }]);
+      this.onMutation?.(uri, 'delete');
     } catch (error) {
       providerError(error, uri);
     }
@@ -340,6 +346,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
         { type: vscode.FileChangeType.Deleted, uri: oldUri },
         { type: vscode.FileChangeType.Created, uri: newUri }
       ]);
+      this.onMutation?.(oldUri, 'rename', newUri);
     } catch (error) {
       providerError(error, oldUri);
     }

@@ -3,12 +3,12 @@
 ## 1.3.6
 
 - New context-menu action on remote files/directories: **SAFS: 同步到本地…**.
-  Pick a local directory and the extension keeps it in sync with the
-  selected remote path — it polls every `safs.syncInterval` seconds (default
-  3) and, on any change, downloads new/modified entries and deletes local
-  files that disappeared remotely. Tasks survive window reloads (incremental
-  resume via persisted fingerprints); use the same action again to stop the
-  sync.
+  Two-way, event-driven sync (no polling): saving/creating/deleting/renaming
+  a remote file through VS Code immediately mirrors it to the local
+  directory, and changes made on the local side are uploaded back to the
+  remote (via a local file watcher with loop guards). Tasks survive window
+  reloads (incremental baseline via persisted fingerprints); use the same
+  action again to stop the sync.
 
 ## 1.3.5
 ## 1.3.5

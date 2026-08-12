@@ -505,12 +505,6 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "切换/打开远程文件时，实时把远程终端 `cd` 到文件所在目录（默认 `false`）。无论该设置如何，**打开远程终端**和**重开远程窗口**都会跟随当前打开的远程文件目录。"
-        },
-        "safs.syncInterval": {
-          "type": "number",
-          "default": 3,
-          "minimum": 1,
-          "description": "远程目录/文件同步到本地的检查间隔（秒）"
         }
       }
     },

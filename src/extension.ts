@@ -658,8 +658,6 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
     localDir: localTarget
   };
   manager.add(task);
-  saveSyncTasks();
-  await manager.syncNow(location.mountName, remotePath);
   void vscode.window.showInformationMessage(
     `已开始同步：${remotePath} → ${localTarget}`
   );
@@ -2013,15 +2011,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       ),
     () => refreshTree()
   );
-  // 远程文件/目录 → 本地自动同步管理器。
+  // 远程文件/目录 ↔ 本地双向同步管理器（事件驱动，不轮询）。
   syncManager = new RemoteSyncManager(
     async (mountName) => {
       const folder = registry.get(mountName);
       if (!folder) throw new Error(`远程挂载未连接：${mountName}`);
       return pool.get(folder.hostName);
     },
-    Math.max(1, settings().get<number>('syncInterval', 3)) * 1000,
-    (message) => bridgeOutput?.appendLine(`[远程同步] ${message}`)
+    (uri) => {
+      try {
+        const location = parseRemoteUri(uri.toString());
+        const folder = registry.get(location.mountName);
+        if (!folder) return undefined;
+        return { mountName: location.mountName, remotePath: remotePathForUri(folder, location.remotePath) };
+      } catch {
+        return undefined;
+      }
+    },
+    (message) => bridgeOutput?.appendLine(`[远程同步] ${message}`),
+    () => saveSyncTasks()
   );
   // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
   for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
@@ -2045,7 +2053,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     pool,
     registry,
     settings().get<number>('sftp.cacheTtl', 5) * 1000,
-    settings().get<number>('sftp.watchInterval', 5) * 1000
+    settings().get<number>('sftp.watchInterval', 5) * 1000,
+    (uri, kind, targetUri) => void syncManager?.notifyRemoteChange(uri, kind, targetUri)
   );
 
   const tree = new RemoteFoldersProvider(context);
