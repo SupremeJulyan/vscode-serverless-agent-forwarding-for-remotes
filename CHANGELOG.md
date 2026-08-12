@@ -9,6 +9,9 @@
   remote (via a local file watcher with loop guards). Tasks survive window
   reloads (incremental baseline via persisted fingerprints); use the same
   action again to stop the sync.
+- Command renamed to **SAFS: 同步…**; the sync-directory picker now defaults
+  to the last used local sync directory (or the local workspace folder)
+  instead of always starting from the user home.
 
 ## 1.3.5
 ## 1.3.5
