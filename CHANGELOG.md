@@ -15,6 +15,11 @@
   start, "远程(保存/删除/重命名/建目录) → 本地" on remote changes, and
   "本地(新建/修改/删除) → 远程" on local changes.
 - Status-bar item renamed to **SAFS SFTP**.
+- Fix local-change status not appearing in the window where the local sync
+  directory is open: the sync manager's session lookup now works from any
+  window (falls back to resolving the mount from config), so the local
+  watcher starts and shows its status there too, and the sync keeps running
+  as long as any window is open.
 
 ## 1.3.5
 ## 1.3.5

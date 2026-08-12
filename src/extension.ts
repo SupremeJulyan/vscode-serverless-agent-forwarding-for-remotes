@@ -2016,8 +2016,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 远程文件/目录 ↔ 本地双向同步管理器（事件驱动，不轮询）。
   syncManager = new RemoteSyncManager(
     async (mountName) => {
-      const folder = registry.get(mountName);
-      if (!folder) throw new Error(`远程挂载未连接：${mountName}`);
+      const existing = registry.get(mountName);
+      if (existing) return pool.get(existing.hostName);
+      // 非远程窗口（如只打开了本地目录的窗口）：按配置解析挂载并连接，
+      // 这样本地变更的状态与同步也能在该窗口生效。
+      const config = await readConfig();
+      const mount = config.mounts.find((candidate) => candidate.name === mountName);
+      if (!mount) throw new Error(`远程挂载不存在：${mountName}`);
+      const folder = await ensureFolder(mount);
       return pool.get(folder.hostName);
     },
     (uri) => {
