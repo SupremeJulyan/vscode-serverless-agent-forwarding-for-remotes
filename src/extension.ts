@@ -1205,6 +1205,16 @@ async function executeRemoteCommand(
     }
     const controller = new AbortController();
     const cancellation = token?.onCancellationRequested(() => controller.abort());
+    // 命令级超时：Agent 挂起时中止远端执行，避免命令在后台无限运行。
+    // 与路由器的 forwardTimeoutMs 同源（safs.agentMcpTimeoutMs），保持一致。
+    const commandTimeoutMs = settings().get<number>('agentMcpTimeoutMs', 120_000);
+    let timedOut = false;
+    const timeout = commandTimeoutMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, commandTimeoutMs)
+      : undefined;
     try {
       let result;
       if (platformAdapter.kind === 'windows') {
@@ -1238,6 +1248,9 @@ async function executeRemoteCommand(
         };
         result = await executeAgentMcpCommand(plan, controller.signal);
       }
+      if (timedOut) {
+        throw new Error(`远程命令执行超时（${commandTimeoutMs}ms）`);
+      }
       return {
         mountName: mount.name,
         remoteCwd,
@@ -1245,6 +1258,7 @@ async function executeRemoteCommand(
         ...result
       };
     } finally {
+      if (timeout) clearTimeout(timeout);
       cancellation?.dispose();
     }
   } finally {
@@ -1465,7 +1479,10 @@ async function ensureAgentHttpRouter(
         const router = new AgentHttpRouter(
           settings().get<number>('agentHttpRouterPort', 9848),
           await agentMcpToken(context),
-          { log: (message) => bridgeOutput?.appendLine(`[Agent HTTP Router] ${message}`) }
+          {
+            log: (message) => bridgeOutput?.appendLine(`[Agent HTTP Router] ${message}`),
+            forwardTimeoutMs: settings().get<number>('agentMcpTimeoutMs', 120_000)
+          }
         );
         httpRouter = router;
         context.subscriptions.push({ dispose: () => void router.stop() });

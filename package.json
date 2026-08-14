@@ -456,6 +456,12 @@
           "scope": "machine",
           "description": "Stable loopback-only Streamable HTTP MCP router port registered with Agents. All VS Code windows must use the same value."
         },
+        "safs.agentMcpTimeoutMs": {
+          "type": "number",
+          "minimum": 0,
+          "default": 120000,
+          "description": "Timeout for Agent MCP remote command/search execution (milliseconds). 0 disables the timeout. On expiry the command is aborted and an error is returned, so a hung Agent cannot leave remote commands running in the background forever."
+        },
         "safs.agentForwardingAgents": {
           "type": "array",
           "default": [

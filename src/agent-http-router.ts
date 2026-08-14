@@ -16,6 +16,8 @@ const routerIdentity = 'safs-http-router-v1';
 export interface AgentHttpRouterOptions {
   discover?: () => DiscoveredAgentWorkspace[];
   log?: (message: string) => void;
+  /** 转发到窗口 MCP 的 fetch 超时（毫秒），缺省 120s。 */
+  forwardTimeoutMs?: number;
 }
 
 export class AgentHttpRouter {
@@ -126,7 +128,7 @@ export class AgentHttpRouter {
         jsonrpc: '2.0', id: requestId, method: 'tools/call',
         params: { name, arguments: args }
       }),
-      signal: AbortSignal.timeout(120_000)
+      signal: AbortSignal.timeout(this.options.forwardTimeoutMs ?? 120_000)
     });
     const body = await response.text();
     if (!response.ok) {

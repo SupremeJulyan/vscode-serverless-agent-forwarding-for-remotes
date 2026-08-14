@@ -83,6 +83,11 @@ test('uses only the unified cross-platform config path', async () => {
       ?.default,
     9848
   );
+  assert.equal(
+    manifest.contributes?.configuration?.properties?.['safs.agentMcpTimeoutMs']
+      ?.default,
+    120000
+  );
   const matches = manifest.contributes?.jsonValidation?.flatMap((item) => item.fileMatch ?? []);
   assert.deepEqual(matches, ['**/.safs/config.json']);
 });
