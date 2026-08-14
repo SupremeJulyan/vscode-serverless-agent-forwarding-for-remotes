@@ -811,7 +811,8 @@ async function downloadRemoteDirectory(
     try {
       for (const file of files) {
         if (controller.signal.aborted) break;
-        currentFile = file.rel;
+        // 显示"根目录名 + 相对路径"（如 AF3/af3.bin.zst），与上传一致。
+        currentFile = path.posix.join(baseName, file.rel);
         const source = await session.readFileStream(
           path.posix.join(remotePath, file.rel), controller.signal
         );
@@ -894,7 +895,9 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
       }
       for (const file of plan.files) {
         if (controller.signal.aborted) break;
-        currentName = path.basename(file.local);
+        // 显示相对目标目录的路径（含源目录名，如 AF3/af3.bin.zst），
+        // 避免同名文件在不同目录下分不清。
+        currentName = path.posix.relative(targetDir, file.remote) || path.basename(file.local);
         currentRemote = file.remote;
         const source = createReadStream(file.local);
         const target = await session.writeFileStream(
