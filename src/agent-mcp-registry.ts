@@ -46,8 +46,13 @@ export interface AgentDefinition {
   displayName: string;
   /** 对应 VS Code Agent 扩展 ID，用于查找内置 CLI */
   extensionId?: string;
-  /** 扩展安装路径 → 内置 CLI 候选列表 */
-  bundledCandidates?: (extensionPath: string) => Promise<string[]>;
+  /**
+   * 扩展安装路径 → 内置 CLI 候选列表。
+   * @param extensionPath - 扩展根目录。
+   * @param platform - 目标 Agent 平台（默认当前进程平台）；WSL 场景显式传
+   * `linux`，避免 Windows 插件进程按 `win32` 生成 `codex.exe`。
+   */
+  bundledCandidates?: (extensionPath: string, platform?: NodeJS.Platform) => Promise<string[]>;
   /** MCP server 注册命令参数模板 */
   mcp: AgentMcpCapability;
 }
@@ -326,14 +331,14 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
     cliName: 'codex',
     displayName: 'Codex',
     extensionId: 'openai.chatgpt',
-    bundledCandidates: async (extensionPath) => {
+    bundledCandidates: async (extensionPath, platform = process.platform) => {
       const binRoot = path.join(extensionPath, 'bin');
       try {
         const platformDirectories = await readdir(binRoot, { withFileTypes: true });
         return platformDirectories
           .filter((entry) => entry.isDirectory())
           .map((entry) => path.join(
-            binRoot, entry.name, process.platform === 'win32' ? 'codex.exe' : 'codex'
+            binRoot, entry.name, platform === 'win32' ? 'codex.exe' : 'codex'
           ));
       } catch {
         // The installed Codex extension does not expose a bundled CLI.
@@ -351,10 +356,10 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
     legacyIds: ['claudeCode'],
     displayName: 'Claude Code',
     extensionId: 'anthropic.claude-code',
-    bundledCandidates: async (extensionPath) => [
+    bundledCandidates: async (extensionPath, platform = process.platform) => [
       path.join(
         extensionPath, 'resources', 'native-binary',
-        process.platform === 'win32' ? 'claude.exe' : 'claude'
+        platform === 'win32' ? 'claude.exe' : 'claude'
       )
     ],
     mcp: {
