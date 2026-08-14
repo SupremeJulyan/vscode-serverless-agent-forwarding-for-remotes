@@ -63,6 +63,9 @@ const motdTerminator = Buffer.from([0xe4, 0xb8, 0x80, 0x0d, 0x0a]); // 一 + CRL
 class MotdStripper {
   private pending = Buffer.alloc(0);
   private done = false;
+  /** MOTD 探测上限：超过该长度仍未见到终止符则视为无 MOTD，把缓冲内容作为载荷放行，
+   * 避免对不以 MOTD 开头的（异常）数据流无限累积导致 O(n²) 拷贝。 */
+  private static readonly maxProbeLength = 256 * 1024;
 
   push(chunk: Buffer): Buffer[] {
     if (this.done) return [chunk];
@@ -75,7 +78,15 @@ class MotdStripper {
       return [out];
     }
     const idx = this.pending.indexOf(motdTerminator);
-    if (idx === -1) return [];
+    if (idx === -1) {
+      if (this.pending.length >= MotdStripper.maxProbeLength) {
+        this.done = true;
+        const out = this.pending;
+        this.pending = Buffer.alloc(0);
+        return [out];
+      }
+      return [];
+    }
     this.done = true;
     const out = this.pending.subarray(idx + motdTerminator.length);
     this.pending = Buffer.alloc(0);

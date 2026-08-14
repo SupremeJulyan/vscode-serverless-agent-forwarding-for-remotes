@@ -35,8 +35,11 @@ export class SftpConnectionPool {
       return entry.session;
     }
     if (entry?.session) {
+      const stale = entry.session;
       entry.session = undefined;
       entry.state = 'reconnecting';
+      // 释放旧会话（含 WSL VPN 中继租约与底层 Client），避免资源泄漏。
+      void stale.close().catch(() => undefined);
     }
     if (entry?.connecting) return entry.connecting;
     entry = { state: entry ? 'reconnecting' : 'connecting', lastUsed: Date.now() };

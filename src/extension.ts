@@ -2043,6 +2043,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     () => refreshTree()
   );
+  // 回收空闲 SFTP 连接（safs.sftp.idleConnectionTtl 秒，0 关闭），避免多主机
+  // 长期挂载时连接无限累积。
+  const idleTtlSec = settings().get<number>('sftp.idleConnectionTtl', 600);
+  if (idleTtlSec > 0) {
+    const idleTtlMs = idleTtlSec * 1000;
+    const idleTimer = setInterval(() => {
+      void pool.closeIdle(idleTtlMs);
+    }, Math.min(idleTtlMs, 60_000));
+    idleTimer.unref?.();
+    context.subscriptions.push({ dispose: () => clearInterval(idleTimer) });
+  }
   // 远程文件/目录 ↔ 本地双向同步管理器（事件驱动，不轮询）。
   syncManager = new RemoteSyncManager(
     async (mountName) => {

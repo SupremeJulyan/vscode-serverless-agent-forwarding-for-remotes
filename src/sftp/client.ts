@@ -31,7 +31,9 @@ function fileStat(attributes: Stats): SftpFileStat {
     type: fileType(attributes),
     size: attributes.size,
     mtime: attributes.mtime * 1000,
-    ctime: attributes.atime * 1000,
+    // ssh2 Stats 无 ctime：用 mtime 近似。此前误用 atime（会随读操作变化，
+    // 导致 FileStat.ctime 语义错误）。
+    ctime: attributes.mtime * 1000,
     permissions: attributes.mode & 0o7777
   };
 }

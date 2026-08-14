@@ -113,3 +113,39 @@ test('reconnects after an established session becomes disconnected', async () =>
   assert.equal(attempts, 2);
   assert.equal(pool.state('dev'), 'connected');
 });
+
+test('closes the stale session when reconnecting over a dead one', async () => {
+  let alive = true;
+  let closes = 0;
+  let attempts = 0;
+  const pool = new SftpConnectionPool(async (hostName) => {
+    attempts += 1;
+    const currentAttempt = attempts;
+    return fakeSession(
+      hostName,
+      () => { closes += 1; },
+      () => currentAttempt > 1 || alive
+    );
+  });
+  await pool.get('dev');
+  alive = false;
+  await pool.get('dev');
+  assert.equal(attempts, 2);
+  assert.equal(closes, 1);
+});
+
+test('closeIdle recycles only sessions idle beyond the threshold', async () => {
+  const closed = new Set<string>();
+  const pool = new SftpConnectionPool(async (hostName) =>
+    fakeSession(hostName, () => { closed.add(hostName); })
+  );
+  await pool.get('a');
+  await pool.get('b');
+  await pool.closeIdle(0);
+  assert.deepEqual([...closed].sort(), ['a', 'b']);
+  assert.equal(pool.state('a'), 'disconnected');
+
+  await pool.get('c');
+  await pool.closeIdle(60_000);
+  assert.deepEqual([...closed].sort(), ['a', 'b']);
+});

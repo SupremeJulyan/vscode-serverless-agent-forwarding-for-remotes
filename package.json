@@ -441,6 +441,12 @@
           "default": 5,
           "description": "Remote file polling interval in seconds."
         },
+        "safs.sftp.idleConnectionTtl": {
+          "type": "number",
+          "minimum": 0,
+          "default": 600,
+          "description": "Idle SFTP connection lifetime in seconds before the pool recycles it (0 disables recycling)."
+        },
         "safs.agentMcpPort": {
           "type": "number",
           "minimum": 0,
