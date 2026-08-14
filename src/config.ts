@@ -125,7 +125,13 @@ export function parseConfig(value: unknown): BridgeConfig {
       throw new Error(`Mount '${mount.name}' references missing host '${mount.host}'`);
     }
   }
-  return { encrypt_passwords: object.encrypt_passwords === true, hosts, mounts };
+  // encrypt_passwords 缺省按 true 处理（与模板默认一致）：旧配置缺该字段时，
+  // 密码写入仍走加密路径（isEncryptedPassword 逐密码判断），此标记仅作记账。
+  return {
+    encrypt_passwords: object.encrypt_passwords === false ? false : true,
+    hosts,
+    mounts
+  };
 }
 
 export async function loadConfig(configPath: string): Promise<BridgeConfig> {
@@ -137,7 +143,8 @@ export async function ensureConfigFile(configPath: string): Promise<string> {
   const resolvedPath = expandHome(configPath);
   await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
   try {
-    await fs.writeFile(resolvedPath, emptyConfig, { encoding: 'utf8', flag: 'wx' });
+    // 初始配置文件可能含主机密码，创建时即收紧为仅当前用户可读写。
+    await fs.writeFile(resolvedPath, emptyConfig, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) {
       throw error;

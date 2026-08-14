@@ -88,6 +88,15 @@ test('normalizes legacy remote terminal modes to open', () => {
   assert.equal(config.mounts[0].remote_terminal, 'open');
 });
 
+test('defaults encrypt_passwords to true when the legacy field is absent', () => {
+  const config = parseConfig({
+    hosts: [{ name: 'dev', ip: 'host', user: 'alice' }],
+    mounts: [{ name: 'project', host: 'dev', remote_path: '/srv/project' }]
+  });
+  assert.equal(config.encrypt_passwords, true);
+  assert.equal(parseConfig({ encrypt_passwords: false, hosts: [], mounts: [] }).encrypt_passwords, false);
+});
+
 test('preserves a Windows drive-letter mount path', () => {
   assert.equal(expandHome('x:'), 'X:\\');
   assert.equal(expandHome('x:\\'), 'X:\\');

@@ -91,5 +91,7 @@ export async function writeLastRemoteDirectory(
   if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
     throw new Error(`Cached Agent cwd path is outside the remote root: ${remotePath}`);
   }
-  await writeFile(lastRemoteDirectoryPath(localRoot), `${normalizedPath}\n`, 'utf8');
+  await writeFile(lastRemoteDirectoryPath(localRoot), `${normalizedPath}\n`, {
+    encoding: 'utf8', mode: 0o600
+  });
 }

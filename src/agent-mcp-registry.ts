@@ -132,8 +132,11 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
     try {
       const config = await readPiMcpConfig(configPath);
       mutateFn(config);
-      await mkdir(path.dirname(configPath), { recursive: true });
-      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+      // 配置文件含 MCP 注册 URL（带 token），目录/文件权限收紧为仅当前用户。
+      await mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
+        encoding: 'utf8', mode: 0o600
+      });
       return fileHandlerResult(0, okMessage);
     } catch (error) {
       return fileHandlerResult(
@@ -272,8 +275,9 @@ export function dshAgentMcpHandler(options?: { home?: string }): AgentMcpHandler
   ): Promise<CapturedProcessResult> => {
     try {
       const updated = mutateFn(await readPatch());
-      await mkdir(path.dirname(patchFile), { recursive: true });
-      await writeFile(patchFile, updated, 'utf8');
+      // patch 文件含 MCP 注册 URL（带 token），目录/文件权限收紧为仅当前用户。
+      await mkdir(path.dirname(patchFile), { recursive: true, mode: 0o700 });
+      await writeFile(patchFile, updated, { encoding: 'utf8', mode: 0o600 });
       return fileHandlerResult(0, okMessage);
     } catch (error) {
       return fileHandlerResult(
