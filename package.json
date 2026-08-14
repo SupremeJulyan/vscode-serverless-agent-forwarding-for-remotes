@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.3.10",
+  "version": "1.4.0",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -418,6 +418,16 @@
           "type": "boolean",
           "default": true,
           "description": "Reuse OpenSSH connections between remote terminals and command executions."
+        },
+        "safs.hostKeyChangedAction": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "reject",
+            "accept"
+          ],
+          "default": "accept",
+          "markdownDescription": "SSH 主机密钥发生变化时的处理方式（例如负载均衡 VIP 每次连接到不同后端、各后端密钥不同的场景）：`accept`（默认）静默接受并更新已存密钥；`prompt` 弹窗提示新旧密钥并允许接受新密钥后继续连接；`reject` 直接拒绝连接（旧行为）。该设置作用于内置 ssh2 通道（Windows 终端与命令执行）。"
         },
         "safs.sftp.cacheTtl": {
           "type": "number",

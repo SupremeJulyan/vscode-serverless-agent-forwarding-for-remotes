@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0
+
+- New setting `safs.hostKeyChangedAction` (`prompt` | `reject` | `accept`,
+  default `accept`): controls what happens when a remote SSH host key changes
+  (e.g. load-balanced VIPs where each backend has its own key). `prompt` shows
+  the old and new fingerprints and lets you accept the new key and continue
+  (MobaXterm-style) instead of hard-failing; `reject` keeps the previous
+  strict behaviour; `accept` silently accepts and updates the stored key.
+- WSL/Linux/macOS system-OpenSSH terminals and command execution now use
+  `StrictHostKeyChecking=no` (MobaXterm-style) instead of `accept-new`, so a
+  changed host key on a load-balanced VIP no longer aborts the connection.
+
 ## 1.3.10
 
 - Sync progress shows in the bottom-center status bar: "正在同步…" on

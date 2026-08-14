@@ -44,7 +44,10 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
 }
 
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {
-  const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=accept-new'];
+  // MobaXterm-style: accept changed host keys (e.g. load-balanced VIPs where
+  // each backend has its own key) instead of aborting with
+  // "REMOTE HOST IDENTIFICATION HAS CHANGED".
+  const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=no'];
   // Some servers only offer legacy host keys (ssh-rsa/ssh-dss); OpenSSH 8.8+
   // rejects them by default, so re-enable them explicitly. The exact flags
   // are adapted to the installed client (see ssh-algorithms.ts), because old

@@ -21,7 +21,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.3.10');
+  assert.equal(manifest.version, '1.4.0');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -90,4 +90,16 @@ test('uses only the unified cross-platform config path', async () => {
   );
   const matches = manifest.contributes?.jsonValidation?.flatMap((item) => item.fileMatch ?? []);
   assert.deepEqual(matches, ['**/.safs/config.json']);
+});
+
+test('declares MobaXterm-style host key change action setting', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  ) as ExtensionManifest;
+  const property = manifest.contributes?.configuration?.properties?.[
+    'safs.hostKeyChangedAction'
+  ] as { type?: string; enum?: string[]; default?: unknown } | undefined;
+  assert.equal(property?.type, 'string');
+  assert.deepEqual(property?.enum, ['prompt', 'reject', 'accept']);
+  assert.equal(property?.default, 'accept');
 });
