@@ -1,6 +1,6 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import type { CapturedProcessResult } from './process';
 
 /**
@@ -81,7 +81,7 @@ function piMcpSettingsPath(baseDir = os.homedir()): string {
   return path.join(baseDir, '.pi', 'agent', 'settings.json');
 }
 
-function piMcpResult(exitCode: number, stdout = '', stderr = ''): CapturedProcessResult {
+function fileHandlerResult(exitCode: number, stdout = '', stderr = ''): CapturedProcessResult {
   return { exitCode, stdout, stderr, truncated: false };
 }
 
@@ -134,9 +134,9 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
       mutateFn(config);
       await mkdir(path.dirname(configPath), { recursive: true });
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-      return piMcpResult(0, okMessage);
+      return fileHandlerResult(0, okMessage);
     } catch (error) {
-      return piMcpResult(
+      return fileHandlerResult(
         1, '', `pi-mcp config update failed: ${
           error instanceof Error ? error.message : String(error)
         }`
@@ -148,9 +148,9 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
     get: async (serverName) => {
       const server = (await readPiMcpConfig(configPath)).mcpServers?.[serverName];
       if (!server) {
-        return piMcpResult(0, `pi-mcp: server "${serverName}" not configured`);
+        return fileHandlerResult(0, `pi-mcp: server "${serverName}" not configured`);
       }
-      return piMcpResult(0, JSON.stringify({ serverName, ...server }, null, 2));
+      return fileHandlerResult(0, JSON.stringify({ serverName, ...server }, null, 2));
     },
     add: (serverName, url) => mutate((config) => {
       config.mcpServers ??= {};
@@ -174,6 +174,147 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
     prerequisiteCheck: async () => {
       if (await piMcpExtensionInstalled(options?.baseDir)) return undefined;
       return '未安装 pi-mcp-extension（在 pi 中执行 pi install npm:pi-mcp-extension），MCP 配置写入后 pi 不会自动连接。';
+    }
+  };
+}
+
+// ─── dsh（DeepSeek Harness）的具体实现（无 mcp 子命令，通过 home 级 patch 注册） ────
+
+/**
+ * dsh（DeepSeek Harness）没有内置 mcp 子命令；MCP server 通过
+ * `@deepseek-ai/dsh-mcp-client` 插件在 loader patch 层挂载。SAFS 把固定
+ * HTTP MCP 路由写入 home 级用户 patch（`$DSH_HOME/cordis.patch.yml`，
+ * 默认 `~/.dsh/cordis.patch.yml`），该文件对每个 profile 生效，且被 DSH
+ * 的 HMR 实时监听：写入后热加载生效，无需重启 dsh。
+ */
+
+export function dshHomeDirectory(baseDir = os.homedir()): string {
+  return process.env.DSH_HOME && process.env.DSH_HOME.length > 0
+    ? process.env.DSH_HOME
+    : path.join(baseDir, '.dsh');
+}
+
+export function dshPatchFilePath(home: string): string {
+  return path.join(home, 'cordis.patch.yml');
+}
+
+const dshManagedHeader = `# Managed by vscode-serverless-agent-forwarding-for-remotes (SAFS) — DeepSeek Harness MCP registration.
+# Loaded by dsh as the home-level user patch layer over every profile.
+# The streamable-http URL carries a bearer token; keep this file private.`;
+
+/** dsh patch 中的 loader 条目 id：`mcp-<serverName>` */
+function dshEntryId(serverName: string): string {
+  return `mcp-${serverName}`;
+}
+
+/** 注册 SAFS 路由的 loader 条目 YAML 块 */
+function dshEntryYaml(serverName: string, url: string): string {
+  return [
+    `- id: ${dshEntryId(serverName)}`,
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    '  config:',
+    `    serverName: ${serverName}`,
+    '    transport: streamable-http',
+    `    url: '${url}'`
+  ].join('\n');
+}
+
+/**
+ * 在 patch 文本中定位托管条目。匹配顶层列表项
+ * （`- id: mcp-<serverName>` 位于第 0 列），返回整个块的字节范围，
+ * 结束于下一个顶层列表项或 EOF。
+ */
+export function findDshEntryBlock(
+  text: string, serverName: string
+): { start: number; end: number } | undefined {
+  const pattern = new RegExp(`^-[ \\t]+id:[ \\t]*${dshEntryId(serverName)}[ \\t]*$`, 'm');
+  const match = pattern.exec(text);
+  if (!match) return undefined;
+  const start = match.index;
+  const nextItem = /^-[ \t]+/gm;
+  nextItem.lastIndex = start + match[0].length;
+  const following = nextItem.exec(text);
+  return { start, end: following ? following.index : text.length };
+}
+
+/** 插入或替换托管条目；保留注释与用户条目，幂等（相同条目为 no-op） */
+export function upsertDshEntry(text: string, entry: string, serverName: string): string {
+  const block = findDshEntryBlock(text, serverName);
+  if (block) {
+    const blockText = text.slice(block.start, block.end);
+    const tail = text.slice(block.end);
+    const replacement = blockText.endsWith('\n') ? `${entry}\n` : entry;
+    return `${text.slice(0, block.start)}${replacement}${tail}`;
+  }
+  // 替换空 root 占位 `[]` 行（标准 profile 模板为注释 + `[]`），保留注释。
+  const emptyRoot = /^[ \t]*\[\s*\][ \t]*$/m;
+  if (emptyRoot.test(text)) return text.replace(emptyRoot, entry);
+  const trimmed = text.trim();
+  if (!trimmed) return `${dshManagedHeader}\n${entry}\n`;
+  const separator = text.endsWith('\n') ? '' : '\n';
+  return `${text}${separator}${entry}\n`;
+}
+
+export function dshAgentMcpHandler(options?: { home?: string }): AgentMcpHandler {
+  const home = options?.home ?? dshHomeDirectory();
+  const patchFile = dshPatchFilePath(home);
+  const readPatch = async (): Promise<string> => {
+    try {
+      return await readFile(patchFile, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw error;
+    }
+  };
+  const mutate = async (
+    mutateFn: (text: string) => string,
+    okMessage: string
+  ): Promise<CapturedProcessResult> => {
+    try {
+      const updated = mutateFn(await readPatch());
+      await mkdir(path.dirname(patchFile), { recursive: true });
+      await writeFile(patchFile, updated, 'utf8');
+      return fileHandlerResult(0, okMessage);
+    } catch (error) {
+      return fileHandlerResult(
+        1, '', `dsh patch update failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  };
+  return {
+    supportsMcp: true,
+    get: async (serverName) => {
+      const text = await readPatch();
+      const block = findDshEntryBlock(text, serverName);
+      if (!block) {
+        return fileHandlerResult(0, `dsh: server "${serverName}" not configured`);
+      }
+      return fileHandlerResult(0, text.slice(block.start, block.end).trimEnd());
+    },
+    add: (serverName, url) => mutate(
+      (text) => upsertDshEntry(text, dshEntryYaml(serverName, url), serverName),
+      `dsh: server "${serverName}" registered (streamable-http) in ${patchFile}`
+    ),
+    remove: (serverName) => mutate((text) => {
+      const block = findDshEntryBlock(text, serverName);
+      if (!block) return text;
+      let updated = `${text.slice(0, block.start)}${text.slice(block.end)}`.replace(/\n{3,}/g, '\n\n');
+      if (!/^-[ \t]+/m.test(updated)) updated = '[]\n';
+      return updated;
+    }, `dsh: server "${serverName}" removed`),
+    describeAdd: (serverName, url) => (
+      `追加到 ${patchFile}（DeepSeek Harness home 级用户 patch，写入后 HMR 热加载生效）：\n`
+      + dshEntryYaml(serverName, url)
+    ),
+    prerequisiteCheck: async () => {
+      try {
+        await access(path.join(home, 'profiles'));
+        return undefined;
+      } catch {
+        return `未检测到 DeepSeek Harness（${path.join(home, 'profiles')} 不存在）。请先安装并启动一次 dsh 后再启用转发。`;
+      }
     }
   };
 }
@@ -233,6 +374,18 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
       remove: (serverName) => ['mcp', 'remove', serverName],
       // pi 没有 mcp 子命令：通过 pi-mcp-extension 的配置文件注册
       handler: piAgentMcpHandler()
+    }
+  },
+  {
+    cliName: 'dsh',
+    displayName: 'dsh (DeepSeek Harness)',
+    mcp: {
+      get: (serverName) => ['mcp', 'get', serverName],
+      add: (serverName, url) => ['mcp', 'add', serverName, '--url', url],
+      remove: (serverName) => ['mcp', 'remove', serverName],
+      // dsh 没有 mcp 子命令：通过 $DSH_HOME/cordis.patch.yml 注册
+      // @deepseek-ai/dsh-mcp-client 插件实例（HMR 热加载，无需重启）
+      handler: dshAgentMcpHandler()
     }
   }
 ];
@@ -302,7 +455,7 @@ export async function runAgentMcpOperation(
       : op === 'add'
         ? await handler.add(serverName, url!)
         : await handler.remove(serverName);
-    runner.log(`pi-mcp:${op} ${serverName} → exit ${result.exitCode}`);
+    runner.log(`${def.cliName}-mcp:${op} ${serverName} → exit ${result.exitCode}`);
     return result;
   }
   const args = op === 'get'

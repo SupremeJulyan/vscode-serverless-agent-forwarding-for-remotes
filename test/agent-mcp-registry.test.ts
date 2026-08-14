@@ -5,27 +5,31 @@ import * as path from 'node:path';
 import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import {
   AgentDefinition, AgentMcpCliRunner, builtinAgentDefinitions,
-  agentSupportsMcp, agentSupportsMcpFor, piAgentMcpHandler,
+  agentSupportsMcp, agentSupportsMcpFor, dshAgentMcpHandler,
+  dshHomeDirectory, dshPatchFilePath, findDshEntryBlock, piAgentMcpHandler,
   piMcpExtensionInstalled, readPiMcpConfig, resolveAgentDefinitions,
-  runAgentMcpOperation
+  runAgentMcpOperation, upsertDshEntry
 } from '../src/agent-mcp-registry.js';
 import type { CapturedProcessResult } from '../src/process.js';
 
 const result = (exitCode: number, stdout = '', stderr = ''): CapturedProcessResult =>
   ({ exitCode, stdout, stderr, truncated: false });
 
-test('builtin definitions cover codex, claude and pi', () => {
+test('builtin definitions cover codex, claude, pi and dsh', () => {
   const names = builtinAgentDefinitions.map((def) => def.cliName);
-  assert.deepEqual(names, ['codex', 'claude', 'pi']);
+  assert.deepEqual(names, ['codex', 'claude', 'pi', 'dsh']);
   const codex = builtinAgentDefinitions.find((def) => def.cliName === 'codex')!;
   const claude = builtinAgentDefinitions.find((def) => def.cliName === 'claude')!;
   const pi = builtinAgentDefinitions.find((def) => def.cliName === 'pi')!;
+  const dsh = builtinAgentDefinitions.find((def) => def.cliName === 'dsh')!;
   // CLI-based agents have no handler.
   assert.equal(codex.mcp.handler, undefined);
   assert.equal(claude.mcp.handler, undefined);
-  // pi is file-config based.
+  // pi and dsh are file-config based.
   assert.ok(pi.mcp.handler);
   assert.equal(pi.mcp.handler!.supportsMcp, true);
+  assert.ok(dsh.mcp.handler);
+  assert.equal(dsh.mcp.handler!.supportsMcp, true);
 });
 
 test('claude add uses its own arg style, codex uses codex style', () => {
@@ -215,4 +219,157 @@ test('piMcpExtensionInstalled detects packages in agentDir settings', async () =
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+// ─── dsh（DeepSeek Harness）配置文件实现 ────────────────────────────────────────
+
+async function tempDshHome(): Promise<string> {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-mcp-config-test-'));
+  await mkdir(path.join(home, 'profiles'), { recursive: true });
+  return home;
+}
+
+test('dshHomeDirectory prefers DSH_HOME and falls back to ~/.dsh', () => {
+  const previous = process.env.DSH_HOME;
+  try {
+    process.env.DSH_HOME = '/custom/dsh';
+    assert.equal(dshHomeDirectory('/home/user'), '/custom/dsh');
+    delete process.env.DSH_HOME;
+    assert.equal(dshHomeDirectory('/home/user'), path.join('/home/user', '.dsh'));
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+  }
+});
+
+test('dsh add writes the streamable-http plugin entry and get reads it back', async () => {
+  const home = await tempDshHome();
+  try {
+    const handler = dshAgentMcpHandler({ home });
+    const url = 'http://127.0.0.1:9848/mcp?token=secret';
+    const addResult = await handler.add('safs', url);
+    assert.equal(addResult.exitCode, 0);
+
+    const text = await readFile(dshPatchFilePath(home), 'utf8');
+    assert.ok(text.includes('- id: mcp-safs'));
+    assert.ok(text.includes("name: '@deepseek-ai/dsh-mcp-client'"));
+    assert.ok(text.includes('serverName: safs'));
+    assert.ok(text.includes(`url: '${url}'`));
+
+    const getResult = await handler.get('safs');
+    assert.equal(getResult.exitCode, 0);
+    assert.ok(getResult.stdout.includes(url));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('dsh add replaces the empty-root placeholder and preserves comments', async () => {
+  const home = await tempDshHome();
+  try {
+    const patchFile = dshPatchFilePath(home);
+    await writeFile(patchFile, `# user header\n[]\n`, 'utf8');
+    const handler = dshAgentMcpHandler({ home });
+    await handler.add('safs', 'http://127.0.0.1:9848/mcp?token=secret');
+    const text = await readFile(patchFile, 'utf8');
+    assert.ok(text.includes('# user header'));
+    assert.ok(!/^\[\s*\]$/m.test(text));
+    assert.ok(text.includes('- id: mcp-safs'));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('dsh add is idempotent and updates a rotated URL', async () => {
+  const home = await tempDshHome();
+  try {
+    const handler = dshAgentMcpHandler({ home });
+    await handler.add('safs', 'http://127.0.0.1:9848/mcp?token=old');
+    const patchFile = dshPatchFilePath(home);
+    const first = await readFile(patchFile, 'utf8');
+    assert.equal((first.match(/- id: mcp-safs/g) ?? []).length, 1);
+
+    // Same URL: no structural change beyond the block itself.
+    await handler.add('safs', 'http://127.0.0.1:9848/mcp?token=old');
+    const second = await readFile(patchFile, 'utf8');
+    assert.equal(second, first);
+
+    // Rotated token updates in place without duplicating the entry.
+    await handler.add('safs', 'http://127.0.0.1:9848/mcp?token=new');
+    const third = await readFile(patchFile, 'utf8');
+    assert.equal((third.match(/- id: mcp-safs/g) ?? []).length, 1);
+    assert.ok(third.includes('token=new'));
+    assert.ok(!third.includes('token=old'));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('dsh remove deletes only the target entry and restores [] when empty', async () => {
+  const home = await tempDshHome();
+  try {
+    const handler = dshAgentMcpHandler({ home });
+    await handler.add('safs', 'http://127.0.0.1:9848/mcp?token=secret');
+    await handler.add('keep', 'http://127.0.0.1:9849/mcp?token=secret');
+    const removeResult = await handler.remove('safs');
+    assert.equal(removeResult.exitCode, 0);
+    const afterRemove = await readFile(dshPatchFilePath(home), 'utf8');
+    assert.ok(afterRemove.includes('- id: mcp-keep'));
+    assert.ok(!afterRemove.includes('- id: mcp-safs'));
+
+    await handler.remove('keep');
+    const finalText = await readFile(dshPatchFilePath(home), 'utf8');
+    assert.ok(/^\[\s*\]\s*$/.test(finalText.trim()));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('dsh get reports not-configured with exit 0', async () => {
+  const home = await tempDshHome();
+  try {
+    const handler = dshAgentMcpHandler({ home });
+    const result = await handler.get('safs');
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /not configured/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('dsh describeAdd explains manual patch editing', async () => {
+  const home = await tempDshHome();
+  try {
+    const handler = dshAgentMcpHandler({ home });
+    const text = handler.describeAdd('safs', 'http://x/mcp');
+    assert.match(text, /cordis\.patch\.yml/);
+    assert.match(text, /streamable-http/);
+    assert.ok(text.includes('http://x/mcp'));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('dsh prerequisiteCheck requires an installed DSH home', async () => {
+  const home = await tempDshHome();
+  try {
+    const handler = dshAgentMcpHandler({ home });
+    assert.equal(await handler.prerequisiteCheck?.(), undefined);
+    await rm(path.join(home, 'profiles'), { recursive: true, force: true });
+    const missing = await handler.prerequisiteCheck?.();
+    assert.ok(missing && /profiles/.test(missing));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('upsertDshEntry and findDshEntryBlock tolerate other entries', () => {
+  const base = `- id: mcp-other\n  name: 'some-plugin'\n  config: {}\n`;
+  const entry = `- id: mcp-safs\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    serverName: safs\n    transport: streamable-http\n    url: 'http://x'\n`;
+  const updated = upsertDshEntry(`${base}[]\n`, entry, 'safs');
+  assert.ok(updated.includes('- id: mcp-other'));
+  assert.ok(updated.includes('- id: mcp-safs'));
+  assert.ok(!/^\[\s*\]$/m.test(updated));
+  const block = findDshEntryBlock(updated, 'safs')!;
+  assert.equal(updated.slice(block.start, block.end), `${entry}\n`);
 });

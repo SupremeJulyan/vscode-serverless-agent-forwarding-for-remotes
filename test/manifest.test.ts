@@ -21,7 +21,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.3.6');
+  assert.equal(manifest.version, '1.3.7');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -76,7 +76,7 @@ test('uses only the unified cross-platform config path', async () => {
     manifest.contributes?.configuration?.properties?.[
       'safs.agentForwardingAgents'
     ]?.default,
-    ['codex', 'claude']
+    ['codex', 'claude', 'pi', 'dsh']
   );
   assert.equal(
     manifest.contributes?.configuration?.properties?.[

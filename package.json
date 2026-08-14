@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -450,7 +450,9 @@
           "type": "array",
           "default": [
             "codex",
-            "claude"
+            "claude",
+            "pi",
+            "dsh"
           ],
           "uniqueItems": true,
           "items": {
@@ -458,10 +460,11 @@
             "suggestions": [
               "codex",
               "claude",
-              "pi"
+              "pi",
+              "dsh"
             ]
           },
-          "markdownDescription": "Agent CLI 名称列表，启用 Serverless Remote MCP 转发。扩展按名称从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从对应 VS Code Agent 扩展安装路径查找内置 CLI；**不支持的 MCP 的 CLI 会被跳过并提示。** 常见值：`codex`（OpenAI Codex）、`claude`（Anthropic Claude Code）、`pi`（pi coding agent）等。"
+          "markdownDescription": "Agent CLI 名称列表，启用 Serverless Remote MCP 转发。扩展按名称从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从对应 VS Code Agent 扩展安装路径查找内置 CLI；**不支持的 MCP 的 CLI 会被跳过并提示。** 常见值：`codex`（OpenAI Codex）、`claude`（Anthropic Claude Code）、`pi`（pi coding agent）、`dsh`（DeepSeek Harness，写入 `$DSH_HOME/cordis.patch.yml` 注册 `@deepseek-ai/dsh-mcp-client`，HMR 热加载）等。"
         },
         "safs.highRiskCommandPatterns": {
           "type": "array",

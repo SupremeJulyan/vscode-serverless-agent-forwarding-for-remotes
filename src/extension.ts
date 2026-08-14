@@ -1667,7 +1667,7 @@ async function configureDetectedAgents(
     (item): item is string => typeof item === 'string'
   ) : []);
   const forwardingAgents = settings().get<string[]>(
-    'agentForwardingAgents', ['codex', 'claude']
+    'agentForwardingAgents', ['codex', 'claude', 'pi', 'dsh']
   );
   const definitions = resolveAgentDefinitions(forwardingAgents);
   bridgeOutput?.appendLine(

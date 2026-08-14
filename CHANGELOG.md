@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.7
+
+- `safs.agentForwardingAgents` now defaults to `codex`, `claude`, `pi`, and
+  `dsh`. `dsh` (DeepSeek Harness) is handled by a built-in file-based handler:
+  SAFS writes an `@deepseek-ai/dsh-mcp-client` plugin entry into
+  `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`), which DSH
+  hot-applies via its config HMR watch without a restart. Removing the
+  forwarding entry cleans the patch back to its empty-root form while keeping
+  user entries intact.
+- Handler operation logs now use the Agent's own CLI name instead of the
+  hardcoded `pi-mcp` prefix.
+
 ## 1.3.6
 
 - New context-menu action on remote files/directories: **SAFS: 同步到本地…**.
