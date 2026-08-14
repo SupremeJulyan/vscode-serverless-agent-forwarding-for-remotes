@@ -10,6 +10,7 @@ interface ExtensionManifest {
     commands?: Array<{ command: string; title: string }>;
     menus?: {
       'view/item/context'?: Array<{ command: string; when?: string }>;
+      'explorer/context'?: Array<{ command: string; when?: string }>;
     };
     configuration?: { properties?: Record<string, { default?: unknown }> };
     jsonValidation?: Array<{ fileMatch?: string[] }>;
@@ -21,7 +22,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.4.3');
+  assert.equal(manifest.version, '1.4.5');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -102,4 +103,32 @@ test('declares MobaXterm-style host key change action setting', async () => {
   assert.equal(property?.type, 'string');
   assert.deepEqual(property?.enum, ['prompt', 'reject', 'accept']);
   assert.equal(property?.default, 'accept');
+});
+
+test('declares the visual download command and the renamed sync command', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  ) as ExtensionManifest;
+  const commands = manifest.contributes?.commands ?? [];
+  const download = commands.find((item) => item.command === 'safs.visualDownload');
+  const sync = commands.find((item) => item.command === 'safs.syncToLocal');
+  assert.equal(download?.title, 'SAFS：可视化下载');
+  assert.equal(sync?.title, 'SAFS：可视化同步');
+  const explorerMenu = manifest.contributes?.menus?.['explorer/context'] ?? [];
+  assert.equal(
+    explorerMenu.some((item) => item.command === 'safs.visualDownload'),
+    true
+  );
+});
+
+test('declares the visual upload command on local file/folder context menus', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  ) as ExtensionManifest;
+  const commands = manifest.contributes?.commands ?? [];
+  const upload = commands.find((item) => item.command === 'safs.visualUpload');
+  assert.equal(upload?.title, 'SAFS：可视化上传');
+  const explorerMenu = manifest.contributes?.menus?.['explorer/context'] ?? [];
+  const entry = explorerMenu.find((item) => item.command === 'safs.visualUpload');
+  assert.equal(entry?.when, 'resourceScheme == file');
 });

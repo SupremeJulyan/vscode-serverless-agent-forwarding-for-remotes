@@ -137,6 +137,29 @@ export class Ssh2SftpSession implements SftpSession {
     });
   }
 
+  readFileStream(remotePath: string, signal?: AbortSignal): Promise<NodeJS.ReadableStream> {
+    return new Promise<NodeJS.ReadableStream>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
+      const stream = this.sftp.createReadStream(remotePath);
+      const aborted = () => {
+        stream.destroy();
+        reject(abortError());
+      };
+      signal?.addEventListener('abort', aborted, { once: true });
+      stream.once('error', (error: Error) => {
+        signal?.removeEventListener('abort', aborted);
+        reject(error);
+      });
+      stream.once('open', () => {
+        signal?.removeEventListener('abort', aborted);
+        resolve(stream);
+      });
+    });
+  }
+
   async writeFile(
     remotePath: string,
     content: Uint8Array,
@@ -150,6 +173,36 @@ export class Ssh2SftpSession implements SftpSession {
       (done) => this.sftp.writeFile(remotePath, Buffer.from(content), { flag }, done),
       signal
     );
+  }
+
+  writeFileStream(
+    remotePath: string,
+    options: SftpWriteOptions,
+    signal?: AbortSignal
+  ): Promise<NodeJS.WritableStream> {
+    const flag = options.create
+      ? (options.overwrite ? 'w' : 'wx')
+      : (options.overwrite ? 'r+' : 'r+');
+    return new Promise<NodeJS.WritableStream>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
+      const stream = this.sftp.createWriteStream(remotePath, { flags: flag });
+      const aborted = () => {
+        stream.destroy();
+        reject(abortError());
+      };
+      signal?.addEventListener('abort', aborted, { once: true });
+      stream.once('error', (error: Error) => {
+        signal?.removeEventListener('abort', aborted);
+        reject(error);
+      });
+      stream.once('open', () => {
+        signal?.removeEventListener('abort', aborted);
+        resolve(stream);
+      });
+    });
   }
 
   async chmod(remotePath: string, mode: number, signal?: AbortSignal): Promise<void> {

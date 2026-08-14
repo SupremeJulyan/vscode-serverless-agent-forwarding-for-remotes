@@ -34,12 +34,20 @@ export interface SftpSession {
   readFileRange(
     remotePath: string, offset: number, length: number, signal?: AbortSignal
   ): Promise<Uint8Array>;
+  /** 流式读取远程文件（分块返回），供大文件下载直接落盘，避免整文件驻留内存。 */
+  readFileStream(remotePath: string, signal?: AbortSignal): Promise<NodeJS.ReadableStream>;
   writeFile(
     remotePath: string,
     content: Uint8Array,
     options: SftpWriteOptions,
     signal?: AbortSignal
   ): Promise<void>;
+  /** 流式写入远程文件（返回可写流），供大文件上传分块推送，避免整文件驻留内存。 */
+  writeFileStream(
+    remotePath: string,
+    options: SftpWriteOptions,
+    signal?: AbortSignal
+  ): Promise<NodeJS.WritableStream>;
   chmod(remotePath: string, mode: number, signal?: AbortSignal): Promise<void>;
   createDirectory(remotePath: string, signal?: AbortSignal): Promise<void>;
   deleteFile(remotePath: string, signal?: AbortSignal): Promise<void>;

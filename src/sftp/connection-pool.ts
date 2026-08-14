@@ -68,16 +68,16 @@ class RetryingSftpSession implements SftpSession {
     return this.withRetry((session) => session.readFile(remotePath, signal));
   }
 
-  readFileRange(
-    remotePath: string, offset: number, length: number, signal?: AbortSignal
-  ): Promise<Uint8Array> {
-    return this.withRetry((session) => session.readFileRange(remotePath, offset, length, signal));
-  }
-
   writeFile(
     remotePath: string, content: Uint8Array, options: SftpWriteOptions, signal?: AbortSignal
   ): Promise<void> {
     return this.withRetry((session) => session.writeFile(remotePath, content, options, signal));
+  }
+
+  writeFileStream(
+    remotePath: string, options: SftpWriteOptions, signal?: AbortSignal
+  ): Promise<NodeJS.WritableStream> {
+    return this.withRetry((session) => session.writeFileStream(remotePath, options, signal));
   }
 
   chmod(remotePath: string, mode: number, signal?: AbortSignal): Promise<void> {
@@ -94,6 +94,16 @@ class RetryingSftpSession implements SftpSession {
 
   deleteDirectory(remotePath: string, signal?: AbortSignal): Promise<void> {
     return this.withRetry((session) => session.deleteDirectory(remotePath, signal));
+  }
+
+  readFileRange(
+    remotePath: string, offset: number, length: number, signal?: AbortSignal
+  ): Promise<Uint8Array> {
+    return this.withRetry((session) => session.readFileRange(remotePath, offset, length, signal));
+  }
+
+  readFileStream(remotePath: string, signal?: AbortSignal): Promise<NodeJS.ReadableStream> {
+    return this.withRetry((session) => session.readFileStream(remotePath, signal));
   }
 
   rename(

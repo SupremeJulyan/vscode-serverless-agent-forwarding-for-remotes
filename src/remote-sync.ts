@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { isRemotePathInsideRoot } from './sftp/uri';
 import { SftpSession } from './sftp/session';
 import { diffFingerprints, linesToMap, scanRemote } from './sync-diff';
+import { writeStreamToFile } from './stream-file';
 
 /**
  * 远程目录/文件 ↔ 本地目录的双向自动同步（事件驱动，不轮询）。
@@ -44,8 +45,8 @@ function joinLocal(base: string, relativePosix: string): string {
   return relativePosix ? path.join(base, ...relativePosix.split('/')) : base;
 }
 
-/** 逐级确保远程目录存在（父目录缺失时创建）。 */
-async function ensureRemoteDir(
+/** 逐级确保远程目录存在（父目录缺失时创建）。供同步与可视化上传共用。 */
+export async function ensureRemoteDir(
   session: SftpSession, remoteDir: string
 ): Promise<void> {
   const parts = remoteDir.split('/').filter(Boolean);
@@ -256,22 +257,33 @@ export class RemoteSyncManager {
     this.baselineTimers.set(key, timer);
   }
 
-  /** 下载单个远程文件到本地；覆盖前检测下载窗口内的本地改动，避免覆盖用户编辑。 */
+  /** 下载单个远程文件到本地（流式落盘）；覆盖前检测下载窗口内的本地改动，避免覆盖用户编辑。 */
   private async downloadOne(
     session: SftpSession, remotePath: string, localFull: string
   ): Promise<void> {
     await this.withDownload(localFull, async () => {
       await fs.mkdir(path.dirname(localFull), { recursive: true });
       const before = await fs.stat(localFull).catch(() => undefined);
-      const content = Buffer.from(await session.readFile(remotePath));
+      // 流式下载到临时文件：下载期间目标文件不被触碰，完成后按 before/after
+      // 比对决定是否替换——本地在下载期间被修改/删除则丢弃产物，保留用户改动。
+      const temporaryPath = `${localFull}.safs-part`;
+      try {
+        await writeStreamToFile(await session.readFileStream(remotePath), temporaryPath);
+      } catch (error) {
+        await fs.rm(temporaryPath, { force: true });
+        throw error;
+      }
       const after = await fs.stat(localFull).catch(() => undefined);
       const unchanged = before === undefined && after === undefined
         || before !== undefined && after !== undefined && before.mtimeMs === after.mtimeMs;
       if (!unchanged) {
+        await fs.rm(temporaryPath, { force: true });
         this.log(`跳过覆盖（下载期间本地被修改/删除）: ${localFull}`);
         return;
       }
-      await fs.writeFile(localFull, content);
+      // 已验证下载期间本地未被改动：删除旧文件后原子替换（Windows rename 不覆盖）。
+      await fs.rm(localFull, { force: true });
+      await fs.rename(temporaryPath, localFull);
       const written = await fs.stat(localFull);
       this.downloadedMtimes.set(localFull, written.mtimeMs);
     });

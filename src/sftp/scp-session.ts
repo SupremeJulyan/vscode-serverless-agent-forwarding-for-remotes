@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { Readable, Writable } from 'node:stream';
 import { Client } from 'ssh2';
 import {
   SftpDirectoryEntry, SftpFileStat, SftpFileType, SftpSession, SftpWriteOptions
@@ -388,6 +389,12 @@ export class ScpSession implements SftpSession {
     return (await this.readFile(remotePath, signal)).subarray(offset, offset + length);
   }
 
+  // SCP 协议无流式读取：整读后包装为可读流（仅 SFTP 子系统不可用的回退路径）。
+  async readFileStream(remotePath: string, signal?: AbortSignal): Promise<NodeJS.ReadableStream> {
+    const data = await this.readFile(remotePath, signal);
+    return Readable.from([Buffer.from(data)]);
+  }
+
   async writeFile(
     remotePath: string,
     content: Uint8Array,
@@ -419,6 +426,26 @@ export class ScpSession implements SftpSession {
       mode,
       signal
     );
+  }
+
+  // SCP 协议无流式写入：收集分块，finish 时调 writeFile 整写（仅 SFTP 子系统
+  // 不可用的回退路径，内存代价与 writeFile 相同）。
+  writeFileStream(
+    remotePath: string,
+    options: SftpWriteOptions,
+    signal?: AbortSignal
+  ): Promise<NodeJS.WritableStream> {
+    const chunks: Buffer[] = [];
+    return Promise.resolve(new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback();
+      },
+      final: (callback) => {
+        void this.writeFile(remotePath, Buffer.concat(chunks), options, signal)
+          .then(() => callback(), (error) => callback(error));
+      }
+    }));
   }
 
   async chmod(remotePath: string, mode: number, signal?: AbortSignal): Promise<void> {

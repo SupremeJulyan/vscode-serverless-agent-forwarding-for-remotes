@@ -1,7 +1,8 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { access } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { access, readdir, stat } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -33,10 +34,13 @@ import {
   writeLastRemoteDirectory
 } from './agent-cwd';
 import { connectSftp } from './sftp/client';
+import { SftpSession } from './sftp/session';
+import { scanRemote } from './sync-diff';
+import { pipeStreams, writeStreamToFile } from './stream-file';
 import { defaultSshClientIdent, ensureSshCapabilities } from './ssh-algorithms';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import { migratePiSessionKeys } from './pi-session-migrate';
-import { RemoteSyncManager, RemoteSyncTask } from './remote-sync';
+import { RemoteSyncManager, RemoteSyncTask, ensureRemoteDir } from './remote-sync';
 import {
   remotePathForUri, RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider,
   workspacePathForRemote
@@ -681,6 +685,291 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
   void vscode.window.showInformationMessage(
     `已开始同步：${remotePath} → ${localTarget}`
   );
+}
+
+// ---- SAFS：可视化下载（大文件流式 + 进度 + 可取消） ----
+
+function formatDownloadBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+async function visualDownload(uri?: vscode.Uri): Promise<void> {
+  const resolvedUri = uri && uri.scheme === remoteFileSystemScheme
+    ? uri
+    : vscode.window.activeTextEditor?.document.uri;
+  if (!resolvedUri || resolvedUri.scheme !== remoteFileSystemScheme) {
+    throw new Error('请先在远程文件/目录上右键使用"SAFS：可视化下载"');
+  }
+  const location = parseRemoteUri(resolvedUri.toString());
+  const folder = registry.get(location.mountName);
+  if (!folder) throw new Error(`远程挂载未连接：${location.mountName}`);
+  const remotePath = remotePathForUri(folder, location.remotePath);
+  const session = await pool.get(folder.hostName);
+  const stat = await session.stat(remotePath);
+  if (stat.type === 'directory') {
+    await downloadRemoteDirectory(session, remotePath);
+  } else {
+    await downloadRemoteFile(session, remotePath, stat.size);
+  }
+}
+
+async function downloadRemoteFile(
+  session: SftpSession, remotePath: string, totalBytes: number
+): Promise<void> {
+  const baseName = path.posix.basename(remotePath);
+  const picked = await vscode.window.showSaveDialog({
+    title: 'SAFS：下载到',
+    defaultUri: vscode.Uri.file(path.join(os.homedir(), baseName)),
+    saveLabel: '下载'
+  });
+  if (!picked) return;
+  const target = picked.fsPath;
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `正在下载 ${baseName}`,
+    cancellable: true
+  }, async (progress, token) => {
+    const controller = new AbortController();
+    const onCancelled = token.onCancellationRequested(() => controller.abort());
+    let cumulative = 0;
+    let lastPercent = 0;
+    try {
+      const source = await session.readFileStream(remotePath, controller.signal);
+      await writeStreamToFile(source, target, {
+        onDelta: (delta) => {
+          cumulative += delta;
+          const percent = totalBytes > 0 ? Math.floor(cumulative / totalBytes * 100) : 0;
+          if (percent > lastPercent) {
+            progress.report({
+              message: `${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(totalBytes)}`,
+              increment: percent - lastPercent
+            });
+            lastPercent = percent;
+          }
+        },
+        signal: controller.signal
+      });
+      progress.report({ message: `完成：${formatDownloadBytes(totalBytes)}`, increment: 100 - lastPercent });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        // writeStreamToFile 已删除半成品文件。
+        void vscode.window.showInformationMessage(`已取消下载 ${baseName}。`);
+        return;
+      }
+      throw error;
+    } finally {
+      onCancelled.dispose();
+    }
+  });
+}
+
+async function downloadRemoteDirectory(
+  session: SftpSession, remotePath: string
+): Promise<void> {
+  const baseName = path.posix.basename(remotePath);
+  const picked = await vscode.window.showOpenDialog({
+    title: 'SAFS：选择下载目标目录',
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: '下载到这里',
+    defaultUri: vscode.Uri.file(os.homedir())
+  });
+  if (!picked || picked.length === 0) return;
+  const targetRoot = path.join(picked[0].fsPath, baseName);
+  // 先统计文件清单与总大小（复用指纹扫描，readDirectory 已带 size，无额外 stat）。
+  const lines = await scanRemote(session, remotePath);
+  const files: Array<{ rel: string; size: number }> = [];
+  let totalBytes = 0;
+  for (const line of lines) {
+    if (!line.startsWith('f:')) continue;
+    const rel = line.slice(2, line.indexOf(':', 2));
+    const size = Number((line.slice(rel.length + 2).match(/^\d+/) ?? ['0'])[0]);
+    files.push({ rel, size });
+    totalBytes += size;
+  }
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `正在下载目录 ${baseName}`,
+    cancellable: true
+  }, async (progress, token) => {
+    const controller = new AbortController();
+    const onCancelled = token.onCancellationRequested(() => controller.abort());
+    let cumulative = 0;
+    let lastPercent = 0;
+    let currentFile = '';
+    try {
+      for (const file of files) {
+        if (controller.signal.aborted) break;
+        currentFile = file.rel;
+        const source = await session.readFileStream(
+          path.posix.join(remotePath, file.rel), controller.signal
+        );
+        await writeStreamToFile(source, path.join(targetRoot, ...file.rel.split('/')), {
+          onDelta: (delta) => {
+            cumulative += delta;
+            const percent = totalBytes > 0 ? Math.floor(cumulative / totalBytes * 100) : 0;
+            if (percent > lastPercent) {
+              progress.report({
+                message: `${currentFile}：${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(totalBytes)}`,
+                increment: percent - lastPercent
+              });
+              lastPercent = percent;
+            }
+          },
+          signal: controller.signal
+        });
+      }
+      if (controller.signal.aborted) {
+        // 当前文件的半成品已被 writeStreamToFile 删除；已完成的文件保留。
+        void vscode.window.showInformationMessage(
+          `已取消下载目录 ${baseName}（已完成的文件已保留）。`
+        );
+        return;
+      }
+      progress.report({ message: `完成：${formatDownloadBytes(totalBytes)}`, increment: 100 - lastPercent });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        void vscode.window.showInformationMessage(`已取消下载目录 ${baseName}。`);
+        return;
+      }
+      throw error;
+    } finally {
+      onCancelled.dispose();
+    }
+  });
+}
+
+// ---- SAFS：可视化上传（本地 → 远程，流式 + 进度 + 可取消） ----
+
+async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
+  const sources = await collectUploadSources(resources);
+  if (sources.length === 0) return;
+  // 第一步：选择远程挂载（来自 ~/.safs/config.json，无需打开远程目录）。
+  const mount = await selectMount('选择要上传到的远程挂载');
+  if (!mount) return;
+  const config = await readConfig();
+  const resolved = resolveMount(config, mount);
+  const session = await pool.get(resolved.hostConfig.name);
+  const remoteRoot = await session.realpath(mount.remote_path);
+  // 第二步：选择/输入远程目标目录（Tab 补全、回车确认）。
+  const picked = await promptRemoteDirectory(session, remoteRoot, remoteRoot, mount.name);
+  if (!picked) return;
+  const targetDir = picked.startsWith('/') ? picked : path.posix.join(remoteRoot, picked);
+  const plan = await planUploads(sources, targetDir);
+  if (plan.files.length === 0) {
+    void vscode.window.showInformationMessage('没有可上传的文件。');
+    return;
+  }
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `正在上传到 ${mount.name}:${targetDir}`,
+    cancellable: true
+  }, async (progress, token) => {
+    const controller = new AbortController();
+    const onCancelled = token.onCancellationRequested(() => controller.abort());
+    let cumulative = 0;
+    let lastPercent = 0;
+    let currentName = '';
+    let currentRemote = '';
+    try {
+      for (const file of plan.files) {
+        if (controller.signal.aborted) break;
+        currentName = path.basename(file.local);
+        currentRemote = file.remote;
+        await ensureRemoteDir(session, path.posix.dirname(file.remote));
+        const source = createReadStream(file.local);
+        const target = await session.writeFileStream(
+          file.remote, { create: true, overwrite: true }, controller.signal
+        );
+        await pipeStreams(source, target, {
+          onDelta: (delta) => {
+            cumulative += delta;
+            const percent = plan.totalBytes > 0
+              ? Math.floor(cumulative / plan.totalBytes * 100)
+              : 0;
+            if (percent > lastPercent) {
+              progress.report({
+                message: `${currentName}：${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(plan.totalBytes)}`,
+                increment: percent - lastPercent
+              });
+              lastPercent = percent;
+            }
+          },
+          signal: controller.signal
+        });
+      }
+      if (controller.signal.aborted) {
+        void vscode.window.showInformationMessage(
+          '已取消上传（已完成的文件已保留）。'
+        );
+        return;
+      }
+      progress.report({
+        message: `完成：${plan.files.length} 个文件（${formatDownloadBytes(plan.totalBytes)}）`,
+        increment: 100 - lastPercent
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        // 当前文件的远端半成品已中断，删除避免残留。
+        void session.deleteFile(currentRemote).catch(() => undefined);
+        void vscode.window.showInformationMessage('已取消上传。');
+        return;
+      }
+      throw error;
+    } finally {
+      onCancelled.dispose();
+    }
+  });
+}
+
+/** 收集上传源：右键传入的本地 URI，或命令面板调用时弹文件选择器。 */
+async function collectUploadSources(resources: vscode.Uri[]): Promise<string[]> {
+  const paths = resources
+    .filter((uri) => uri && uri.scheme === 'file')
+    .map((uri) => uri.fsPath);
+  if (paths.length > 0) return paths;
+  const picked = await vscode.window.showOpenDialog({
+    title: 'SAFS：选择要上传的文件/目录',
+    canSelectFiles: true,
+    canSelectFolders: true,
+    canSelectMany: true,
+    openLabel: '选择上传',
+    defaultUri: vscode.Uri.file(os.homedir())
+  });
+  return picked?.map((uri) => uri.fsPath) ?? [];
+}
+
+interface UploadPlan {
+  files: Array<{ local: string; remote: string }>;
+  totalBytes: number;
+}
+
+/** 递归统计上传清单与总大小（目录 → 逐文件）。 */
+async function planUploads(sources: string[], targetDir: string): Promise<UploadPlan> {
+  const files: UploadPlan['files'] = [];
+  let totalBytes = 0;
+  const walk = async (localPath: string, remoteDir: string): Promise<void> => {
+    const entry = await stat(localPath);
+    if (entry.isDirectory()) {
+      const entries = await readdir(localPath, { withFileTypes: true });
+      for (const child of entries) {
+        await walk(
+          path.join(localPath, child.name),
+          path.posix.join(remoteDir, child.name)
+        );
+      }
+      return;
+    }
+    files.push({ local: localPath, remote: path.posix.join(remoteDir, path.basename(localPath)) });
+    totalBytes += entry.size;
+  };
+  for (const source of sources) {
+    await walk(source, targetDir);
+  }
+  return { files, totalBytes };
 }
 
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
@@ -2216,6 +2505,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   command('switchRemoteDirectory', switchRemoteDirectory);
   command('completeRemoteDirectory', completeRemoteDirectory);
   command('syncToLocal', (uri) => syncToLocal(uri as vscode.Uri | undefined));
+  command('visualDownload', (uri) => visualDownload(uri as vscode.Uri | undefined));
+  command('visualUpload', (...args) => visualUpload(...args as vscode.Uri[]));
   command('openTerminal', () => openTerminal(context, undefined, undefined, undefined, true));
   command('openTerminalItem', (mount) =>
     openTerminal(context, mount, undefined, undefined, true));

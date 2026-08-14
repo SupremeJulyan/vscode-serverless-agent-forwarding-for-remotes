@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.4.3",
+  "version": "1.4.5",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -124,8 +124,18 @@
       },
       {
         "command": "safs.syncToLocal",
-        "title": "同步…",
+        "title": "SAFS：可视化同步",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "safs.visualDownload",
+        "title": "SAFS：可视化下载",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "safs.visualUpload",
+        "title": "SAFS：可视化上传",
+        "icon": "$(arrow-up)"
       }
     ],
     "viewsContainers": {
@@ -178,6 +188,13 @@
         {
           "command": "safs.syncToLocal",
           "when": "resourceScheme == safs"
+        },
+        {
+          "command": "safs.visualDownload",
+          "when": "resourceScheme == safs"
+        },
+        {
+          "command": "safs.visualUpload"
         }
       ],
       "view/title": [
@@ -263,6 +280,16 @@
         {
           "command": "safs.syncToLocal",
           "when": "resourceScheme == safs",
+          "group": "safs@1"
+        },
+        {
+          "command": "safs.visualDownload",
+          "when": "resourceScheme == safs",
+          "group": "safs@2"
+        },
+        {
+          "command": "safs.visualUpload",
+          "when": "resourceScheme == file",
           "group": "safs@1"
         }
       ]
