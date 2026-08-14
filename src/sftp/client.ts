@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Client, ConnectConfig, FileEntryWithStats, SFTPWrapper, Stats } from 'ssh2';
+import { Client, ConnectConfig, FileEntryWithStats, HostVerifier, SFTPWrapper, Stats } from 'ssh2';
 import { expandHome, HostConfig } from '../config';
 import { keyboardInteractivePasswordReplies } from '../authentication';
 import { defaultSshClientIdent, serverHostKeyAlgorithms } from '../ssh-algorithms';
@@ -226,7 +226,8 @@ export async function connectSftp(
   host: HostConfig,
   useWslVpnRelay = false,
   signal?: AbortSignal,
-  clientIdent = defaultSshClientIdent
+  clientIdent = defaultSshClientIdent,
+  hostVerifier?: HostVerifier
 ): Promise<SftpSession> {
   if (signal?.aborted) throw abortError();
   const relay = useWslVpnRelay && host.vpn ? await acquireWslVpnRelay(host) : undefined;
@@ -250,7 +251,10 @@ export async function connectSftp(
     algorithms: { serverHostKey: serverHostKeyAlgorithms },
     keepaliveInterval: 15_000,
     keepaliveCountMax: 3,
-    readyTimeout: 30_000
+    readyTimeout: 30_000,
+    // SFTP 是文件数据路径：接入与终端一致的 TOFU 主机密钥校验
+    // （hostKeyChangedAction 设置），不再无校验直连。
+    ...(hostVerifier ? { hostVerifier } : {})
   };
   if (host.private_key_path) {
     config.privateKey = await readFile(expandHome(host.private_key_path));

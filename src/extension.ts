@@ -45,6 +45,7 @@ import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
 } from './sftp/uri';
 import { ensureWslBridgeExecutable, setWslBundlePath } from './wsl-bridge';
+import { hostVerifierFor } from './host-key';
 import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
@@ -788,7 +789,8 @@ async function openTerminal(
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
       bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
-      bridgeConfigPath: configPath()
+      bridgeConfigPath: configPath(),
+      hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'prompt')
     });
     const terminalCommand = await resolveExecutable(plan.command, plan.env);
     const terminalStartedAt = performance.now();
@@ -1226,7 +1228,8 @@ async function executeRemoteCommand(
         await warmSshCliCapabilities();
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
-          bridgeConfigPath: configPath()
+          bridgeConfigPath: configPath(),
+          hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'prompt')
         });
         plan.env = {
           ...plan.env,
@@ -2011,13 +2014,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry = new RemoteFolderRegistry();
   let refreshTree: () => void = () => undefined;
   pool = new SftpConnectionPool(
-    async (hostName, signal) =>
-      connectSftp(
-        await resolvedHost(context, hostName),
+    async (hostName, signal) => {
+      const host = await resolvedHost(context, hostName);
+      return connectSftp(
+        host,
         platformAdapter.kind === 'wsl',
         signal,
-        settings().get<string>('sshClientIdent', defaultSshClientIdent)
-      ),
+        settings().get<string>('sshClientIdent', defaultSshClientIdent),
+        hostVerifierFor(context, host, (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`))
+      );
+    },
     () => refreshTree()
   );
   // 远程文件/目录 ↔ 本地双向同步管理器（事件驱动，不轮询）。

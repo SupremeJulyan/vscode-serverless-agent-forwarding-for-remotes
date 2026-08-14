@@ -1,93 +1,14 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { Client, ClientChannel, ConnectConfig, HostVerifier } from 'ssh2';
+import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import * as vscode from 'vscode';
 import { expandHome, HostConfig } from './config';
+import { hostVerifierFor } from './host-key';
 import { keyboardInteractivePasswordReplies } from './authentication';
 import { defaultSshClientIdent, serverHostKeyAlgorithms } from './ssh-algorithms';
 import { ssh2RemoteCommand } from './ssh-command';
 
-const trustedHostKeysState = 'safs.trustedSsh2HostKeys';
-
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
-type HostKeyChangedAction = 'prompt' | 'reject' | 'accept';
-
-function sha256Fingerprint(key: Buffer): string {
-  return `SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
-}
-
-function hostKeyChangedAction(): HostKeyChangedAction {
-  return vscode.workspace.getConfiguration('safs')
-    .get<HostKeyChangedAction>('hostKeyChangedAction', 'accept');
-}
-
-async function storeTrustedHostKey(
-  context: vscode.ExtensionContext,
-  trusted: Record<string, string>,
-  trustKey: string,
-  fingerprint: string
-): Promise<void> {
-  await context.globalState.update(trustedHostKeysState, {
-    ...trusted, [trustKey]: fingerprint
-  });
-}
-
-function hostVerifierFor(
-  context: vscode.ExtensionContext, host: HostConfig
-): HostVerifier {
-  const port = host.port ?? 22;
-  const trustKey = `${host.ip}:${port}`;
-  return (key, callback) => {
-    const fingerprint = sha256Fingerprint(key);
-    const trusted = context.globalState.get<Record<string, string>>(trustedHostKeysState, {});
-    if (trusted[trustKey] === fingerprint) {
-      callback(true);
-      return;
-    }
-    if (trusted[trustKey]) {
-      // MobaXterm 风格：主机密钥改变（常见于负载均衡 VIP 每次连接到不同后端、
-      // 各后端密钥不同的场景）时不再直接拒绝，而是提示用户选择是否接受新密钥。
-      const action = hostKeyChangedAction();
-      if (action === 'reject') {
-        void vscode.window.showErrorMessage(
-          `主机"${host.name}"的 SSH 主机密钥已改变，已拒绝连接。`, { modal: true }
-        );
-        callback(false);
-        return;
-      }
-      if (action === 'accept') {
-        void storeTrustedHostKey(context, trusted, trustKey, fingerprint)
-          .then(() => callback(true), () => callback(true));
-        return;
-      }
-      void vscode.window.showWarningMessage(
-        `主机"${host.name}"的 SSH 主机密钥已改变。\n旧密钥：${trusted[trustKey]}\n新密钥：${fingerprint}\n是否接受新密钥并继续连接？`,
-        { modal: true }, '接受并连接', '取消'
-      ).then(async (choice) => {
-        if (choice !== '接受并连接') {
-          callback(false);
-          return;
-        }
-        await storeTrustedHostKey(context, trusted, trustKey, fingerprint);
-        callback(true);
-      });
-      return;
-    }
-    void vscode.window.showWarningMessage(
-      `首次连接主机"${host.name}"。是否信任 SSH 主机密钥 ${fingerprint}？`,
-      { modal: true }, '信任并连接'
-    ).then(async (choice) => {
-      if (choice !== '信任并连接') {
-        callback(false);
-        return;
-      }
-      await storeTrustedHostKey(context, trusted, trustKey, fingerprint);
-      callback(true);
-    });
-  };
 }
 
 async function connectConfig(

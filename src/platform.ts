@@ -21,6 +21,22 @@ export interface ConnectionOptions {
   reuseSshConnection?: boolean;
   bridgeMasterPassword?: string;
   bridgeConfigPath?: string;
+  /** safs.hostKeyChangedAction 设置值：accept→no、prompt→accept-new、reject→yes */
+  hostKeyPolicy?: 'accept' | 'prompt' | 'reject';
+}
+
+/**
+ * 系统 ssh 路径的 StrictHostKeyChecking 映射（与 hostKeyChangedAction 设置一致）：
+ * accept → no（MobaXterm 风格静默接受变化）；prompt → accept-new（首次接受、
+ * 变化拒绝；系统 ssh 无法弹 VS Code 对话框，accept-new 是最接近的等价物）；
+ * reject → yes（严格校验）。缺省按 prompt 处理。
+ */
+function strictHostKeyCheckingOption(policy?: string): string {
+  switch (policy) {
+    case 'reject': return 'yes';
+    case 'accept': return 'no';
+    default: return 'accept-new';
+  }
 }
 
 export interface PlatformAdapter {
@@ -44,10 +60,12 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
 }
 
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {
-  // MobaXterm-style: accept changed host keys (e.g. load-balanced VIPs where
-  // each backend has its own key) instead of aborting with
-  // "REMOTE HOST IDENTIFICATION HAS CHANGED".
-  const args = ['-p', String(host.port ?? 22), '-o', 'StrictHostKeyChecking=no'];
+  // 主机密钥策略由 safs.hostKeyChangedAction 设置驱动（accept→no / prompt→
+  // accept-new / reject→yes），不再无条件 StrictHostKeyChecking=no。
+  const args = [
+    '-p', String(host.port ?? 22),
+    '-o', `StrictHostKeyChecking=${strictHostKeyCheckingOption(options?.hostKeyPolicy)}`
+  ];
   // Some servers only offer legacy host keys (ssh-rsa/ssh-dss); OpenSSH 8.8+
   // rejects them by default, so re-enable them explicitly. The exact flags
   // are adapted to the installed client (see ssh-algorithms.ts), because old
@@ -104,6 +122,7 @@ class WslAdapter implements PlatformAdapter {
       args,
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
+        WSL_VPN_STRICT_HOST_KEY: strictHostKeyCheckingOption(options?.hostKeyPolicy),
         ...(options?.bridgeConfigPath
           ? { WSL_VPN_SSH_CONFIG: options.bridgeConfigPath }
           : {}),
@@ -120,6 +139,7 @@ class WslAdapter implements PlatformAdapter {
       args: [host.name, remoteExecCommand(remoteCwd, command)],
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
+        WSL_VPN_STRICT_HOST_KEY: strictHostKeyCheckingOption(options?.hostKeyPolicy),
         ...(options?.bridgeConfigPath
           ? { WSL_VPN_SSH_CONFIG: options.bridgeConfigPath }
           : {}),

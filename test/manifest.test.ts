@@ -96,5 +96,5 @@ test('declares MobaXterm-style host key change action setting', async () => {
   ] as { type?: string; enum?: string[]; default?: unknown } | undefined;
   assert.equal(property?.type, 'string');
   assert.deepEqual(property?.enum, ['prompt', 'reject', 'accept']);
-  assert.equal(property?.default, 'accept');
+  assert.equal(property?.default, 'prompt');
 });

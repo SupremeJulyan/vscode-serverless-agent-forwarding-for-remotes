@@ -426,8 +426,8 @@
             "reject",
             "accept"
           ],
-          "default": "accept",
-          "markdownDescription": "SSH 主机密钥发生变化时的处理方式（例如负载均衡 VIP 每次连接到不同后端、各后端密钥不同的场景）：`accept`（默认）静默接受并更新已存密钥；`prompt` 弹窗提示新旧密钥并允许接受新密钥后继续连接；`reject` 直接拒绝连接（旧行为）。该设置作用于内置 ssh2 通道（Windows 终端与命令执行）。"
+          "default": "prompt",
+          "markdownDescription": "SSH 主机密钥发生变化时的处理方式（例如负载均衡 VIP 每次连接到不同后端、各后端密钥不同的场景）：`prompt`（默认）弹窗提示新旧密钥并允许接受新密钥后继续连接；`accept` 静默接受并更新已存密钥（MobaXterm 风格）；`reject` 直接拒绝连接（旧行为）。该设置作用于所有传输路径：内置 ssh2 通道（Windows 终端、SFTP 文件系统与命令执行）的 TOFU 校验，以及系统 ssh 路径的 StrictHostKeyChecking（accept→no、prompt→accept-new、reject→yes）。"
         },
         "safs.sftp.cacheTtl": {
           "type": "number",

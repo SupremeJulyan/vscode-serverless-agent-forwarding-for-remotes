@@ -112,3 +112,29 @@ test('WSL never passes the decrypted SSH password through the bridge environment
   const plan = createPlatformAdapter('wsl').terminal(host, '/srv/project');
   assert.equal(plan.env?.SSH_BRIDGE_PASSWORD, undefined);
 });
+
+test('host key policy maps to StrictHostKeyChecking for native and WSL paths', () => {
+  const native = createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd', {
+    hostKeyPolicy: 'reject'
+  });
+  assert.ok(native.args.includes('StrictHostKeyChecking=yes'));
+  assert.ok(
+    createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd', {
+      hostKeyPolicy: 'accept'
+    }).args.includes('StrictHostKeyChecking=no')
+  );
+  assert.ok(
+    createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd').args
+      .includes('StrictHostKeyChecking=accept-new')
+  );
+  assert.equal(
+    createPlatformAdapter('wsl').terminal(host, '/srv/project', {
+      hostKeyPolicy: 'reject'
+    }).env?.WSL_VPN_STRICT_HOST_KEY,
+    'yes'
+  );
+  assert.equal(
+    createPlatformAdapter('wsl').terminal(host, '/srv/project').env?.WSL_VPN_STRICT_HOST_KEY,
+    'accept-new'
+  );
+});

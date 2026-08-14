@@ -169,10 +169,11 @@ if [[ -n "$ssh_major" ]] && (( 10#$ssh_major >= 10 )); then
   legacy_host_keys=(ssh-rsa)
 fi
 legacy_host_keys_joined="$(IFS=,; printf '%s' "${legacy_host_keys[*]}")"
-# MobaXterm 风格：接受变化的主机密钥（如负载均衡 VIP 每次连到不同后端），
-# 避免 "REMOTE HOST IDENTIFICATION HAS CHANGED" 中断连接。
+# 主机密钥策略由扩展按 safs.hostKeyChangedAction 设置注入（accept→no /
+# prompt→accept-new / reject→yes），不再无条件 StrictHostKeyChecking=no。
+strict_host_key="${WSL_VPN_STRICT_HOST_KEY:-accept-new}"
 ssh_options=(
-  -o StrictHostKeyChecking=no
+  -o "StrictHostKeyChecking=${strict_host_key}"
   -o "HostKeyAlgorithms=+${legacy_host_keys_joined}"
 )
 if [[ -z "$ssh_major" ]] \
