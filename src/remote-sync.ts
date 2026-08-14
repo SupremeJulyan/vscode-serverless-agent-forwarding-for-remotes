@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isRemotePathInsideRoot } from './sftp/uri';
 import { SftpSession } from './sftp/session';
+import { diffFingerprints, linesToMap, scanRemote } from './sync-diff';
 
 /**
  * 远程目录/文件 ↔ 本地目录的双向自动同步（事件驱动，不轮询）。
@@ -10,7 +11,15 @@ import { SftpSession } from './sftp/session';
  * 远程 → 本地：VS Code 通过 SAFS 文件系统保存/删除/重命名/建目录时，
  * provider 回调 notifyRemoteChange，把变更同步到本地。
  * 本地 → 远程：监听本地目标目录的文件系统事件，把本地变更上传/删除到远程。
- * 通过 localDownloading / remoteUploading 防止回环。
+ *
+ * 一致性设计：
+ * - 同一本地路径的本地操作（创建/修改/删除）按 (task, localPath) 串行排队，
+ *   执行时按文件最新状态决定上传或删除远端（尾沿合并，事件不丢弃）。
+ * - 下载在覆盖本地前比对下载窗口前后的 mtime：期间被本地修改/删除则跳过
+ *   覆盖，避免"下载在途时本地编辑被远端内容覆盖"。
+ * - 基线失败进入指数退避重试，本地 watcher 仅在基线成功后启动，避免半初始化
+ *   镜像反向污染远端。
+ * - 指纹 diff 对 file↔dir 类型互换先删后建。
  */
 
 export interface RemoteSyncTask {
@@ -35,42 +44,6 @@ function joinLocal(base: string, relativePosix: string): string {
   return relativePosix ? path.join(base, ...relativePosix.split('/')) : base;
 }
 
-/** 递归扫描远程子树，返回指纹行数组。 */
-async function scanRemote(
-  session: SftpSession, remotePath: string
-): Promise<string[]> {
-  const rootStat = await session.stat(remotePath);
-  if (rootStat.type !== 'directory') {
-    return [`f::${rootStat.size}:${rootStat.mtime}`];
-  }
-  const lines: string[] = [];
-  const walk = async (dir: string): Promise<void> => {
-    const entries = await session.readDirectory(dir);
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      const full = path.posix.join(dir, entry.name);
-      const rel = path.posix.relative(remotePath, full);
-      if (entry.type === 'directory') {
-        lines.push(`d:${rel}:${entry.mtime}`);
-        await walk(full);
-      } else {
-        lines.push(`f:${rel}:${entry.size}:${entry.mtime}`);
-      }
-    }
-  };
-  await walk(remotePath);
-  return lines;
-}
-
-function linesToMap(lines: string[]): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const line of lines) {
-    const rel = line.slice(2, line.indexOf(':', 2));
-    map.set(rel, line);
-  }
-  return map;
-}
-
 /** 逐级确保远程目录存在（父目录缺失时创建）。 */
 async function ensureRemoteDir(
   session: SftpSession, remoteDir: string
@@ -87,13 +60,29 @@ async function ensureRemoteDir(
   }
 }
 
+const baselineRetryBaseMs = 1_000;
+const baselineRetryCapMs = 30_000;
+
 export class RemoteSyncManager {
   private readonly tasks = new Map<string, RemoteSyncTask>();
-  private readonly watchers = new Map<string, vscode.Disposable>();
-  /** 正在由“远程→本地”写入的本地路径（本地 watcher 跳过，防回环）。 */
+  /** localDir → watcher 与共享该 watcher 的任务 key 集合（引用计数共享）。 */
+  private readonly watchers = new Map<string, {
+    watcher: vscode.Disposable;
+    taskKeys: Set<string>;
+  }>();
+  /** 正在由"远程→本地"写入的本地路径（本地 watcher 跳过，防回环）。 */
   private readonly localDownloading = new Set<string>();
-  /** 正在由“本地→远程”上传的远程路径（provider 回调跳过）。 */
+  /** 正在由"本地→远程"上传的远程路径（provider 回调跳过）。 */
   private readonly remoteUploading = new Set<string>();
+  /** 本地路径 → 进行中的下载 promise（本地操作等待其完成，避免交错/回环）。 */
+  private readonly activeDownloads = new Map<string, Promise<void>>();
+  /** 本地路径 → 最近一次下载写入后的 mtime（识别下载回写触发的 watcher echo）。 */
+  private readonly downloadedMtimes = new Map<string, number>();
+  /** (task,localPath) → 串行本地操作队列（尾沿合并）。 */
+  private readonly localOpQueues = new Map<string, Promise<void>>();
+  private readonly pendingLocalOps = new Set<string>();
+  /** 基线失败后的退避重试定时器。 */
+  private readonly baselineTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly getSession: (mountName: string) => Promise<SftpSession>,
@@ -115,20 +104,28 @@ export class RemoteSyncManager {
 
   add(task: RemoteSyncTask): void {
     this.tasks.set(taskKey(task.mountName, task.remotePath), task);
-    // 首次同步（增量基线），完成后启动本地 watcher（双向）并持久化。
-    void this.baseline(task).then(() => {
-      this.startLocalWatcher(task);
-      this.onTaskChanged();
-    });
     this.onTaskChanged();
+    void this.runBaseline(task, 0);
   }
 
   remove(mountName: string, remotePath: string): void {
     const key = taskKey(mountName, remotePath);
     const task = this.tasks.get(key);
     if (task) {
-      this.watchers.get(task.localDir)?.dispose();
-      this.watchers.delete(task.localDir);
+      const entry = this.watchers.get(task.localDir);
+      if (entry) {
+        entry.taskKeys.delete(key);
+        if (entry.taskKeys.size === 0) {
+          entry.watcher.dispose();
+          this.watchers.delete(task.localDir);
+        }
+      }
+      const retry = this.baselineTimers.get(key);
+      if (retry) {
+        clearTimeout(retry);
+        this.baselineTimers.delete(key);
+      }
+      this.localOpQueues.delete(key);
     }
     this.tasks.delete(key);
     this.log(`已停止同步：${remotePath}`);
@@ -136,7 +133,9 @@ export class RemoteSyncManager {
   }
 
   dispose(): void {
-    for (const watcher of this.watchers.values()) watcher.dispose();
+    for (const timer of this.baselineTimers.values()) clearTimeout(timer);
+    this.baselineTimers.clear();
+    for (const entry of this.watchers.values()) entry.watcher.dispose();
     this.watchers.clear();
   }
 
@@ -166,16 +165,15 @@ export class RemoteSyncManager {
   ): Promise<void> {
     const rel = path.posix.relative(task.remotePath, remotePath);
     const localFull = joinLocal(task.localDir, rel);
-    const session = await this.getSession(task.mountName);
-    this.localDownloading.add(localFull);
     try {
       if (kind === 'write') {
-        await fs.mkdir(path.dirname(localFull), { recursive: true });
-        const content = Buffer.from(await session.readFile(remotePath));
-        await fs.writeFile(localFull, content);
+        const session = await this.getSession(task.mountName);
+        await this.downloadOne(session, remotePath, localFull);
         this.log(`已同步到本地: ${remotePath} -> ${localFull}`);
       } else if (kind === 'mkdir') {
-        await fs.mkdir(localFull, { recursive: true });
+        await this.withDownload(localFull, async () => {
+          await fs.mkdir(localFull, { recursive: true });
+        });
       } else if (kind === 'delete') {
         await fs.rm(localFull, { recursive: true, force: true });
         this.log(`已删除本地: ${localFull}`);
@@ -183,6 +181,11 @@ export class RemoteSyncManager {
         const target = this.resolveRemote(targetUri);
         if (!target) return;
         const relTarget = path.posix.relative(task.remotePath, target.remotePath);
+        if (relTarget === '..' || relTarget.startsWith('../')
+          || path.posix.isAbsolute(relTarget)) {
+          this.log(`跳过重命名（目标超出同步根）: ${target.remotePath}`);
+          return;
+        }
         const localTarget = joinLocal(task.localDir, relTarget);
         await fs.mkdir(path.dirname(localTarget), { recursive: true });
         await fs.rename(localFull, localTarget).catch(() => undefined);
@@ -190,60 +193,109 @@ export class RemoteSyncManager {
       }
     } catch (error) {
       this.log(`同步到本地失败: ${remotePath}: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.localDownloading.delete(localFull);
     }
   }
 
-  /** 首次/恢复时的增量基线同步（一次，非轮询）。 */
-  private async baseline(task: RemoteSyncTask): Promise<void> {
+  /** 首次/恢复时的增量基线同步。成功返回 true；失败返回 false（触发退避重试）。 */
+  private async baseline(task: RemoteSyncTask): Promise<boolean> {
     this.status(`正在同步: ${task.remotePath} → ${task.localDir}`);
     try {
       const session = await this.getSession(task.mountName);
       const lines = await scanRemote(session, task.remotePath);
-      task.isFile = lines.length === 1 && lines[0].startsWith('f::');
+      const isFile = lines.length === 1 && lines[0].startsWith('f::');
       if (!task.fingerprintLines) {
-        await this.downloadTree(session, task.remotePath, task.localDir, task.isFile);
+        await this.downloadTree(session, task.remotePath, task.localDir, isFile);
         this.log(`首次同步完成: ${task.remotePath} -> ${task.localDir}（${lines.length} 项）`);
       } else {
         const current = linesToMap(lines);
         const previous = linesToMap(task.fingerprintLines);
-        let changed = false;
-        for (const [rel, line] of current) {
-          if (previous.get(rel) === line) continue;
-          changed = true;
-          const localFull = joinLocal(task.localDir, rel);
-          if (line.startsWith('d:')) {
-            await fs.mkdir(localFull, { recursive: true });
-          } else {
-            await this.downloadOne(session, path.posix.join(task.remotePath, rel), localFull);
+        const diff = diffFingerprints(current, previous);
+        if (diff.changed) {
+          // 先删（含类型互换的旧类型），再创建/更新，避免 mkdir/writeFile 撞类型。
+          for (const rel of diff.remove) {
+            await fs.rm(joinLocal(task.localDir, rel), { recursive: true, force: true });
           }
-        }
-        for (const rel of previous.keys()) {
-          if (current.has(rel)) continue;
-          changed = true;
-          await fs.rm(joinLocal(task.localDir, rel), { recursive: true, force: true });
-        }
-        if (changed) {
+          for (const [rel, line] of diff.create) {
+            const localFull = joinLocal(task.localDir, rel);
+            if (line.startsWith('d:')) {
+              await fs.mkdir(localFull, { recursive: true });
+            } else {
+              await this.downloadOne(
+                session, path.posix.join(task.remotePath, rel), localFull
+              );
+            }
+          }
           this.log(`同步基线更新: ${task.remotePath} -> ${task.localDir}（${lines.length} 项）`);
         }
       }
+      task.isFile = isFile;
       task.fingerprintLines = lines;
+      return true;
     } catch (error) {
       this.log(`同步基线失败: ${task.remotePath}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 
+  private async runBaseline(task: RemoteSyncTask, attempt: number): Promise<void> {
+    const key = taskKey(task.mountName, task.remotePath);
+    const ok = await this.baseline(task);
+    if (ok) {
+      this.startLocalWatcher(task);
+      this.onTaskChanged();
+      return;
+    }
+    if (!this.tasks.has(key) || this.baselineTimers.has(key)) return;
+    // 指数退避重试：连接中断/瞬时故障时不留下半初始化镜像。
+    const delay = Math.min(baselineRetryBaseMs * 2 ** attempt, baselineRetryCapMs);
+    const timer = setTimeout(() => {
+      this.baselineTimers.delete(key);
+      void this.runBaseline(task, attempt + 1);
+    }, delay);
+    timer.unref?.();
+    this.baselineTimers.set(key, timer);
+  }
+
+  /** 下载单个远程文件到本地；覆盖前检测下载窗口内的本地改动，避免覆盖用户编辑。 */
   private async downloadOne(
     session: SftpSession, remotePath: string, localFull: string
   ): Promise<void> {
-    this.localDownloading.add(localFull);
-    try {
+    await this.withDownload(localFull, async () => {
       await fs.mkdir(path.dirname(localFull), { recursive: true });
+      const before = await fs.stat(localFull).catch(() => undefined);
       const content = Buffer.from(await session.readFile(remotePath));
+      const after = await fs.stat(localFull).catch(() => undefined);
+      const unchanged = before === undefined && after === undefined
+        || before !== undefined && after !== undefined && before.mtimeMs === after.mtimeMs;
+      if (!unchanged) {
+        this.log(`跳过覆盖（下载期间本地被修改/删除）: ${localFull}`);
+        return;
+      }
       await fs.writeFile(localFull, content);
+      const written = await fs.stat(localFull);
+      this.downloadedMtimes.set(localFull, written.mtimeMs);
+    });
+  }
+
+  /** 串行化同一本地路径的下载，并登记进行中状态（本地操作会等待它）。 */
+  private async withDownload(localPath: string, fn: () => Promise<void>): Promise<void> {
+    const existing = this.activeDownloads.get(localPath);
+    if (existing) await existing;
+    const promise = (async () => {
+      this.localDownloading.add(localPath);
+      try {
+        await fn();
+      } finally {
+        this.localDownloading.delete(localPath);
+      }
+    })();
+    this.activeDownloads.set(localPath, promise);
+    try {
+      return await promise;
     } finally {
-      this.localDownloading.delete(localFull);
+      if (this.activeDownloads.get(localPath) === promise) {
+        this.activeDownloads.delete(localPath);
+      }
     }
   }
 
@@ -256,12 +308,15 @@ export class RemoteSyncManager {
     }
     const stat = await session.stat(remotePath);
     if (stat.type === 'directory') {
-      this.localDownloading.add(localTarget);
-      try {
-        await fs.mkdir(localTarget, { recursive: true });
-      } finally {
-        this.localDownloading.delete(localTarget);
-      }
+      await this.withDownload(localTarget, async () => {
+        try {
+          await fs.mkdir(localTarget, { recursive: true });
+        } catch {
+          // 本地同路径是文件（类型冲突）：先移除再建目录。
+          await fs.rm(localTarget, { recursive: true, force: true });
+          await fs.mkdir(localTarget, { recursive: true });
+        }
+      });
       const entries = await session.readDirectory(remotePath);
       for (const entry of entries) {
         await this.downloadTree(
@@ -279,16 +334,31 @@ export class RemoteSyncManager {
   // ── 本地 → 远程 ──────────────────────────────────────────────────────────
 
   private startLocalWatcher(task: RemoteSyncTask): void {
-    if (task.isFile === undefined || this.watchers.has(task.localDir)) return;
+    if (task.isFile === undefined) return;
+    const key = task.localDir;
+    const existing = this.watchers.get(key);
+    if (existing) {
+      existing.taskKeys.add(taskKey(task.mountName, task.remotePath));
+      return;
+    }
     const dir = task.isFile ? path.dirname(task.localDir) : task.localDir;
     const pattern = task.isFile
       ? new vscode.RelativePattern(dir, path.basename(task.localDir))
       : new vscode.RelativePattern(dir, '**/*');
     const watcher = vscode.workspace.createFileSystemWatcher(pattern);
-    watcher.onDidCreate((uri) => void this.onLocalCreated(task, uri));
-    watcher.onDidChange((uri) => void this.onLocalChanged(task, uri));
-    watcher.onDidDelete((uri) => void this.onLocalDeleted(task, uri));
-    this.watchers.set(task.localDir, watcher);
+    const taskKeys = new Set([taskKey(task.mountName, task.remotePath)]);
+    const dispatch = (kind: 'created' | 'changed' | 'deleted') => (uri: vscode.Uri) => {
+      for (const candidate of this.tasks.values()) {
+        if (!taskKeys.has(taskKey(candidate.mountName, candidate.remotePath))) continue;
+        if (kind === 'created') this.onLocalCreated(candidate, uri);
+        else if (kind === 'changed') this.onLocalChanged(candidate, uri);
+        else this.onLocalDeleted(candidate, uri);
+      }
+    };
+    watcher.onDidCreate(dispatch('created'));
+    watcher.onDidChange(dispatch('changed'));
+    watcher.onDidDelete(dispatch('deleted'));
+    this.watchers.set(key, { watcher, taskKeys });
   }
 
   private remoteTargetFor(task: RemoteSyncTask, localPath: string): string {
@@ -296,14 +366,42 @@ export class RemoteSyncManager {
     return rel ? path.posix.join(task.remotePath, rel.split(path.sep).join('/')) : task.remotePath;
   }
 
-  private async uploadLocal(task: RemoteSyncTask, localPath: string): Promise<void> {
-    if (this.localDownloading.has(localPath)) return;
+  /**
+   * 本地事件入队：(task, localPath) 串行执行，同路径在途事件合并（执行时按
+   * 最新文件状态决定上传或删除远端，最新内容胜出）。下载在途时先等待其完成。
+   */
+  private enqueueLocalOp(task: RemoteSyncTask, localPath: string): void {
+    const key = `${taskKey(task.mountName, task.remotePath)}\0${localPath}`;
+    if (this.pendingLocalOps.has(key)) return;
+    this.pendingLocalOps.add(key);
+    const previous = this.localOpQueues.get(key) ?? Promise.resolve();
+    const next = previous.then(() => this.performLocalOp(task, localPath)).finally(() => {
+      this.pendingLocalOps.delete(key);
+      if (this.localOpQueues.get(key) === next) this.localOpQueues.delete(key);
+    });
+    this.localOpQueues.set(key, next);
+  }
+
+  private async performLocalOp(task: RemoteSyncTask, localPath: string): Promise<void> {
+    const active = this.activeDownloads.get(localPath);
+    if (active) await active;
     const remoteFull = this.remoteTargetFor(task, localPath);
+    const stat = await fs.stat(localPath).catch(() => undefined);
+    if (!stat) {
+      await this.performRemoteDelete(task, remoteFull);
+      return;
+    }
+    // 下载回写触发的 watcher echo：本地 mtime 与最近一次下载写入一致，跳过。
+    if (this.downloadedMtimes.get(localPath) === stat.mtimeMs) {
+      this.downloadedMtimes.delete(localPath);
+      return;
+    }
+    // 本地确有新改动：清理旧下载标记后上传最新内容。
+    this.downloadedMtimes.delete(localPath);
     if (this.remoteUploading.has(remoteFull)) return;
     const session = await this.getSession(task.mountName);
     this.remoteUploading.add(remoteFull);
     try {
-      const stat = await fs.stat(localPath);
       if (stat.isDirectory()) {
         await ensureRemoteDir(session, remoteFull);
       } else {
@@ -319,28 +417,33 @@ export class RemoteSyncManager {
     }
   }
 
-  private async onLocalCreated(task: RemoteSyncTask, uri: vscode.Uri): Promise<void> {
-    this.status(`本地新建 → 远程: ${this.remoteTargetFor(task, uri.fsPath)}`);
-    await this.uploadLocal(task, uri.fsPath);
-  }
-
-  private async onLocalChanged(task: RemoteSyncTask, uri: vscode.Uri): Promise<void> {
-    this.status(`本地修改 → 远程: ${this.remoteTargetFor(task, uri.fsPath)}`);
-    await this.uploadLocal(task, uri.fsPath);
-  }
-
-  private async onLocalDeleted(task: RemoteSyncTask, uri: vscode.Uri): Promise<void> {
-    const localPath = uri.fsPath;
-    if (this.localDownloading.has(localPath)) return;
-    const remoteFull = this.remoteTargetFor(task, localPath);
+  private async performRemoteDelete(task: RemoteSyncTask, remoteFull: string): Promise<void> {
     if (this.remoteUploading.has(remoteFull)) return;
     this.status(`本地删除 → 远程: ${remoteFull}`);
     const session = await this.getSession(task.mountName);
+    this.remoteUploading.add(remoteFull);
     try {
       await session.deleteFile(remoteFull).catch(() => session.deleteDirectory(remoteFull));
       this.log(`已删除远程: ${remoteFull}`);
     } catch (error) {
       this.log(`删除远程失败: ${remoteFull}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.remoteUploading.delete(remoteFull);
     }
+  }
+
+  private onLocalCreated(task: RemoteSyncTask, uri: vscode.Uri): void {
+    this.status(`本地新建 → 远程: ${this.remoteTargetFor(task, uri.fsPath)}`);
+    this.enqueueLocalOp(task, uri.fsPath);
+  }
+
+  private onLocalChanged(task: RemoteSyncTask, uri: vscode.Uri): void {
+    this.status(`本地修改 → 远程: ${this.remoteTargetFor(task, uri.fsPath)}`);
+    this.enqueueLocalOp(task, uri.fsPath);
+  }
+
+  private onLocalDeleted(task: RemoteSyncTask, uri: vscode.Uri): void {
+    this.status(`本地删除 → 远程: ${this.remoteTargetFor(task, uri.fsPath)}`);
+    this.enqueueLocalOp(task, uri.fsPath);
   }
 }
