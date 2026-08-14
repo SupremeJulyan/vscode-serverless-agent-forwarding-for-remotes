@@ -64,3 +64,33 @@ test('discovers focused fresh windows first and ignores stale records', async ()
     ['focused', 'background']
   );
 });
+
+test('ignores records whose updatedAt is in the future', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'safs-discovery-'));
+  const directory = agentDiscoveryDirectory(home);
+  const now = Date.now();
+  const record = (instanceId: string, updatedAtMs: number) => ({
+    version: 1,
+    instanceId,
+    processId: 1,
+    focused: true,
+    execution: 'remote',
+    workspaceUri: `safs://${instanceId}/srv/${instanceId}`,
+    mountName: instanceId,
+    remoteRoot: `/srv/${instanceId}`,
+    host: 'dev',
+    mcpUrl: 'http://127.0.0.1:3000/mcp?token=secret',
+    updatedAt: new Date(updatedAtMs).toISOString()
+  });
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, 'future.json'), JSON.stringify(
+    record('future', now + 60_000)
+  ));
+  await writeFile(path.join(directory, 'fresh.json'), JSON.stringify(
+    record('fresh', now - 1_000)
+  ));
+  assert.deepEqual(
+    discoverAgentWorkspaces([directory], now).map((item) => item.mountName),
+    ['fresh']
+  );
+});

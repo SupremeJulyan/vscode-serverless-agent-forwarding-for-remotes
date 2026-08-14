@@ -131,3 +131,44 @@ test('fixed HTTP router rejects a port owned by an unrelated process', async () 
     ));
   }
 });
+
+test('router refuses to forward to its own port (loop protection)', async () => {
+  const port = await freePort();
+  const router = new AgentHttpRouter(port, 'router-token', {
+    discover: () => [record('self', `http://127.0.0.1:${port}/mcp?token=router-token`)]
+  });
+  const client = new Client({ name: 'http-router-test', version: '1.0.0' });
+  try {
+    await router.start();
+    await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
+    const result = await client.callTool({ name: 'remote_read', arguments: { path: 'x' } });
+    assert.equal(result.isError, true);
+    assert.equal(JSON.parse((result.content as any[])[0].text).code, 'REMOTE_UNAVAILABLE');
+  } finally {
+    await client.close();
+    await router.stop();
+  }
+});
+
+test('router rejects requests marked as forwarded by another router', async () => {
+  const port = await freePort();
+  const router = new AgentHttpRouter(port, 'router-token', { discover: () => [] });
+  await router.start();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/mcp?token=router-token`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        'x-safs-forwarded': '1'
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name: 'list_remote_folders', arguments: {} }
+      })
+    });
+    assert.equal(response.status, 403);
+  } finally {
+    await router.stop();
+  }
+});

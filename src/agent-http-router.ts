@@ -1,4 +1,5 @@
 import * as http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -103,15 +104,23 @@ export class AgentHttpRouter {
     if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) {
       throw new Error('Refusing to forward to a non-loopback MCP endpoint');
     }
-    const requestId = `http-router-${process.pid}-${Date.now()}-${Math.random()}`;
+    // 拒绝转发到路由器自身端口：伪造/损坏的发现记录若指向本路由器，会无限递归。
+    if (url.port === String(this.port)) {
+      throw new Error('Refusing to forward to the router itself');
+    }
+    const requestId = `http-router-${process.pid}-${Date.now()}-${randomUUID()}`;
     this.options.log?.(
       `转发工具 ${name} 到 mount=${workspace.mountName}，port=${url.port}`
     );
     const response = await fetch(url, {
       method: 'POST',
+      // redirect: manual —— 不允许 3xx 重定向跳出 loopback（SSRF 防护）。
+      redirect: 'manual',
       headers: {
         accept: 'application/json, text/event-stream',
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        // 标记这是路由器发起的转发；目标若是另一个路由器会拒绝（防路由器间环）。
+        'x-safs-forwarded': '1'
       },
       body: JSON.stringify({
         jsonrpc: '2.0', id: requestId, method: 'tools/call',
@@ -299,6 +308,13 @@ export class AgentHttpRouter {
     app.all('/mcp', async (request, response) => {
       if (request.query.token !== this.token) {
         response.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      // 路由器绝不能作为另一个路由器的转发目标：带 x-safs-forwarded 标记的请求
+      // 说明来源是路由器转发，直接拒绝，防止路由器间形成转发环。
+      if (request.headers['x-safs-forwarded']) {
+        this.options.log?.('拒绝路由器转发请求（x-safs-forwarded）');
+        response.status(403).json({ error: 'Forwarding target must not be another router' });
         return;
       }
       if (request.method !== 'POST') {

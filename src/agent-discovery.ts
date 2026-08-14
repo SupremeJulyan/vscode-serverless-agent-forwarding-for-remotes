@@ -62,7 +62,7 @@ export function readAgentWorkspaceRecord(
     const updatedAtMs = Date.parse(value.updatedAt ?? '');
     if (value.version !== 1 || value.execution !== 'remote' || !value.mcpUrl
       || !value.instanceId || !value.mountName || !Number.isFinite(updatedAtMs)
-      || now - updatedAtMs > maxRecordAgeMs) {
+      || Math.abs(now - updatedAtMs) > maxRecordAgeMs) {
       return undefined;
     }
     return { ...value, updatedAtMs, discoveryFile: filePath } as DiscoveredAgentWorkspace;
