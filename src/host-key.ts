@@ -20,7 +20,7 @@ export function sha256Fingerprint(key: Buffer): string {
 
 export function hostKeyChangedAction(): HostKeyChangedAction {
   return vscode.workspace.getConfiguration('safs')
-    .get<HostKeyChangedAction>('hostKeyChangedAction', 'prompt');
+    .get<HostKeyChangedAction>('hostKeyChangedAction', 'accept');
 }
 
 export async function storeTrustedHostKey(

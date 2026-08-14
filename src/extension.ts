@@ -790,7 +790,7 @@ async function openTerminal(
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
       bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
       bridgeConfigPath: configPath(),
-      hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'prompt')
+      hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'accept')
     });
     const terminalCommand = await resolveExecutable(plan.command, plan.env);
     const terminalStartedAt = performance.now();
@@ -1241,7 +1241,7 @@ async function executeRemoteCommand(
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
           bridgeConfigPath: configPath(),
-          hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'prompt')
+          hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'accept')
         });
         plan.env = {
           ...plan.env,

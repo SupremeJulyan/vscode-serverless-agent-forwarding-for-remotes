@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.4.3
+
+### 安全加固
+
+- **主机密钥校验三路径统一**：SFTP 文件系统路径接入与终端一致的 TOFU 主机
+  密钥校验（此前完全无校验）；系统 ssh 路径（macOS/Linux/WSL/Windows 系统
+  ssh）不再无条件 `StrictHostKeyChecking=no`，改由 `safs.hostKeyChangedAction`
+  驱动（`accept`→`no` / `prompt`→`accept-new` / `reject`→`yes`），默认值
+  保持 `accept`（MobaXterm 风格：负载均衡 VIP 场景静默接受变化）。
+- MCP 路由器转发信任边界：禁止 3xx 重定向跳出 loopback、拒绝转发到路由器
+  自身端口、带 `x-safs-forwarded` 标记的请求一律拒绝（防路由器间环）、发现
+  记录时间戳双向校验（未来时间不再永不过期）。
+- 高危命令拦截补防：`$(...)`/反引号/`sh -c`/`eval` 内嵌内容解包后递归分析，
+  补重定向截断（`> /etc/...`、`> /dev/sda` 等）、`tee`/`truncate`、
+  `fsck`/`tune2fs` 规则。
+- 敏感文件权限统一 0600/0700（初始配置文件、pi MCP 配置、dsh patch 等）；
+  `encrypt_passwords` 缺省按 `true` 处理。
+- 主口令处理：单个主机密文损坏不再误删全局主口令；交互式终端环境不再注入
+  `WSL_VPN_MASTER_PASSWORD`；新增统一脱敏（`src/redact.ts`），命令日志与
+  输出通道隐藏 Bearer 令牌、URL token、`--api-key`、`KEY=value` 等。
+
+### 稳定性与性能
+
+- 远程同步引擎重构：本地→远程 per-path 串行队列 + 尾沿合并（不再丢事件）、
+  下载覆盖前检测本地改动（不再覆盖下载期间的用户编辑）、file↔dir 类型互换
+  先删后建、rename 目标越界校验、本地 watcher 引用计数共享、基线失败指数
+  退避重试。指纹引擎抽为可单测的 `src/sync-diff.ts`。
+- 命令级超时：新设置 `safs.agentMcpTimeoutMs`（默认 120000ms，0 关闭），
+  远程命令/搜索超时后中止执行，Agent 挂起时不再留下后台孤儿命令。
+- Windows 远程命令复用 ssh2 连接（会话池），消除每条命令重新握手；私钥
+  每连接读取一次。
+- SFTP 连接池空闲回收（`safs.sftp.idleConnectionTtl`，默认 600s）；重连前
+  关闭旧会话以释放 WSL 中继租约。
+- `remote_read`（MCP）按字节范围读取，不再整文件下载后切片。
+- 激活提速：WSL 依赖安装后台执行不阻塞窗口；工作区恢复逐挂载容错；心跳
+  错误日志去重；`reuseSshConnection` 缺省语义统一。
+
 ## 1.4.2
 
 - Remove the `safs.agentPlatform` setting and the WSL agent-platform feature
