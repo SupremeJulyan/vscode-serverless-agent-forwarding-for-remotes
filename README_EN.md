@@ -271,3 +271,9 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   `@deepseek-ai/dsh-mcp-client` plugin entry into `$DSH_HOME/cordis.patch.yml`
   (default `~/.dsh/cordis.patch.yml`), which DSH hot-applies through its
   config HMR watch without a restart.
+- `safs.agentPlatform`: the platform the Agents run on; defaults to `auto`
+  (same platform as the extension). Choose `wsl` when the extension runs on
+  Windows but the Agents run inside WSL: MCP registration reads/writes the
+  Agents' config files under the WSL home (`~/.pi/agent/mcp.json`,
+  `~/.dsh/cordis.patch.yml`), and Agent CLIs (`codex`/`claude`) are detected
+  and executed through `wsl.exe` inside WSL.

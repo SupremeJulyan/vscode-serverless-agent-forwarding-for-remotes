@@ -403,15 +403,38 @@ export function genericAgentDefinition(cliName: string): AgentDefinition {
   };
 }
 
-/** 把配置里的 CLI 名解析为 Agent 定义（兼容旧 key、去重） */
-export function resolveAgentDefinitions(cliNames: string[]): AgentDefinition[] {
+/** 为文件式 handler 的 Agent 重建定义，使 handler 读写 Agent 自己的家目录（WSL 场景） */
+function handlerForAgentHome(def: AgentDefinition, home: string): AgentMcpHandler {
+  switch (def.cliName) {
+    case 'pi': return piAgentMcpHandler({ baseDir: home });
+    // dsh 的配置在 DSH home（默认 ~/.dsh）下：Agent home 下的 .dsh 目录。
+    case 'dsh': return dshAgentMcpHandler({ home: path.join(home, '.dsh') });
+    default: return def.mcp.handler!;
+  }
+}
+
+/** 把配置里的 CLI 名解析为 Agent 定义（兼容旧 key、去重；可指定 Agent 家目录） */
+export function resolveAgentDefinitions(
+  cliNames: string[], options: { agentHome?: string } = {}
+): AgentDefinition[] {
   const result: AgentDefinition[] = [];
   const seen = new Set<string>();
   for (const name of cliNames) {
     const builtin = builtinAgentDefinitions.find(
       (def) => def.cliName === name || def.legacyIds?.includes(name)
     );
-    const def = builtin ?? genericAgentDefinition(name);
+    let def = builtin ?? genericAgentDefinition(name);
+    // Agent 与插件不同平台（如 Agent 在 WSL 中）时，文件式 handler 指向
+    // Agent 的家目录，而不是插件进程的家目录。
+    if (options.agentHome && def.mcp.handler) {
+      def = {
+        ...def,
+        mcp: {
+          ...def.mcp,
+          handler: handlerForAgentHome(def, options.agentHome)
+        }
+      };
+    }
     if (seen.has(def.cliName)) continue;
     seen.add(def.cliName);
     result.push(def);

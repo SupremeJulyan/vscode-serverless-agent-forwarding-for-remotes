@@ -50,6 +50,34 @@ test('resolveAgentDefinitions handles legacy ids, dedup and unknown fallback', (
   assert.deepEqual(unknown.mcp.add('safs', 'http://x'), ['mcp', 'add', 'safs', '--url', 'http://x']);
 });
 
+test('resolveAgentDefinitions with agentHome points file handlers at the Agent home', async () => {
+  const agentHome = path.join(os.tmpdir(), 'wsl-agent-home');
+  const resolved = resolveAgentDefinitions(['pi', 'dsh'], { agentHome });
+  const pi = resolved.find((def) => def.cliName === 'pi')!;
+  const dsh = resolved.find((def) => def.cliName === 'dsh')!;
+
+  // pi handler writes under the Agent home, not the extension-process home.
+  const piAdd = await pi.mcp.handler!.add('safs', 'http://x/mcp');
+  assert.equal(piAdd.exitCode, 0);
+  const piConfig = await readPiMcpConfig(path.join(agentHome, '.pi', 'agent', 'mcp.json'));
+  assert.deepEqual(piConfig.mcpServers?.safs, {
+    transport: 'streamable-http', url: 'http://x/mcp', lifecycle: 'eager'
+  });
+  await rm(path.join(agentHome, '.pi'), { recursive: true, force: true });
+
+  // dsh handler writes $DSH_HOME/cordis.patch.yml under the Agent home.
+  const dshAdd = await dsh.mcp.handler!.add('safs', 'http://x/mcp');
+  assert.equal(dshAdd.exitCode, 0);
+  const dshText = await readFile(dshPatchFilePath(path.join(agentHome, '.dsh')), 'utf8');
+  assert.ok(dshText.includes('- id: mcp-safs'));
+  assert.ok(dshText.includes("name: '@deepseek-ai/dsh-mcp-client'"));
+  await rm(path.join(agentHome, '.dsh'), { recursive: true, force: true });
+
+  // CLI-based agents keep no handler regardless of agentHome.
+  const codex = resolveAgentDefinitions(['codex'], { agentHome })[0];
+  assert.equal(codex.mcp.handler, undefined);
+});
+
 test('agentSupportsMcp and agentSupportsMcpFor', () => {
   assert.equal(agentSupportsMcp(result(0, 'ok')), true);
   assert.equal(agentSupportsMcp(result(1, '', 'unknown command: mcp')), false);

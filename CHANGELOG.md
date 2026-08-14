@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.8
+
+- New setting `safs.agentPlatform` (`auto` | `wsl`, default `auto`): lets the
+  Agents run in a different platform than the extension. With `wsl`, MCP
+  registration reads/writes the Agents' config files under the WSL home
+  (resolved via `wsl.exe wslpath -w "$HOME"`, e.g. `~/.pi/agent/mcp.json` and
+  `~/.dsh/cordis.patch.yml`), and Agent CLIs (`codex`/`claude`) are detected
+  and executed through `wsl.exe` inside WSL instead of the extension-process
+  PATH.
+
 ## 1.3.7
 
 - `safs.agentForwardingAgents` now defaults to `codex`, `claude`, `pi`, and
