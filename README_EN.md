@@ -256,8 +256,9 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 - `safs.agentMcpPort`: dynamic per-window backend port; keep the default `0`.
 - `safs.agentHttpRouterPort`: stable Agent-facing HTTP router port; defaults to `9848`.
 - `safs.agentForwardingAgents`: selects Agents enabled for MCP forwarding;
-  defaults to `codex` and `claude`. Values are the Agent CLI command names
-  directly (e.g. `codex`, `claude`, `pi`); any CLI is accepted. The extension
+  defaults to `codex`, `claude`, `pi`, and `dsh`. Values are the Agent CLI
+  command names directly (e.g. `codex`, `claude`, `pi`, `dsh`); any CLI is
+  accepted. The extension
   first searches `PATH` for a CLI supporting the `mcp` instruction; if it is not
   found, it looks inside the corresponding installed VS Code extension. CLIs
   without an `mcp` subcommand are skipped and reported. `pi` is handled by a
@@ -265,4 +266,20 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   `pi-mcp-extension` config file (`~/.pi/agent/mcp.json`), no `pi mcp add`
   needed. **Using `pi` requires installing `pi-mcp-extension` in pi**
   (`pi install npm:pi-mcp-extension`) and restarting the pi session after
-  enabling forwarding so the tools load.
+  enabling forwarding so the tools load. `dsh` (DeepSeek Harness) also has no
+  `mcp` subcommand; its built-in handler writes an
+  `@deepseek-ai/dsh-mcp-client` plugin entry into `$DSH_HOME/cordis.patch.yml`
+  (default `~/.dsh/cordis.patch.yml`), which DSH hot-applies through its
+  config HMR watch without a restart.
+- `safs.agentPlatform`: the platform the Agents run on; defaults to `auto`
+  (same platform as the extension). Choose `wsl` when the extension runs on
+  Windows but the Agents run inside WSL: MCP registration reads/writes the
+  Agents' config files under the WSL home (`~/.pi/agent/mcp.json`,
+  `~/.dsh/cordis.patch.yml`), and Agent CLIs (`codex`/`claude`) are detected
+  and executed through `wsl.exe` inside WSL — including the bundled CLI inside
+  the WSL VS Code Server extensions directory
+  (`~/.vscode-server/extensions/<extId>-*/bin/...`, e.g.
+  `openai.chatgpt-*-linux-x64/bin/linux-x86_64/codex`) when it is missing from
+  the WSL PATH. **No setting is needed when the
+  extension itself is installed inside WSL**: the default `auto` already uses
+  the WSL home (`os.homedir()`, e.g. `/home/user`).

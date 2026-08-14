@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.7
+## 1.3.10
 
 - Sync progress shows in the bottom-center status bar: "正在同步…" on
   start, "远程(保存/删除/重命名/建目录) → 本地" on remote changes, and
@@ -11,6 +11,45 @@
   window (falls back to resolving the mount from config), so the local
   watcher starts and shows its status there too, and the sync keeps running
   as long as any window is open.
+
+## 1.3.9
+
+- Fix the WSL-agent platform edge case for extensions installed inside WSL:
+  when the extension itself runs in a WSL window, `os.homedir()` is already
+  the WSL home and the Linux filesystem cannot reach the `\\wsl.localhost`
+  UNC paths `wsl.exe` returns — the platform resolver now detects this and
+  always uses the local WSL home, never `wsl.exe` indirection, regardless of
+  `safs.agentPlatform`.
+- Agent CLI discovery now also scans the WSL VS Code Server extensions
+  directory (`~/.vscode-server/extensions/<extId>-*/bin/...`) when the
+  extension runs on Windows with `safs.agentPlatform=wsl`: a Codex/Claude CLI
+  installed only inside WSL (e.g. `openai.chatgpt-*-linux-x64/bin/linux-x86_64/codex`)
+  is found and executed through `wsl.exe`, since the Windows-side
+  `vscode.extensions.getExtension` cannot see extensions installed in WSL.
+  Bundled-CLI candidate names now follow the target platform (`codex`/`claude`
+  vs `codex.exe`/`claude.exe`).
+
+## 1.3.8
+
+- New setting `safs.agentPlatform` (`auto` | `wsl`, default `auto`): lets the
+  Agents run in a different platform than the extension. With `wsl`, MCP
+  registration reads/writes the Agents' config files under the WSL home
+  (resolved via `wsl.exe wslpath -w "$HOME"`, e.g. `~/.pi/agent/mcp.json` and
+  `~/.dsh/cordis.patch.yml`), and Agent CLIs (`codex`/`claude`) are detected
+  and executed through `wsl.exe` inside WSL instead of the extension-process
+  PATH.
+
+## 1.3.7
+
+- `safs.agentForwardingAgents` now defaults to `codex`, `claude`, `pi`, and
+  `dsh`. `dsh` (DeepSeek Harness) is handled by a built-in file-based handler:
+  SAFS writes an `@deepseek-ai/dsh-mcp-client` plugin entry into
+  `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`), which DSH
+  hot-applies via its config HMR watch without a restart. Removing the
+  forwarding entry cleans the patch back to its empty-root form while keeping
+  user entries intact.
+- Handler operation logs now use the Agent's own CLI name instead of the
+  hardcoded `pi-mcp` prefix.
 
 ## 1.3.6
 

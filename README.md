@@ -231,13 +231,25 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - `safs.agentMcpPort`
 - `safs.agentHttpRouterPort`
 - `safs.agentForwardingAgents`：选择启用 MCP 转发的 Agent，默认
-  `codex` 和 `claude`。配置值直接使用 Agent 的 CLI 命令名（如 `codex`、
-  `claude`、`pi`），支持任意 CLI。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，
+  `codex`、`claude`、`pi` 和 `dsh`。配置值直接使用 Agent 的 CLI 命令名（如 `codex`、
+  `claude`、`pi`、`dsh`），支持任意 CLI。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，
   找不到时再从对应的 VS Code Agent 扩展安装路径查找内置 CLI；检测到 CLI 不支持
   `mcp` 子命令时会跳过并提示。`pi` 通过内置处理器注册：把 SAFS 地址写入
   pi-mcp-extension 的配置文件（`~/.pi/agent/mcp.json`），无需 `pi mcp add`。
   **使用 `pi` 需要先在 pi 中安装 `pi-mcp-extension`**（`pi install npm:pi-mcp-extension`），
-  并在启用转发后重启 pi 会话以加载工具。
+  并在启用转发后重启 pi 会话以加载工具。`dsh`（DeepSeek Harness）同样没有
+  `mcp` 子命令，由内置处理器把 `@deepseek-ai/dsh-mcp-client` 插件条目写入
+  `$DSH_HOME/cordis.patch.yml`（默认 `~/.dsh/cordis.patch.yml`）；DSH 的 HMR
+  会热加载该配置，无需重启。
+- `safs.agentPlatform`：Agent 所在平台，默认 `auto`（与插件运行平台相同）。
+  插件运行在 Windows、Agent 在 WSL 中运行时选择 `wsl`：MCP 注册读写 WSL
+  家目录下的配置文件（`~/.pi/agent/mcp.json`、`~/.dsh/cordis.patch.yml`），
+  Agent CLI（`codex`/`claude`）也通过 `wsl.exe` 在 WSL 内检测与执行——
+  WSL PATH 没有时，还会从 WSL 的 VS Code Server 扩展目录
+  （`~/.vscode-server/extensions/<扩展ID>-*/bin/...`，如
+  `openai.chatgpt-*-linux-x64/bin/linux-x86_64/codex`）查找内置 CLI。
+  **插件本身装在 WSL 里时无需设置**：默认 `auto` 的 `os.homedir()` 就是 WSL
+  家目录（如 `/home/user`），直接读写即可。
 - `safs.highRiskCommandPatterns`：Agent 通过 MCP 请求远程命令时的高危匹配规则（正则数组），
   默认包含递归删除、磁盘/分区/文件系统操作、关机重启、管道执行远程脚本，以及 `sudo`/`su`/
   `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按

@@ -1,6 +1,6 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import type { CapturedProcessResult } from './process';
 
 /**
@@ -46,8 +46,13 @@ export interface AgentDefinition {
   displayName: string;
   /** 对应 VS Code Agent 扩展 ID，用于查找内置 CLI */
   extensionId?: string;
-  /** 扩展安装路径 → 内置 CLI 候选列表 */
-  bundledCandidates?: (extensionPath: string) => Promise<string[]>;
+  /**
+   * 扩展安装路径 → 内置 CLI 候选列表。
+   * @param extensionPath - 扩展根目录。
+   * @param platform - 目标 Agent 平台（默认当前进程平台）；WSL 场景显式传
+   * `linux`，避免 Windows 插件进程按 `win32` 生成 `codex.exe`。
+   */
+  bundledCandidates?: (extensionPath: string, platform?: NodeJS.Platform) => Promise<string[]>;
   /** MCP server 注册命令参数模板 */
   mcp: AgentMcpCapability;
 }
@@ -81,7 +86,7 @@ function piMcpSettingsPath(baseDir = os.homedir()): string {
   return path.join(baseDir, '.pi', 'agent', 'settings.json');
 }
 
-function piMcpResult(exitCode: number, stdout = '', stderr = ''): CapturedProcessResult {
+function fileHandlerResult(exitCode: number, stdout = '', stderr = ''): CapturedProcessResult {
   return { exitCode, stdout, stderr, truncated: false };
 }
 
@@ -134,9 +139,9 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
       mutateFn(config);
       await mkdir(path.dirname(configPath), { recursive: true });
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-      return piMcpResult(0, okMessage);
+      return fileHandlerResult(0, okMessage);
     } catch (error) {
-      return piMcpResult(
+      return fileHandlerResult(
         1, '', `pi-mcp config update failed: ${
           error instanceof Error ? error.message : String(error)
         }`
@@ -148,9 +153,9 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
     get: async (serverName) => {
       const server = (await readPiMcpConfig(configPath)).mcpServers?.[serverName];
       if (!server) {
-        return piMcpResult(0, `pi-mcp: server "${serverName}" not configured`);
+        return fileHandlerResult(0, `pi-mcp: server "${serverName}" not configured`);
       }
-      return piMcpResult(0, JSON.stringify({ serverName, ...server }, null, 2));
+      return fileHandlerResult(0, JSON.stringify({ serverName, ...server }, null, 2));
     },
     add: (serverName, url) => mutate((config) => {
       config.mcpServers ??= {};
@@ -178,6 +183,147 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
   };
 }
 
+// ─── dsh（DeepSeek Harness）的具体实现（无 mcp 子命令，通过 home 级 patch 注册） ────
+
+/**
+ * dsh（DeepSeek Harness）没有内置 mcp 子命令；MCP server 通过
+ * `@deepseek-ai/dsh-mcp-client` 插件在 loader patch 层挂载。SAFS 把固定
+ * HTTP MCP 路由写入 home 级用户 patch（`$DSH_HOME/cordis.patch.yml`，
+ * 默认 `~/.dsh/cordis.patch.yml`），该文件对每个 profile 生效，且被 DSH
+ * 的 HMR 实时监听：写入后热加载生效，无需重启 dsh。
+ */
+
+export function dshHomeDirectory(baseDir = os.homedir()): string {
+  return process.env.DSH_HOME && process.env.DSH_HOME.length > 0
+    ? process.env.DSH_HOME
+    : path.join(baseDir, '.dsh');
+}
+
+export function dshPatchFilePath(home: string): string {
+  return path.join(home, 'cordis.patch.yml');
+}
+
+const dshManagedHeader = `# Managed by vscode-serverless-agent-forwarding-for-remotes (SAFS) — DeepSeek Harness MCP registration.
+# Loaded by dsh as the home-level user patch layer over every profile.
+# The streamable-http URL carries a bearer token; keep this file private.`;
+
+/** dsh patch 中的 loader 条目 id：`mcp-<serverName>` */
+function dshEntryId(serverName: string): string {
+  return `mcp-${serverName}`;
+}
+
+/** 注册 SAFS 路由的 loader 条目 YAML 块 */
+function dshEntryYaml(serverName: string, url: string): string {
+  return [
+    `- id: ${dshEntryId(serverName)}`,
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    '  config:',
+    `    serverName: ${serverName}`,
+    '    transport: streamable-http',
+    `    url: '${url}'`
+  ].join('\n');
+}
+
+/**
+ * 在 patch 文本中定位托管条目。匹配顶层列表项
+ * （`- id: mcp-<serverName>` 位于第 0 列），返回整个块的字节范围，
+ * 结束于下一个顶层列表项或 EOF。
+ */
+export function findDshEntryBlock(
+  text: string, serverName: string
+): { start: number; end: number } | undefined {
+  const pattern = new RegExp(`^-[ \\t]+id:[ \\t]*${dshEntryId(serverName)}[ \\t]*$`, 'm');
+  const match = pattern.exec(text);
+  if (!match) return undefined;
+  const start = match.index;
+  const nextItem = /^-[ \t]+/gm;
+  nextItem.lastIndex = start + match[0].length;
+  const following = nextItem.exec(text);
+  return { start, end: following ? following.index : text.length };
+}
+
+/** 插入或替换托管条目；保留注释与用户条目，幂等（相同条目为 no-op） */
+export function upsertDshEntry(text: string, entry: string, serverName: string): string {
+  const block = findDshEntryBlock(text, serverName);
+  if (block) {
+    const blockText = text.slice(block.start, block.end);
+    const tail = text.slice(block.end);
+    const replacement = blockText.endsWith('\n') ? `${entry}\n` : entry;
+    return `${text.slice(0, block.start)}${replacement}${tail}`;
+  }
+  // 替换空 root 占位 `[]` 行（标准 profile 模板为注释 + `[]`），保留注释。
+  const emptyRoot = /^[ \t]*\[\s*\][ \t]*$/m;
+  if (emptyRoot.test(text)) return text.replace(emptyRoot, entry);
+  const trimmed = text.trim();
+  if (!trimmed) return `${dshManagedHeader}\n${entry}\n`;
+  const separator = text.endsWith('\n') ? '' : '\n';
+  return `${text}${separator}${entry}\n`;
+}
+
+export function dshAgentMcpHandler(options?: { home?: string }): AgentMcpHandler {
+  const home = options?.home ?? dshHomeDirectory();
+  const patchFile = dshPatchFilePath(home);
+  const readPatch = async (): Promise<string> => {
+    try {
+      return await readFile(patchFile, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw error;
+    }
+  };
+  const mutate = async (
+    mutateFn: (text: string) => string,
+    okMessage: string
+  ): Promise<CapturedProcessResult> => {
+    try {
+      const updated = mutateFn(await readPatch());
+      await mkdir(path.dirname(patchFile), { recursive: true });
+      await writeFile(patchFile, updated, 'utf8');
+      return fileHandlerResult(0, okMessage);
+    } catch (error) {
+      return fileHandlerResult(
+        1, '', `dsh patch update failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  };
+  return {
+    supportsMcp: true,
+    get: async (serverName) => {
+      const text = await readPatch();
+      const block = findDshEntryBlock(text, serverName);
+      if (!block) {
+        return fileHandlerResult(0, `dsh: server "${serverName}" not configured`);
+      }
+      return fileHandlerResult(0, text.slice(block.start, block.end).trimEnd());
+    },
+    add: (serverName, url) => mutate(
+      (text) => upsertDshEntry(text, dshEntryYaml(serverName, url), serverName),
+      `dsh: server "${serverName}" registered (streamable-http) in ${patchFile}`
+    ),
+    remove: (serverName) => mutate((text) => {
+      const block = findDshEntryBlock(text, serverName);
+      if (!block) return text;
+      let updated = `${text.slice(0, block.start)}${text.slice(block.end)}`.replace(/\n{3,}/g, '\n\n');
+      if (!/^-[ \t]+/m.test(updated)) updated = '[]\n';
+      return updated;
+    }, `dsh: server "${serverName}" removed`),
+    describeAdd: (serverName, url) => (
+      `追加到 ${patchFile}（DeepSeek Harness home 级用户 patch，写入后 HMR 热加载生效）：\n`
+      + dshEntryYaml(serverName, url)
+    ),
+    prerequisiteCheck: async () => {
+      try {
+        await access(path.join(home, 'profiles'));
+        return undefined;
+      } catch {
+        return `未检测到 DeepSeek Harness（${path.join(home, 'profiles')} 不存在）。请先安装并启动一次 dsh 后再启用转发。`;
+      }
+    }
+  };
+}
+
 // ─── 内置 Agent 定义 ──────────────────────────────────────────────────────────
 
 export const builtinAgentDefinitions: AgentDefinition[] = [
@@ -185,14 +331,14 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
     cliName: 'codex',
     displayName: 'Codex',
     extensionId: 'openai.chatgpt',
-    bundledCandidates: async (extensionPath) => {
+    bundledCandidates: async (extensionPath, platform = process.platform) => {
       const binRoot = path.join(extensionPath, 'bin');
       try {
         const platformDirectories = await readdir(binRoot, { withFileTypes: true });
         return platformDirectories
           .filter((entry) => entry.isDirectory())
           .map((entry) => path.join(
-            binRoot, entry.name, process.platform === 'win32' ? 'codex.exe' : 'codex'
+            binRoot, entry.name, platform === 'win32' ? 'codex.exe' : 'codex'
           ));
       } catch {
         // The installed Codex extension does not expose a bundled CLI.
@@ -210,10 +356,10 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
     legacyIds: ['claudeCode'],
     displayName: 'Claude Code',
     extensionId: 'anthropic.claude-code',
-    bundledCandidates: async (extensionPath) => [
+    bundledCandidates: async (extensionPath, platform = process.platform) => [
       path.join(
         extensionPath, 'resources', 'native-binary',
-        process.platform === 'win32' ? 'claude.exe' : 'claude'
+        platform === 'win32' ? 'claude.exe' : 'claude'
       )
     ],
     mcp: {
@@ -234,6 +380,18 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
       // pi 没有 mcp 子命令：通过 pi-mcp-extension 的配置文件注册
       handler: piAgentMcpHandler()
     }
+  },
+  {
+    cliName: 'dsh',
+    displayName: 'dsh (DeepSeek Harness)',
+    mcp: {
+      get: (serverName) => ['mcp', 'get', serverName],
+      add: (serverName, url) => ['mcp', 'add', serverName, '--url', url],
+      remove: (serverName) => ['mcp', 'remove', serverName],
+      // dsh 没有 mcp 子命令：通过 $DSH_HOME/cordis.patch.yml 注册
+      // @deepseek-ai/dsh-mcp-client 插件实例（HMR 热加载，无需重启）
+      handler: dshAgentMcpHandler()
+    }
   }
 ];
 
@@ -250,15 +408,38 @@ export function genericAgentDefinition(cliName: string): AgentDefinition {
   };
 }
 
-/** 把配置里的 CLI 名解析为 Agent 定义（兼容旧 key、去重） */
-export function resolveAgentDefinitions(cliNames: string[]): AgentDefinition[] {
+/** 为文件式 handler 的 Agent 重建定义，使 handler 读写 Agent 自己的家目录（WSL 场景） */
+function handlerForAgentHome(def: AgentDefinition, home: string): AgentMcpHandler {
+  switch (def.cliName) {
+    case 'pi': return piAgentMcpHandler({ baseDir: home });
+    // dsh 的配置在 DSH home（默认 ~/.dsh）下：Agent home 下的 .dsh 目录。
+    case 'dsh': return dshAgentMcpHandler({ home: path.join(home, '.dsh') });
+    default: return def.mcp.handler!;
+  }
+}
+
+/** 把配置里的 CLI 名解析为 Agent 定义（兼容旧 key、去重；可指定 Agent 家目录） */
+export function resolveAgentDefinitions(
+  cliNames: string[], options: { agentHome?: string } = {}
+): AgentDefinition[] {
   const result: AgentDefinition[] = [];
   const seen = new Set<string>();
   for (const name of cliNames) {
     const builtin = builtinAgentDefinitions.find(
       (def) => def.cliName === name || def.legacyIds?.includes(name)
     );
-    const def = builtin ?? genericAgentDefinition(name);
+    let def = builtin ?? genericAgentDefinition(name);
+    // Agent 与插件不同平台（如 Agent 在 WSL 中）时，文件式 handler 指向
+    // Agent 的家目录，而不是插件进程的家目录。
+    if (options.agentHome && def.mcp.handler) {
+      def = {
+        ...def,
+        mcp: {
+          ...def.mcp,
+          handler: handlerForAgentHome(def, options.agentHome)
+        }
+      };
+    }
     if (seen.has(def.cliName)) continue;
     seen.add(def.cliName);
     result.push(def);
@@ -302,7 +483,7 @@ export async function runAgentMcpOperation(
       : op === 'add'
         ? await handler.add(serverName, url!)
         : await handler.remove(serverName);
-    runner.log(`pi-mcp:${op} ${serverName} → exit ${result.exitCode}`);
+    runner.log(`${def.cliName}-mcp:${op} ${serverName} → exit ${result.exitCode}`);
     return result;
   }
   const args = op === 'get'

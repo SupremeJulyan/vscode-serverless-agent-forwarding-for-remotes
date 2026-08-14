@@ -1,7 +1,6 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { access } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -28,6 +27,10 @@ import {
   AgentDefinition, AgentMcpCliRunner, agentSupportsMcpFor,
   resolveAgentDefinitions, runAgentMcpOperation
 } from './agent-mcp-registry';
+import {
+  AgentPlatformContext, bundledCliCandidate, resolveAgentPlatform,
+  wslBundledCli, wslCommandExists
+} from './agent-platform';
 import {
   ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
   writeLastRemoteDirectory
@@ -1629,33 +1632,50 @@ function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
 // 类型与内置定义见 agent-mcp-registry.ts（AgentDefinition、builtinAgentDefinitions、
 // genericAgentDefinition、resolveAgentDefinitions、agentSupportsMcpFor、runAgentMcpOperation）。
 
-async function detectAgentCommand(def: AgentDefinition): Promise<string | undefined> {
-  // 纯 handler 的 Agent（如 pi）不需要 CLI：MCP 注册由 handler 直接写
-  // 配置文件完成（~/.pi/agent/mcp.json），跳过 PATH 与扩展内置 CLI 检测。
+async function detectAgentCommand(
+  def: AgentDefinition, platform: AgentPlatformContext
+): Promise<string | undefined> {
+  // 纯 handler 的 Agent（如 pi、dsh）不需要 CLI：MCP 注册由 handler 直接写
+  // 配置文件完成（~/.pi/agent/mcp.json、$DSH_HOME/cordis.patch.yml），
+  // 跳过 PATH 与扩展内置 CLI 检测。
   if (def.mcp.handler) return def.cliName;
+  if (platform.wsl) {
+    // Agent 在 WSL 中：CLI 从 WSL 的 PATH 解析；WSL PATH 没有时，再从
+    // WSL 的 VS Code Server 扩展目录找内置 CLI（.vscode-server/extensions），
+    // 因为 Windows 端的 getExtension 看不到 WSL 里安装的扩展。
+    if (await wslCommandExists(def.cliName)) return def.cliName;
+    const bundled = await wslBundledCli(def, platform.home);
+    if (bundled) {
+      bridgeOutput?.appendLine(`[Agent MCP] 使用 WSL VS Code 扩展内置 CLI：${bundled}`);
+      return bundled;
+    }
+    return undefined;
+  }
   if (await commandExists(def.cliName)) return def.cliName;
   if (!def.extensionId || !def.bundledCandidates) return undefined;
   const extension = vscode.extensions.getExtension(def.extensionId);
   if (!extension) return undefined;
-  for (const candidate of await def.bundledCandidates(extension.extensionPath)) {
-    try {
-      await access(candidate);
-      bridgeOutput?.appendLine(`[Agent MCP] 使用 ${def.displayName} 扩展内置 CLI：${candidate}`);
-      return candidate;
-    } catch {
-      // Try the next candidate.
-    }
+  const bundled = await bundledCliCandidate(def, extension.extensionPath);
+  if (bundled) {
+    bridgeOutput?.appendLine(`[Agent MCP] 使用 ${def.displayName} 扩展内置 CLI：${bundled}`);
+    return bundled;
   }
   return undefined;
 }
 
 /** 注册表操作的宿主执行器：CLI 走 executeAgentMcpCommand，日志走输出面板 */
-const mcpRunner: AgentMcpCliRunner = {
-  run: (command, args) => executeAgentMcpCommand({ command, args }),
-  log: (message) => bridgeOutput?.appendLine(
-    `[${new Date().toLocaleString()}] [Agent MCP] $ ${message}`
-  )
-};
+function createMcpRunner(platform: AgentPlatformContext): AgentMcpCliRunner {
+  return {
+    run: (command, args) => executeAgentMcpCommand(
+      platform.wsl
+        ? { command: 'wsl.exe', args: ['-e', command, ...args] }
+        : { command, args }
+    ),
+    log: (message) => bridgeOutput?.appendLine(
+      `[${new Date().toLocaleString()}] [Agent MCP] $ ${message}`
+    )
+  };
+}
 
 async function configureDetectedAgents(
   context: vscode.ExtensionContext, shouldRegister: boolean
@@ -1667,9 +1687,20 @@ async function configureDetectedAgents(
     (item): item is string => typeof item === 'string'
   ) : []);
   const forwardingAgents = settings().get<string[]>(
-    'agentForwardingAgents', ['codex', 'claude']
+    'agentForwardingAgents', ['codex', 'claude', 'pi', 'dsh']
   );
-  const definitions = resolveAgentDefinitions(forwardingAgents);
+  const agentPlatform = await resolveAgentPlatform(
+    settings().get<string>('agentPlatform', 'auto')
+  );
+  const definitions = resolveAgentDefinitions(forwardingAgents, {
+    agentHome: agentPlatform.home
+  });
+  const mcpRunner = createMcpRunner(agentPlatform);
+  bridgeOutput?.appendLine(
+    `[Agent MCP] Agent 平台：${
+      agentPlatform.kind === 'wsl' ? `WSL（home=${agentPlatform.home}）` : '与插件相同'
+    }`
+  );
   bridgeOutput?.appendLine(
     `[Agent MCP] 转发目标：${[...forwardingAgents].join(', ') || '<empty>'}`
   );
@@ -1688,7 +1719,7 @@ async function configureDetectedAgents(
     const enabled = forwardingAgents.some(
       (name) => name === def.cliName || def.legacyIds?.includes(name)
     );
-    const command = await detectAgentCommand(def);
+    const command = await detectAgentCommand(def, agentPlatform);
     if (!command) {
       bridgeOutput?.appendLine(
         `[Agent MCP] Agent 检测：${def.displayName} 未找到 CLI${
