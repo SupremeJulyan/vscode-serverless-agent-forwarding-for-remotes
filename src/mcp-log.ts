@@ -1,6 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { appendFile, mkdir } from 'node:fs/promises';
+import { redactSensitiveText } from './redact';
 
 export interface McpCommandLogEntry {
   source: string;
@@ -25,9 +26,7 @@ export function mcpLogFilePath(
 export function formatMcpCommandLogLine(
   entry: McpCommandLogEntry, now = new Date()
 ): string {
-  const redacted = entry.command.replace(
-    /([?&]token=)[^&\s'"\\]+/gi, '$1<hidden>'
-  );
+  const redacted = redactSensitiveText(entry.command);
   const escaped = redacted
     .replace(/\\/g, '\\\\')
     .replace(/\n/g, '\\n')

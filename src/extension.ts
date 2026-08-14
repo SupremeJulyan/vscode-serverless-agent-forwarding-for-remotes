@@ -49,6 +49,7 @@ import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
 import { appendMcpCommandLog } from './mcp-log';
+import { redactSensitiveText } from './redact';
 import {
   defaultHighRiskCommandPatterns, matchHighRiskCommand
 } from './high-risk-commands';
@@ -169,7 +170,7 @@ function planDisplayName(plan: CommandPlan): string {
 }
 
 function redactAgentMcpText(value: string): string {
-  return value.replace(/([?&]token=)[^&\s'"\\]+/gi, '$1<hidden>');
+  return redactSensitiveText(value);
 }
 
 function highRiskSettings(): {
@@ -218,10 +219,10 @@ async function timedPhase<T>(label: string, action: () => Promise<T>): Promise<T
 }
 
 async function promptMasterPassword(
-  context: vscode.ExtensionContext, confirm: boolean
+  context: vscode.ExtensionContext, confirm: boolean, force = false
 ): Promise<string> {
   const stored = await context.secrets.get(masterPasswordSecret);
-  if (stored) return stored;
+  if (stored && !force) return stored;
   const password = await input({
     title: '配置密码加密',
     prompt: confirm ? '设置配置加密主口令' : '输入配置加密主口令',
@@ -248,16 +249,15 @@ async function decryptHostPassword(context: vscode.ExtensionContext, encrypted: 
     try {
       return await decryptPassword(encrypted, stored);
     } catch {
-      await context.secrets.delete(masterPasswordSecret);
+      // 单个主机的密文可能已损坏，也可能是主口令已更换。不要删除全局 secret：
+      // 其它主机可能仍能用旧口令解密；这里仅对本次解密重新提示。
     }
   }
-  const password = await promptMasterPassword(context, false);
-  try {
-    return await decryptPassword(encrypted, password);
-  } catch (error) {
-    await context.secrets.delete(masterPasswordSecret);
-    throw error;
-  }
+  const password = await promptMasterPassword(context, false, true);
+  const decrypted = await decryptPassword(encrypted, password);
+  // 新口令成功解密后才更新全局 secret；失败则保持旧 secret 不动。
+  await context.secrets.store(masterPasswordSecret, password);
+  return decrypted;
 }
 
 async function bridgeMasterPasswordEnv(
@@ -827,8 +827,9 @@ async function openTerminal(
         env: {
           SSH_BRIDGE_MOUNT_NAME: mount.name,
           [terminalIdentityEnv]: terminalId,
+          // 主口令已通过 plan.env（WslAdapter 按 bridgeMasterPassword 注入）交给
+          // ssh-bridge；这里不再重复注入，避免交互式终端环境里可被读取。
           ...plan.env,
-          ...bridgePasswordEnv,
           ...credentials?.env
         },
         cwd: os.homedir(),
@@ -1160,10 +1161,10 @@ async function executeRemoteCommand(
       }).catch(logFailure);
       if (action === 'deny') {
         bridgeOutput?.appendLine(
-          `[高危指令拦截] 拒绝执行：${input.command}（规则：${matched}）`
+          `[高危指令拦截] 拒绝执行：${redactSensitiveText(input.command)}（规则：${matched}）`
         );
         throw new Error(
-          `高危指令已被 SAFS 拦截（规则：${matched}）：${input.command}`
+          `高危指令已被 SAFS 拦截（规则：${matched}）：${redactSensitiveText(input.command)}`
         );
       }
       const approved = await vscode.window.showWarningMessage(
@@ -1173,14 +1174,14 @@ async function executeRemoteCommand(
       ) === '允许执行';
       if (!approved) {
         bridgeOutput?.appendLine(
-          `[高危指令拦截] 用户拒绝：${input.command}（规则：${matched}）`
+          `[高危指令拦截] 用户拒绝：${redactSensitiveText(input.command)}（规则：${matched}）`
         );
         throw new Error(
-          `高危指令已被用户拒绝（规则：${matched}）：${input.command}`
+          `高危指令已被用户拒绝（规则：${matched}）：${redactSensitiveText(input.command)}`
         );
       }
       bridgeOutput?.appendLine(
-        `[高危指令拦截] 用户已批准：${input.command}（规则：${matched}）`
+        `[高危指令拦截] 用户已批准：${redactSensitiveText(input.command)}（规则：${matched}）`
       );
     }
   }
@@ -1206,7 +1207,7 @@ async function executeRemoteCommand(
       let result;
       if (platformAdapter.kind === 'windows') {
         bridgeOutput?.appendLine(
-          `[${new Date().toLocaleString()}] [Agent MCP] $ ${input.command} (cwd: ${remoteCwd})`
+          `[${new Date().toLocaleString()}] [Agent MCP] $ ${redactSensitiveText(input.command)} (cwd: ${remoteCwd})`
         );
         try {
           result = await executeSsh2Command(
@@ -1214,11 +1215,11 @@ async function executeRemoteCommand(
             remoteCwd, input.command, controller.signal
           );
           bridgeOutput?.appendLine(
-            `[Agent MCP] [${result.exitCode === 0 ? '完成' : `失败: exit ${result.exitCode}`}] ${input.command}`
+            `[Agent MCP] [${result.exitCode === 0 ? '完成' : `失败: exit ${result.exitCode}`}] ${redactSensitiveText(input.command)}`
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          bridgeOutput?.appendLine(`[Agent MCP] [失败] ${input.command}: ${detail}`);
+          bridgeOutput?.appendLine(`[Agent MCP] [失败] ${redactSensitiveText(input.command)}: ${detail}`);
           throw error;
         }
       } else {
