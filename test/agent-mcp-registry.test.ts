@@ -69,6 +69,7 @@ test('resolveAgentDefinitions with agentHome points file handlers at the Agent h
   const dshAdd = await dsh.mcp.handler!.add('safs', 'http://x/mcp');
   assert.equal(dshAdd.exitCode, 0);
   const dshText = await readFile(dshPatchFilePath(path.join(agentHome, '.dsh')), 'utf8');
+  assert.ok(dshText.includes('- insert:'));
   assert.ok(dshText.includes('- id: mcp-safs'));
   assert.ok(dshText.includes("name: '@deepseek-ai/dsh-mcp-client'"));
   await rm(path.join(agentHome, '.dsh'), { recursive: true, force: true });
@@ -131,6 +132,21 @@ test('runAgentMcpOperation falls back to CLI for command-based agents', async ()
     '/opt/codex mcp get safs',
     '/opt/codex mcp remove safs'
   ]);
+});
+
+test('runAgentMcpOperation forwards the abort signal to CLI execution', async () => {
+  const codex = builtinAgentDefinitions.find((def) => def.cliName === 'codex')!;
+  let receivedSignal: AbortSignal | undefined;
+  const runner: AgentMcpCliRunner = {
+    run: async (_command, _args, signal) => {
+      receivedSignal = signal;
+      return result(0);
+    },
+    log: () => {}
+  };
+  const controller = new AbortController();
+  await runAgentMcpOperation(codex, '/opt/codex', 'get', undefined, runner, 'safs', controller.signal);
+  assert.equal(receivedSignal, controller.signal);
 });
 
 // ─── pi 配置文件实现（原 pi-mcp-config.test.ts） ───────────────────────────────
@@ -279,10 +295,13 @@ test('dsh add writes the streamable-http plugin entry and get reads it back', as
     assert.equal(addResult.exitCode, 0);
 
     const text = await readFile(dshPatchFilePath(home), 'utf8');
-    assert.ok(text.includes('- id: mcp-safs'));
-    assert.ok(text.includes("name: '@deepseek-ai/dsh-mcp-client'"));
-    assert.ok(text.includes('serverName: safs'));
-    assert.ok(text.includes(`url: '${url}'`));
+    // dsh patch 是“补丁方言”：新行必须包在 `- insert:` 里，顶层 `- id:` 只会
+    // 按 id 覆盖已有行（目标不存在时被静默丢弃）。
+    assert.ok(text.includes('- insert:'));
+    assert.ok(text.includes('    - id: mcp-safs'));
+    assert.ok(text.includes("      name: '@deepseek-ai/dsh-mcp-client'"));
+    assert.ok(text.includes('        serverName: safs'));
+    assert.ok(text.includes(`        url: '${url}'`));
 
     const getResult = await handler.get('safs');
     assert.equal(getResult.exitCode, 0);
@@ -393,7 +412,7 @@ test('dsh prerequisiteCheck requires an installed DSH home', async () => {
 
 test('upsertDshEntry and findDshEntryBlock tolerate other entries', () => {
   const base = `- id: mcp-other\n  name: 'some-plugin'\n  config: {}\n`;
-  const entry = `- id: mcp-safs\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    serverName: safs\n    transport: streamable-http\n    url: 'http://x'\n`;
+  const entry = `- insert:\n    - id: mcp-safs\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: safs\n        transport: streamable-http\n        url: 'http://x'`;
   const updated = upsertDshEntry(`${base}[]\n`, entry, 'safs');
   assert.ok(updated.includes('- id: mcp-other'));
   assert.ok(updated.includes('- id: mcp-safs'));

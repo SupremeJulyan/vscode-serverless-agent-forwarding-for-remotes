@@ -54,8 +54,8 @@ export interface AgentDefinition {
 
 /** 注册表向调用方提供的 CLI 执行能力（由宿主注入，避免依赖 vscode/日志实现） */
 export interface AgentMcpCliRunner {
-  /** 执行一条 CLI 命令并返回结果 */
-  run(command: string, args: string[]): Promise<CapturedProcessResult>;
+  /** 执行一条 CLI 命令并返回结果（signal 用于超时/取消） */
+  run(command: string, args: string[], signal?: AbortSignal): Promise<CapturedProcessResult>;
   /** 记录 handler 操作的日志行 */
   log(message: string): void;
 }
@@ -210,32 +210,49 @@ function dshEntryId(serverName: string): string {
   return `mcp-${serverName}`;
 }
 
-/** 注册 SAFS 路由的 loader 条目 YAML 块 */
+/**
+ * 注册 SAFS 路由的 loader 条目 YAML 块。
+ *
+ * dsh 的 `cordis.patch.yml` 使用“补丁方言”（见 @deepseek-ai/cordis-plugin-include
+ * 的 applyEntryPatches）：顶层 `- id:` 只按 id 覆盖已有行，目标行不存在时会被
+ * 警告后静默跳过；**新增行必须包在 `- insert:` 列表里**才会真正插入。
+ */
 function dshEntryYaml(serverName: string, url: string): string {
   return [
-    `- id: ${dshEntryId(serverName)}`,
-    "  name: '@deepseek-ai/dsh-mcp-client'",
-    '  config:',
-    `    serverName: ${serverName}`,
-    '    transport: streamable-http',
-    `    url: '${url}'`
+    '- insert:',
+    `    - id: ${dshEntryId(serverName)}`,
+    "      name: '@deepseek-ai/dsh-mcp-client'",
+    '      config:',
+    `        serverName: ${serverName}`,
+    '        transport: streamable-http',
+    `        url: '${url}'`
   ].join('\n');
 }
 
 /**
- * 在 patch 文本中定位托管条目。匹配顶层列表项
- * （`- id: mcp-<serverName>` 位于第 0 列），返回整个块的字节范围，
- * 结束于下一个顶层列表项或 EOF。
+ * 在 patch 文本中定位托管条目所在的顶层块。条目 `- id: mcp-<serverName>`
+ * 位于 `- insert:` 列表内（带缩进）；同时兼容旧版扩展写出的无缩进顶层条目。
+ * 返回从所属顶层列表项（`- insert:` 或条目本身）开始、到下一个顶层列表项
+ * 或 EOF 的字节范围。
  */
 export function findDshEntryBlock(
   text: string, serverName: string
 ): { start: number; end: number } | undefined {
-  const pattern = new RegExp(`^-[ \\t]+id:[ \\t]*${dshEntryId(serverName)}[ \\t]*$`, 'm');
+  const pattern = new RegExp(`^([ \\t]*)-[ \\t]+id:[ \\t]*${dshEntryId(serverName)}[ \\t]*$`, 'm');
   const match = pattern.exec(text);
   if (!match) return undefined;
-  const start = match.index;
+  // 块起点：带缩进的条目回退到其所属的顶层列表项（`- insert:`）。
+  let start = match.index;
+  if (match[1].length > 0) {
+    const topLevel = /^-[ \t]+/gm;
+    let last: RegExpExecArray | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = topLevel.exec(text)) !== null && m.index < match.index) last = m;
+    if (last) start = last.index;
+  }
+  // 块终点：下一个顶层列表项，或 EOF。
   const nextItem = /^-[ \t]+/gm;
-  nextItem.lastIndex = start + match[0].length;
+  nextItem.lastIndex = start + 1;
   const following = nextItem.exec(text);
   return { start, end: following ? following.index : text.length };
 }
@@ -473,7 +490,8 @@ export async function runAgentMcpOperation(
   op: 'get' | 'add' | 'remove',
   url: string | undefined,
   runner: AgentMcpCliRunner,
-  serverName = 'safs'
+  serverName = 'safs',
+  signal?: AbortSignal
 ): Promise<CapturedProcessResult> {
   const handler = def.mcp.handler;
   if (handler) {
@@ -493,5 +511,5 @@ export async function runAgentMcpOperation(
   // `command` is the resolved CLI path (PATH lookup or the VS Code extension's
   // bundled binary), not the bare cliName — spawning the bare name fails with
   // ENOENT when the CLI is only available inside a VS Code extension.
-  return runner.run(command, args);
+  return runner.run(command, args, signal);
 }

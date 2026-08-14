@@ -40,6 +40,13 @@
 - `remote_read`（MCP）按字节范围读取，不再整文件下载后切片。
 - 激活提速：WSL 依赖安装后台执行不阻塞窗口；工作区恢复逐挂载容错；心跳
   错误日志去重；`reuseSshConnection` 缺省语义统一。
+- 打开远程目录提速：Agent 转发探测结果缓存 60s + 探测并行 + 单项 15s 超时
+  （不再每次打开都串行 spawn 全部 Agent CLI）；重复子目录校验复用内存缓存
+  （减少 realpath/stat 往返）；终端打开时 OpenSSH 能力探测与凭据准备并行。
+- 修复 dsh MCP 注册被静默丢弃：`cordis.patch.yml` 是补丁方言，新增行必须用
+  `- insert:` 包裹；此前写入顶层 `- id: mcp-safs` 只会按 id 覆盖已有行（目标
+  不存在时警告后跳过），导致 dsh 从未加载 SAFS MCP。现在生成正确的
+  `- insert:` 块，并兼容旧格式的定位与替换。
 
 ## 1.4.2
 

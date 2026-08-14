@@ -15,7 +15,7 @@ import {
   CommandPlan, createPlatformAdapter, platformExtensionStateKey
 } from './platform';
 import {
-  commandExists, executeCaptured,
+  CapturedProcessResult, commandExists, executeCaptured,
   missingExecutableName, resolveExecutable
 } from './process';
 import { closeSsh2ExecSessions, executeSsh2Command, Ssh2Terminal } from './ssh2-terminal';
@@ -71,6 +71,14 @@ const addSshConfigAction = 'Add SSH Config';
 const reconnectRemoteTerminalAction = '重连终端';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
 const logClearIntervalMs = 24 * 60 * 60 * 1000;
+/** Agent MCP 探测结果缓存：configureDetectedAgents 的 get 探测在 TTL 内复用，
+ * 避免每次打开目录/窗口都串行 spawn 全部 Agent CLI（codex/claude 启动可达数百 ms）。 */
+const agentProbeCacheTtlMs = 60_000;
+const agentProbeTimeoutMs = 15_000;
+const agentProbeCache = new Map<string, { status: CapturedProcessResult; at: number }>();
+/** 远程 cwd 校验结果缓存：短窗口内同一子目录复用 realpath/stat 结果，减少往返。 */
+const validatedRemoteCwdTtlMs = 30_000;
+const validatedRemoteCwdCache = new Map<string, { path: string; at: number }>();
 
 let output: vscode.OutputChannel;
 let bridgeOutput: vscode.LogOutputChannel | undefined;
@@ -364,12 +372,21 @@ async function cachedRemoteDirectory(folder: RemoteFolder): Promise<string> {
   const localRoot = localRootForFolder(folder);
   const cached = await readLastRemoteDirectory(localRoot);
   if (!cached || !isRemotePathInsideRoot(folder.remoteRoot, cached)) return folder.remoteRoot;
+  // 最近目录即远程根：无需再次 realpath/stat 往返。
+  if (cached === folder.remoteRoot) return folder.remoteRoot;
+  // 内存缓存：短窗口内同一子目录的校验结果复用，减少重复 realpath/stat RTT。
+  const memo = validatedRemoteCwdCache.get(folder.mountName);
+  if (memo && memo.path === cached && Date.now() - memo.at < validatedRemoteCwdTtlMs) {
+    await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, memo.path).catch(() => undefined);
+    return memo.path;
+  }
   try {
     const session = await pool.get(folder.hostName);
     const resolved = await session.realpath(cached);
     if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) return folder.remoteRoot;
     if ((await session.stat(resolved)).type !== 'directory') return folder.remoteRoot;
     await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
+    validatedRemoteCwdCache.set(folder.mountName, { path: resolved, at: Date.now() });
     return resolved;
   } catch {
     await writeLastRemoteDirectory(localRoot, folder.remoteRoot, folder.remoteRoot);
@@ -771,6 +788,9 @@ async function openTerminal(
   openingTerminalIds.add(terminalId);
   try {
     const resolved = resolveMount(config, mount);
+    // OpenSSH 能力探测与凭据准备相互独立，并行执行（首次 ssh -V 探测 ~100-300ms，
+    // 与主口令提示/配置写入等重叠，缩短首终端等待）。
+    const warmCapabilities = warmSshCliCapabilities();
     let credentials: AskpassCredentials | undefined;
     if (resolved.hostConfig.password) {
       resolved.hostConfig = await timedPhase(
@@ -785,7 +805,7 @@ async function openTerminal(
     // Probe the installed OpenSSH first so the legacy algorithm flags in the
     // plan match what this client understands (macOS/Linux ship a wide range
     // of OpenSSH versions, and old or new clients reject the fixed flags).
-    await warmSshCliCapabilities();
+    await warmCapabilities;
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
       bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
@@ -1689,7 +1709,7 @@ async function detectAgentCommand(
 /** 注册表操作的宿主执行器：CLI 走 executeAgentMcpCommand，日志走输出面板 */
 function createMcpRunner(): AgentMcpCliRunner {
   return {
-    run: (command, args) => executeAgentMcpCommand({ command, args }),
+    run: (command, args, signal) => executeAgentMcpCommand({ command, args }, signal),
     log: (message) => bridgeOutput?.appendLine(
       `[${new Date().toLocaleString()}] [Agent MCP] $ ${message}`
     )
@@ -1723,8 +1743,7 @@ async function configureDetectedAgents(
     supportsMcp: boolean;
   }
 
-  const states: AgentState[] = [];
-  for (const def of definitions) {
+  const states: AgentState[] = await Promise.all(definitions.map(async (def): Promise<AgentState> => {
     const enabled = forwardingAgents.some(
       (name) => name === def.cliName || def.legacyIds?.includes(name)
     );
@@ -1735,11 +1754,10 @@ async function configureDetectedAgents(
           def.extensionId ? `（PATH 与 VS Code 扩展 ${def.extensionId} 均无）` : ''
         }`
       );
-      states.push({
+      return {
         def, command: undefined, enabled,
         fixedExists: false, fixedConfigured: false, supportsMcp: true
-      });
-      continue;
+      };
     }
     const prerequisiteMissing = def.mcp.handler?.prerequisiteCheck
       ? await def.mcp.handler.prerequisiteCheck()
@@ -1748,19 +1766,44 @@ async function configureDetectedAgents(
       bridgeOutput?.appendLine(
         `[Agent MCP] ${def.displayName} 前置条件缺失，跳过自动注册：${prerequisiteMissing}`
       );
-      states.push({
+      return {
         def, command, enabled,
         fixedExists: false, fixedConfigured: false, supportsMcp: true
-      });
-      continue;
+      };
     }
-    const status = await runAgentMcpOperation(def, command, 'get', undefined, mcpRunner);
-    const output = `${status.stdout}\n${status.stderr}`;
-    const fixedExists = status.exitCode === 0;
-    const supportsMcp = agentSupportsMcpFor(def, status);
+    // 探测缓存：TTL 内复用同一 (cliName, routerUrl) 的结果；命中则跳过 spawn。
+    const cacheKey = `${def.cliName}\0${routerUrl ?? ''}`;
+    const cached = agentProbeCache.get(cacheKey);
+    const cachedStatus = cached && Date.now() - cached.at < agentProbeCacheTtlMs
+      ? cached.status
+      : undefined;
+    if (!cachedStatus) {
+      const signal = AbortSignal.timeout(agentProbeTimeoutMs);
+      const status = await runAgentMcpOperation(
+        def, command, 'get', undefined, mcpRunner, 'safs', signal
+      );
+      if (signal.aborted) {
+        bridgeOutput?.appendLine(
+          `[Agent MCP] ${def.displayName} 探测超时（${agentProbeTimeoutMs}ms），跳过自动注册。`
+        );
+        return {
+          def, command, enabled,
+          fixedExists: false, fixedConfigured: false, supportsMcp: true
+        };
+      }
+      agentProbeCache.set(cacheKey, { status, at: Date.now() });
+      const output = `${status.stdout}\n${status.stderr}`;
+      const fixedExists = status.exitCode === 0;
+      const supportsMcp = agentSupportsMcpFor(def, status);
+      const fixedConfigured = fixedExists && Boolean(routerUrl && output.includes(routerUrl));
+      return { def, command, enabled, fixedExists, fixedConfigured, supportsMcp };
+    }
+    const output = `${cachedStatus.stdout}\n${cachedStatus.stderr}`;
+    const fixedExists = cachedStatus.exitCode === 0;
+    const supportsMcp = agentSupportsMcpFor(def, cachedStatus);
     const fixedConfigured = fixedExists && Boolean(routerUrl && output.includes(routerUrl));
-    states.push({ def, command, enabled, fixedExists, fixedConfigured, supportsMcp });
-  }
+    return { def, command, enabled, fixedExists, fixedConfigured, supportsMcp };
+  }));
 
   const unsupportedMcp = states.filter((state) => state.command && !state.supportsMcp);
   for (const state of unsupportedMcp) {
@@ -1815,9 +1858,17 @@ async function configureDetectedAgents(
   ].filter(Boolean).join(' '));
   const failures: string[] = [];
   for (const state of needsDisable) {
-    const result = await runAgentMcpOperation(state.def, state.command!, 'remove', undefined, mcpRunner);
-    if (result.exitCode === 0) {
+    const signal = AbortSignal.timeout(agentProbeTimeoutMs);
+    const result = await runAgentMcpOperation(
+      state.def, state.command!, 'remove', undefined, mcpRunner, 'safs', signal
+    );
+    if (signal.aborted) {
+      failures.push(`${state.def.displayName} MCP remove 超时`);
+    } else if (result.exitCode === 0) {
       configured.delete(`${state.def.cliName}:safs`);
+      agentProbeCache.set(`${state.def.cliName}\0${routerUrl ?? ''}`, {
+        status: { exitCode: 1, stdout: '', stderr: '', truncated: false }, at: Date.now()
+      });
       bridgeOutput?.appendLine(
         `[Agent MCP] ${state.def.displayName} 未被设置启用，已移除其 MCP 转发入口`
       );
@@ -1828,7 +1879,10 @@ async function configureDetectedAgents(
   for (const state of needsSetup) {
     let canAdd = true;
     if (state.fixedExists) {
-      const removed = await runAgentMcpOperation(state.def, state.command!, 'remove', undefined, mcpRunner);
+      const removed = await runAgentMcpOperation(
+        state.def, state.command!, 'remove', undefined, mcpRunner, 'safs',
+        AbortSignal.timeout(agentProbeTimeoutMs)
+      );
       if (removed.exitCode !== 0) {
         canAdd = false;
         failures.push(
@@ -1837,11 +1891,21 @@ async function configureDetectedAgents(
       }
     }
     if (canAdd) {
-      const result = await runAgentMcpOperation(state.def, state.command!, 'add', routerUrl!, mcpRunner);
-      if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
+      const signal = AbortSignal.timeout(agentProbeTimeoutMs);
+      const result = await runAgentMcpOperation(
+        state.def, state.command!, 'add', routerUrl!, mcpRunner, 'safs', signal
+      );
+      if (signal.aborted) {
+        failures.push(`${state.def.displayName}: MCP add 超时`);
+      } else if (result.exitCode !== 0 && !/already exists/i.test(`${result.stdout}\n${result.stderr}`)) {
         failures.push(`${state.def.displayName}: ${result.stderr || result.stdout}`);
       } else {
         configured.add(`${state.def.cliName}:safs`);
+        // 注册成功后更新探测缓存，后续 configure 不再重复探测/重复 add。
+        agentProbeCache.set(`${state.def.cliName}\0${routerUrl ?? ''}`, {
+          status: { exitCode: 0, stdout: routerUrl ?? '', stderr: '', truncated: false },
+          at: Date.now()
+        });
         bridgeOutput?.appendLine(
           `[Agent MCP] ${state.def.displayName} 固定 HTTP MCP 路由注册成功`
         );
