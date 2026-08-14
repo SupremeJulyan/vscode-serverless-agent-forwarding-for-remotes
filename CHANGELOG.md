@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.2
+
+- Remove the `safs.agentPlatform` setting and the WSL agent-platform feature
+  introduced in 1.3.8: Agents always run on the extension's own platform — MCP
+  config files are read/written under the extension-process home
+  (`os.homedir()`), and Agent CLIs are detected on the local `PATH` or inside
+  the installed VS Code extension. Anyone who set `safs.agentPlatform=wsl`
+  now gets the default local behaviour; the setting can be removed from their
+  configuration.
+
 ## 1.4.1
 
 - Withdraw the WSL platform support introduced in 1.3.9 (reverted): the

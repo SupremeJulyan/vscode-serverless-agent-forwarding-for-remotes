@@ -29,9 +29,6 @@ import {
   resolveAgentDefinitions, runAgentMcpOperation
 } from './agent-mcp-registry';
 import {
-  AgentPlatformContext, resolveAgentPlatform, wslCommandExists
-} from './agent-platform';
-import {
   ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
   writeLastRemoteDirectory
 } from './agent-cwd';
@@ -1633,17 +1630,12 @@ function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
 // genericAgentDefinition、resolveAgentDefinitions、agentSupportsMcpFor、runAgentMcpOperation）。
 
 async function detectAgentCommand(
-  def: AgentDefinition, platform: AgentPlatformContext
+  def: AgentDefinition
 ): Promise<string | undefined> {
   // 纯 handler 的 Agent（如 pi、dsh）不需要 CLI：MCP 注册由 handler 直接写
   // 配置文件完成（~/.pi/agent/mcp.json、$DSH_HOME/cordis.patch.yml），
   // 跳过 PATH 与扩展内置 CLI 检测。
   if (def.mcp.handler) return def.cliName;
-  if (platform.wsl) {
-    // Agent 在 WSL 中：CLI 从 WSL 的 PATH 解析。
-    if (await wslCommandExists(def.cliName)) return def.cliName;
-    return undefined;
-  }
   if (await commandExists(def.cliName)) return def.cliName;
   if (!def.extensionId || !def.bundledCandidates) return undefined;
   const extension = vscode.extensions.getExtension(def.extensionId);
@@ -1661,13 +1653,9 @@ async function detectAgentCommand(
 }
 
 /** 注册表操作的宿主执行器：CLI 走 executeAgentMcpCommand，日志走输出面板 */
-function createMcpRunner(platform: AgentPlatformContext): AgentMcpCliRunner {
+function createMcpRunner(): AgentMcpCliRunner {
   return {
-    run: (command, args) => executeAgentMcpCommand(
-      platform.wsl
-        ? { command: 'wsl.exe', args: ['-e', command, ...args] }
-        : { command, args }
-    ),
+    run: (command, args) => executeAgentMcpCommand({ command, args }),
     log: (message) => bridgeOutput?.appendLine(
       `[${new Date().toLocaleString()}] [Agent MCP] $ ${message}`
     )
@@ -1686,18 +1674,8 @@ async function configureDetectedAgents(
   const forwardingAgents = settings().get<string[]>(
     'agentForwardingAgents', ['codex', 'claude', 'pi', 'dsh']
   );
-  const agentPlatform = await resolveAgentPlatform(
-    settings().get<string>('agentPlatform', 'auto')
-  );
-  const definitions = resolveAgentDefinitions(forwardingAgents, {
-    agentHome: agentPlatform.home
-  });
-  const mcpRunner = createMcpRunner(agentPlatform);
-  bridgeOutput?.appendLine(
-    `[Agent MCP] Agent 平台：${
-      agentPlatform.kind === 'wsl' ? `WSL（home=${agentPlatform.home}）` : '与插件相同'
-    }`
-  );
+  const definitions = resolveAgentDefinitions(forwardingAgents);
+  const mcpRunner = createMcpRunner();
   bridgeOutput?.appendLine(
     `[Agent MCP] 转发目标：${[...forwardingAgents].join(', ') || '<empty>'}`
   );
@@ -1716,7 +1694,7 @@ async function configureDetectedAgents(
     const enabled = forwardingAgents.some(
       (name) => name === def.cliName || def.legacyIds?.includes(name)
     );
-    const command = await detectAgentCommand(def, agentPlatform);
+    const command = await detectAgentCommand(def);
     if (!command) {
       bridgeOutput?.appendLine(
         `[Agent MCP] Agent 检测：${def.displayName} 未找到 CLI${

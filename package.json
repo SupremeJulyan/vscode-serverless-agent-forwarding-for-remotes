@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -475,15 +475,6 @@
             ]
           },
           "markdownDescription": "Agent CLI 名称列表，启用 Serverless Remote MCP 转发。扩展按名称从 `PATH` 查找支持 `mcp` 指令的 CLI，找不到时再从对应 VS Code Agent 扩展安装路径查找内置 CLI；**不支持的 MCP 的 CLI 会被跳过并提示。** 常见值：`codex`（OpenAI Codex）、`claude`（Anthropic Claude Code）、`pi`（pi coding agent）、`dsh`（DeepSeek Harness，写入 `$DSH_HOME/cordis.patch.yml` 注册 `@deepseek-ai/dsh-mcp-client`，HMR 热加载）等。"
-        },
-        "safs.agentPlatform": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "wsl"
-          ],
-          "default": "auto",
-          "markdownDescription": "Agent 所在平台：`auto`（默认，与插件运行平台相同），`wsl`（Agent 在 WSL 中运行——MCP 注册读写 WSL 家目录下的配置文件（如 `~/.pi/agent/mcp.json`、`$DSH_HOME/cordis.patch.yml`），Agent CLI 通过 `wsl.exe` 在 WSL 内检测与执行）。插件运行在 Windows 且 Agent 在 WSL 时选择 `wsl`。"
         },
         "safs.highRiskCommandPatterns": {
           "type": "array",
