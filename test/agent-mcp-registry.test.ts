@@ -42,26 +42,6 @@ test('claude add uses its own arg style, codex uses codex style', () => {
   );
 });
 
-test('bundledCandidates honors the target platform for bundled binary names', async () => {
-  const codex = builtinAgentDefinitions.find((def) => def.cliName === 'codex')!;
-  const claude = builtinAgentDefinitions.find((def) => def.cliName === 'claude')!;
-  const root = '/ext';
-
-  // Linux/WSL target: no .exe suffix.
-  const codexLinux = await codex.bundledCandidates!(root, 'linux');
-  assert.ok(codexLinux.every((candidate) => candidate.endsWith('/codex')));
-  // Windows target: .exe suffix.
-  const codexWin = await codex.bundledCandidates!(root, 'win32');
-  assert.ok(codexWin.every((candidate) => candidate.endsWith('codex.exe')));
-  // Claude: resources/native-binary layout, name follows the platform too.
-  assert.deepEqual(await claude.bundledCandidates!(root, 'linux'), [
-    path.join(root, 'resources', 'native-binary', 'claude')
-  ]);
-  assert.deepEqual(await claude.bundledCandidates!(root, 'win32'), [
-    path.join(root, 'resources', 'native-binary', 'claude.exe')
-  ]);
-});
-
 test('resolveAgentDefinitions handles legacy ids, dedup and unknown fallback', () => {
   const resolved = resolveAgentDefinitions(['claudeCode', 'claude', 'codex', 'unknown-cli']);
   assert.deepEqual(resolved.map((def) => def.cliName), ['claude', 'codex', 'unknown-cli']);

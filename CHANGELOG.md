@@ -24,23 +24,6 @@
   watcher starts and shows its status there too, and the sync keeps running
   as long as any window is open.
 
-## 1.3.9
-
-- Fix the WSL-agent platform edge case for extensions installed inside WSL:
-  when the extension itself runs in a WSL window, `os.homedir()` is already
-  the WSL home and the Linux filesystem cannot reach the `\\wsl.localhost`
-  UNC paths `wsl.exe` returns — the platform resolver now detects this and
-  always uses the local WSL home, never `wsl.exe` indirection, regardless of
-  `safs.agentPlatform`.
-- Agent CLI discovery now also scans the WSL VS Code Server extensions
-  directory (`~/.vscode-server/extensions/<extId>-*/bin/...`) when the
-  extension runs on Windows with `safs.agentPlatform=wsl`: a Codex/Claude CLI
-  installed only inside WSL (e.g. `openai.chatgpt-*-linux-x64/bin/linux-x86_64/codex`)
-  is found and executed through `wsl.exe`, since the Windows-side
-  `vscode.extensions.getExtension` cannot see extensions installed in WSL.
-  Bundled-CLI candidate names now follow the target platform (`codex`/`claude`
-  vs `codex.exe`/`claude.exe`).
-
 ## 1.3.8
 
 - New setting `safs.agentPlatform` (`auto` | `wsl`, default `auto`): lets the

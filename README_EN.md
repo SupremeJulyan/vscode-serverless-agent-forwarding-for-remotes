@@ -276,10 +276,4 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   Windows but the Agents run inside WSL: MCP registration reads/writes the
   Agents' config files under the WSL home (`~/.pi/agent/mcp.json`,
   `~/.dsh/cordis.patch.yml`), and Agent CLIs (`codex`/`claude`) are detected
-  and executed through `wsl.exe` inside WSL — including the bundled CLI inside
-  the WSL VS Code Server extensions directory
-  (`~/.vscode-server/extensions/<extId>-*/bin/...`, e.g.
-  `openai.chatgpt-*-linux-x64/bin/linux-x86_64/codex`) when it is missing from
-  the WSL PATH. **No setting is needed when the
-  extension itself is installed inside WSL**: the default `auto` already uses
-  the WSL home (`os.homedir()`, e.g. `/home/user`).
+  and executed through `wsl.exe` inside WSL.

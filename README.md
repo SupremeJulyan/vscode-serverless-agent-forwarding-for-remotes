@@ -244,12 +244,7 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - `safs.agentPlatform`：Agent 所在平台，默认 `auto`（与插件运行平台相同）。
   插件运行在 Windows、Agent 在 WSL 中运行时选择 `wsl`：MCP 注册读写 WSL
   家目录下的配置文件（`~/.pi/agent/mcp.json`、`~/.dsh/cordis.patch.yml`），
-  Agent CLI（`codex`/`claude`）也通过 `wsl.exe` 在 WSL 内检测与执行——
-  WSL PATH 没有时，还会从 WSL 的 VS Code Server 扩展目录
-  （`~/.vscode-server/extensions/<扩展ID>-*/bin/...`，如
-  `openai.chatgpt-*-linux-x64/bin/linux-x86_64/codex`）查找内置 CLI。
-  **插件本身装在 WSL 里时无需设置**：默认 `auto` 的 `os.homedir()` 就是 WSL
-  家目录（如 `/home/user`），直接读写即可。
+  Agent CLI（`codex`/`claude`）也通过 `wsl.exe` 在 WSL 内检测与执行。
 - `safs.highRiskCommandPatterns`：Agent 通过 MCP 请求远程命令时的高危匹配规则（正则数组），
   默认包含递归删除、磁盘/分区/文件系统操作、关机重启、管道执行远程脚本，以及 `sudo`/`su`/
   `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按
