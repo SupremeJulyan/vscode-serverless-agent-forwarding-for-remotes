@@ -18,7 +18,7 @@ import {
   commandExists, executeCaptured,
   missingExecutableName, resolveExecutable
 } from './process';
-import { executeSsh2Command, Ssh2Terminal } from './ssh2-terminal';
+import { closeSsh2ExecSessions, executeSsh2Command, Ssh2Terminal } from './ssh2-terminal';
 import {
   passwordValueOffset
 } from './authentication';
@@ -2304,4 +2304,5 @@ export async function deactivate(): Promise<void> {
   await httpRouterStart?.catch(() => undefined);
   await httpRouter?.stop();
   await pool?.close();
+  closeSsh2ExecSessions();
 }

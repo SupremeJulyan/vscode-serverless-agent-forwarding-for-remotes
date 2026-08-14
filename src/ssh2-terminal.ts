@@ -39,67 +39,163 @@ export interface Ssh2CommandResult {
   truncated: boolean;
 }
 
+/**
+ * 可复用的 ssh2 执行连接（Windows 远程命令路径）：一条 TCP+SSH 连接服务多次
+ * exec，避免每条命令重新握手；keepalive 保活；连接死亡后下次调用自动重建。
+ */
+class Ssh2ExecSession {
+  readonly client = new Client();
+  readonly ready: Promise<void>;
+  private _dead = false;
+  private readyReject: ((error: Error) => void) | undefined;
+
+  constructor(
+    config: ConnectConfig,
+    private readonly password?: string
+  ) {
+    this.client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+      const replies = this.password
+        ? keyboardInteractivePasswordReplies(prompts, this.password)
+        : undefined;
+      finish(replies ?? []);
+    });
+    // 连接级错误/关闭是持久事件：标记会话失效；ready 之前到来的错误 reject 等待者。
+    this.client.on('error', (error: Error) => {
+      this._dead = true;
+      this.readyReject?.(error);
+      this.readyReject = undefined;
+    });
+    this.client.on('close', () => {
+      this._dead = true;
+    });
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.readyReject = reject;
+      this.client.once('ready', () => {
+        this.readyReject = undefined;
+        resolve();
+      });
+    });
+    this.client.connect(config);
+  }
+
+  get dead(): boolean {
+    return this._dead;
+  }
+
+  end(): void {
+    this._dead = true;
+    this.client.end();
+  }
+}
+
+const execSessions = new Map<string, Ssh2ExecSession>();
+const creatingExecSessions = new Map<string, Promise<Ssh2ExecSession>>();
+
+function execSessionKey(host: HostConfig): string {
+  return `${host.ip}:${host.port ?? 22}:${host.user}`;
+}
+
+async function getExecSession(
+  context: vscode.ExtensionContext, host: HostConfig, password?: string
+): Promise<Ssh2ExecSession> {
+  const key = execSessionKey(host);
+  const existing = execSessions.get(key);
+  if (existing && !existing.dead) return existing;
+  const creating = creatingExecSessions.get(key);
+  if (creating) {
+    const session = await creating;
+    if (!session.dead) return session;
+  }
+  const promise = (async () => {
+    const session = new Ssh2ExecSession(
+      await connectConfig(context, host, password), password
+    );
+    execSessions.set(key, session);
+    return session;
+  })();
+  creatingExecSessions.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    creatingExecSessions.delete(key);
+  }
+}
+
+/** 停用时释放全部可复用执行连接。 */
+export function closeSsh2ExecSessions(): void {
+  for (const session of execSessions.values()) session.end();
+  execSessions.clear();
+  creatingExecSessions.clear();
+}
+
 export async function executeSsh2Command(
   context: vscode.ExtensionContext, host: HostConfig, password: string | undefined,
   remoteCwd: string, command: string, signal?: AbortSignal, maxOutputBytes = 1024 * 1024
 ): Promise<Ssh2CommandResult> {
-  const client = new Client();
-  const config = await connectConfig(context, host, password);
+  const session = await getExecSession(context, host, password);
+  await session.ready;
   return new Promise<Ssh2CommandResult>((resolve, reject) => {
     let settled = false;
+    let stream: ClientChannel | undefined;
     const finishError = (error: Error) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener('abort', abort);
-      client.end();
+      session.client.removeListener('error', onClientError);
       reject(error);
     };
-    const abort = () => finishError(new Error('Remote command was cancelled'));
+    const onClientError = (error: Error) => finishError(error);
+    const abort = () => {
+      if (settled) return;
+      if (stream) {
+        // 只关闭当前通道，不影响池中其它并发调用。
+        stream.close();
+      } else {
+        // 连接尚未就绪/未开始执行：结束该会话，下次调用重建。
+        session.end();
+        execSessions.delete(execSessionKey(host));
+      }
+      finishError(new Error('Remote command was cancelled'));
+    };
     if (signal?.aborted) {
       abort();
       return;
     }
     signal?.addEventListener('abort', abort, { once: true });
-    client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
-      const replies = password ? keyboardInteractivePasswordReplies(prompts, password) : undefined;
-      finish(replies ?? []);
-    });
-    client.once('error', finishError);
-    client.once('ready', () => {
-      client.exec(ssh2RemoteCommand(remoteCwd, command), (error, stream) => {
-        if (error) {
-          finishError(error);
-          return;
+    session.client.on('error', onClientError);
+    session.client.exec(ssh2RemoteCommand(remoteCwd, command), (error, execStream) => {
+      if (error) {
+        finishError(error);
+        return;
+      }
+      stream = execStream;
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let capturedBytes = 0;
+      let truncated = false;
+      const capture = (target: Buffer[], chunk: Buffer) => {
+        const remaining = maxOutputBytes - capturedBytes;
+        if (remaining > 0) {
+          target.push(chunk.subarray(0, remaining));
+          capturedBytes += Math.min(chunk.length, remaining);
         }
-        const stdout: Buffer[] = [];
-        const stderr: Buffer[] = [];
-        let capturedBytes = 0;
-        let truncated = false;
-        const capture = (target: Buffer[], chunk: Buffer) => {
-          const remaining = maxOutputBytes - capturedBytes;
-          if (remaining > 0) {
-            target.push(chunk.subarray(0, remaining));
-            capturedBytes += Math.min(chunk.length, remaining);
-          }
-          if (chunk.length > remaining) truncated = true;
-        };
-        stream.on('data', (chunk: Buffer) => capture(stdout, chunk));
-        stream.stderr.on('data', (chunk: Buffer) => capture(stderr, chunk));
-        stream.once('close', (code: number | undefined) => {
-          if (settled) return;
-          settled = true;
-          signal?.removeEventListener('abort', abort);
-          client.end();
-          resolve({
-            exitCode: code ?? 1,
-            stdout: Buffer.concat(stdout).toString(),
-            stderr: Buffer.concat(stderr).toString(),
-            truncated
-          });
+        if (chunk.length > remaining) truncated = true;
+      };
+      execStream.on('data', (chunk: Buffer) => capture(stdout, chunk));
+      execStream.stderr.on('data', (chunk: Buffer) => capture(stderr, chunk));
+      execStream.once('close', (code: number | undefined) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', abort);
+        session.client.removeListener('error', onClientError);
+        resolve({
+          exitCode: code ?? 1,
+          stdout: Buffer.concat(stdout).toString(),
+          stderr: Buffer.concat(stderr).toString(),
+          truncated
         });
       });
     });
-    client.connect(config);
   });
 }
 
