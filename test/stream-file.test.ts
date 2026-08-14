@@ -89,3 +89,13 @@ test('pipeStreams abort destroys both ends and rejects', async () => {
   assert.equal(source.destroyed, true);
   assert.equal(target.destroyed, true);
 });
+
+test('small transfers still report deltas (first emit + finish flush)', async () => {
+  const deltas: number[] = [];
+  const target = new PassThrough();
+  target.resume();
+  await pipeStreams(Readable.from([Buffer.from('tiny')]), target, {
+    onDelta: (delta) => deltas.push(delta)
+  });
+  assert.equal(deltas.reduce((sum, delta) => sum + delta, 0), 4);
+});

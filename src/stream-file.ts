@@ -22,6 +22,10 @@ export async function pipeStreams(
 ): Promise<void> {
   let received = 0;
   let lastReport = 0;
+  let lastEmitAt = 0;
+  // 时间节流（约 150ms）：慢速链接、小文件也能持续上报进度，而非按字节量
+  // 等到 1MB 才发第一条；finish 时 flush 尾部。
+  const emitIntervalMs = 150;
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     const cleanup = () => options.signal?.removeEventListener('abort', aborted);
@@ -42,9 +46,11 @@ export async function pipeStreams(
     options.signal?.addEventListener('abort', aborted, { once: true });
     source.on('data', (chunk: Buffer) => {
       received += chunk.length;
-      if (received - lastReport >= 1024 * 1024) {
+      const now = Date.now();
+      if (now - lastEmitAt >= emitIntervalMs) {
         options.onDelta?.(received - lastReport);
         lastReport = received;
+        lastEmitAt = now;
       }
     });
     source.once('error', (error: Error) => fail(error));

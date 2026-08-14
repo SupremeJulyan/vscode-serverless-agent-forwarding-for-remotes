@@ -735,24 +735,29 @@ async function downloadRemoteFile(
     const controller = new AbortController();
     const onCancelled = token.onCancellationRequested(() => controller.abort());
     let cumulative = 0;
-    let lastPercent = 0;
+    // 立即上报一次：通知一出现即带文件名/大小，而不是等跨过 1% 才显示。
+    progress.report({
+      message: `${baseName}：0 B / ${formatDownloadBytes(totalBytes)}（0%）`
+    });
     try {
       const source = await session.readFileStream(remotePath, controller.signal);
       await writeStreamToFile(source, target, {
         onDelta: (delta) => {
           cumulative += delta;
-          const percent = totalBytes > 0 ? Math.floor(cumulative / totalBytes * 100) : 0;
-          if (percent > lastPercent) {
-            progress.report({
-              message: `${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(totalBytes)}`,
-              increment: percent - lastPercent
-            });
-            lastPercent = percent;
-          }
+          const percent = totalBytes > 0 ? cumulative / totalBytes * 100 : 0;
+          progress.report({
+            message: totalBytes > 0
+              ? `${baseName}：${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(totalBytes)}（${Math.floor(percent)}%）`
+              : `${baseName}：${formatDownloadBytes(cumulative)}`,
+            increment: totalBytes > 0 ? delta / totalBytes * 100 : undefined
+          });
         },
         signal: controller.signal
       });
-      progress.report({ message: `完成：${formatDownloadBytes(totalBytes)}`, increment: 100 - lastPercent });
+      progress.report({
+        message: `完成：${baseName}（${formatDownloadBytes(totalBytes)}）`,
+        increment: totalBytes > 0 ? 100 - cumulative / totalBytes * 100 : undefined
+      });
     } catch (error) {
       if (controller.signal.aborted) {
         // writeStreamToFile 已删除半成品文件。
@@ -798,8 +803,10 @@ async function downloadRemoteDirectory(
     const controller = new AbortController();
     const onCancelled = token.onCancellationRequested(() => controller.abort());
     let cumulative = 0;
-    let lastPercent = 0;
     let currentFile = '';
+    progress.report({
+      message: `${baseName}：0 B / ${formatDownloadBytes(totalBytes)}（0%）`
+    });
     try {
       for (const file of files) {
         if (controller.signal.aborted) break;
@@ -810,14 +817,13 @@ async function downloadRemoteDirectory(
         await writeStreamToFile(source, path.join(targetRoot, ...file.rel.split('/')), {
           onDelta: (delta) => {
             cumulative += delta;
-            const percent = totalBytes > 0 ? Math.floor(cumulative / totalBytes * 100) : 0;
-            if (percent > lastPercent) {
-              progress.report({
-                message: `${currentFile}：${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(totalBytes)}`,
-                increment: percent - lastPercent
-              });
-              lastPercent = percent;
-            }
+            const percent = totalBytes > 0 ? cumulative / totalBytes * 100 : 0;
+            progress.report({
+              message: totalBytes > 0
+                ? `${currentFile}：${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(totalBytes)}（${Math.floor(percent)}%）`
+                : `${currentFile}：${formatDownloadBytes(cumulative)}`,
+              increment: totalBytes > 0 ? delta / totalBytes * 100 : undefined
+            });
           },
           signal: controller.signal
         });
@@ -829,7 +835,10 @@ async function downloadRemoteDirectory(
         );
         return;
       }
-      progress.report({ message: `完成：${formatDownloadBytes(totalBytes)}`, increment: 100 - lastPercent });
+      progress.report({
+        message: `完成：${formatDownloadBytes(totalBytes)}`,
+        increment: totalBytes > 0 ? 100 - cumulative / totalBytes * 100 : undefined
+      });
     } catch (error) {
       if (controller.signal.aborted) {
         void vscode.window.showInformationMessage(`已取消下载目录 ${baseName}。`);
@@ -871,9 +880,11 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
     const controller = new AbortController();
     const onCancelled = token.onCancellationRequested(() => controller.abort());
     let cumulative = 0;
-    let lastPercent = 0;
     let currentName = '';
     let currentRemote = '';
+    progress.report({
+      message: `0 B / ${formatDownloadBytes(plan.totalBytes)}（0%）`
+    });
     try {
       for (const file of plan.files) {
         if (controller.signal.aborted) break;
@@ -888,15 +899,14 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
           onDelta: (delta) => {
             cumulative += delta;
             const percent = plan.totalBytes > 0
-              ? Math.floor(cumulative / plan.totalBytes * 100)
+              ? cumulative / plan.totalBytes * 100
               : 0;
-            if (percent > lastPercent) {
-              progress.report({
-                message: `${currentName}：${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(plan.totalBytes)}`,
-                increment: percent - lastPercent
-              });
-              lastPercent = percent;
-            }
+            progress.report({
+              message: plan.totalBytes > 0
+                ? `${currentName}：${formatDownloadBytes(cumulative)} / ${formatDownloadBytes(plan.totalBytes)}（${Math.floor(percent)}%）`
+                : `${currentName}：${formatDownloadBytes(cumulative)}`,
+              increment: plan.totalBytes > 0 ? delta / plan.totalBytes * 100 : undefined
+            });
           },
           signal: controller.signal
         });
@@ -909,7 +919,7 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
       }
       progress.report({
         message: `完成：${plan.files.length} 个文件（${formatDownloadBytes(plan.totalBytes)}）`,
-        increment: 100 - lastPercent
+        increment: plan.totalBytes > 0 ? 100 - cumulative / plan.totalBytes * 100 : undefined
       });
     } catch (error) {
       if (controller.signal.aborted) {
