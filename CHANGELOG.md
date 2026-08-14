@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.1
+
+- Withdraw the WSL platform support introduced in 1.3.9 (reverted): the
+  extension no longer special-cases running inside a WSL window, and on
+  Windows with `safs.agentPlatform=wsl` it no longer scans the WSL VS Code
+  Server extensions directory for a bundled Agent CLI. Agent CLI detection is
+  back to the 1.3.8 behaviour (`wsl.exe` checking the WSL PATH).
+
 ## 1.4.0
 
 - New setting `safs.hostKeyChangedAction` (`prompt` | `reject` | `accept`,
