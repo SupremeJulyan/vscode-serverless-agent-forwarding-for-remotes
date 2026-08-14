@@ -21,6 +21,11 @@
   丢失、文件被当成目录（`xx.exe/xx.exe`）。上传规划抽为可单测的
   `src/upload-plan.ts`：目录名进入远程路径（`targetDir/VPN/xx.exe`）、空目录
   一并创建，文件不再重复拼接 basename。
+- **修复大文件上传卡在开头**：ssh2 `createWriteStream` 在大文件/网关下存在
+  写位置与背压缺陷（首个块后不再排空，进度停在几百字节）。`writeFileStream`
+  改为**句柄式分块写**（`open → 逐块 write(显式偏移) → close`，写回调驱动
+  背压，每块 60s 超时防挂起），与整写 `writeFile` 同一底层语义；新增假
+  sftp 单测（偏移推进/打开失败/写错误/中止清理）。
 
 ## 1.4.3
 

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { Writable } from 'node:stream';
 import { Client, ConnectConfig, FileEntryWithStats, HostVerifier, SFTPWrapper, Stats } from 'ssh2';
 import { expandHome, HostConfig } from '../config';
 import { keyboardInteractivePasswordReplies } from '../authentication';
@@ -43,6 +44,9 @@ function abortError(): Error {
   error.name = 'AbortError';
   return error;
 }
+
+/** 流式写单个数据块的超时：远端停止确认（网关/抖动）时避免无限挂起。 */
+const sftpWriteChunkTimeoutMs = 60_000;
 
 function callback<T>(
   invoke: (done: (error: Error | undefined | null, value: T) => void) => void,
@@ -183,24 +187,66 @@ export class Ssh2SftpSession implements SftpSession {
     const flag = options.create
       ? (options.overwrite ? 'w' : 'wx')
       : (options.overwrite ? 'r+' : 'r+');
+    const sftp = this.sftp;
     return new Promise<NodeJS.WritableStream>((resolve, reject) => {
       if (signal?.aborted) {
         reject(abortError());
         return;
       }
-      const stream = this.sftp.createWriteStream(remotePath, { flags: flag });
-      const aborted = () => {
-        stream.destroy();
-        reject(abortError());
-      };
-      signal?.addEventListener('abort', aborted, { once: true });
-      stream.once('error', (error: Error) => {
-        signal?.removeEventListener('abort', aborted);
-        reject(error);
-      });
-      stream.once('open', () => {
-        signal?.removeEventListener('abort', aborted);
-        resolve(stream);
+      // 句柄式分块写：ssh2 的 createWriteStream 在大文件/网关下存在写位置与背压
+      // 缺陷（首个块后不再排空，上传卡在开头几百字节）。这里用
+      // open → 逐块 write(显式偏移) → close 流式写：写回调驱动背压，
+      // 与整写 writeFile 走同一底层语义；每个块带超时防无限挂起。
+      sftp.open(remotePath, flag, (openError, handle) => {
+        if (openError) {
+          reject(openError);
+          return;
+        }
+        let position = 0;
+        let handleOpen = true;
+        let pendingTimer: NodeJS.Timeout | undefined;
+        const writable = new Writable({
+          highWaterMark: 64 * 1024,
+          write(chunk: Buffer, _encoding, callback) {
+            pendingTimer = setTimeout(() => {
+              pendingTimer = undefined;
+              callback(new Error('远程写入超时'));
+            }, sftpWriteChunkTimeoutMs);
+            sftp.write(handle, chunk, 0, chunk.length, position, (writeError) => {
+              if (pendingTimer) {
+                clearTimeout(pendingTimer);
+                pendingTimer = undefined;
+              }
+              if (writeError) {
+                callback(writeError);
+                return;
+              }
+              position += chunk.length;
+              callback();
+            });
+          },
+          final(callback) {
+            handleOpen = false;
+            sftp.close(handle, (closeError) => callback(closeError ?? undefined));
+          },
+          destroy(error, callback) {
+            if (pendingTimer) {
+              clearTimeout(pendingTimer);
+              pendingTimer = undefined;
+            }
+            if (handleOpen) {
+              handleOpen = false;
+              sftp.close(handle, () => callback(error));
+            } else {
+              callback(error);
+            }
+          }
+        });
+        const aborted = () => writable.destroy(abortError());
+        signal?.addEventListener('abort', aborted, { once: true });
+        writable.once('finish', () => signal?.removeEventListener('abort', aborted));
+        writable.once('error', () => signal?.removeEventListener('abort', aborted));
+        resolve(writable);
       });
     });
   }
