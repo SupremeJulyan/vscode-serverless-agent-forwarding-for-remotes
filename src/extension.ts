@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, readdir, stat } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -37,6 +37,7 @@ import { connectSftp } from './sftp/client';
 import { SftpSession } from './sftp/session';
 import { scanRemote } from './sync-diff';
 import { pipeStreams, writeStreamToFile } from './stream-file';
+import { planUploads } from './upload-plan';
 import { defaultSshClientIdent, ensureSshCapabilities } from './ssh-algorithms';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import { migratePiSessionKeys } from './pi-session-migrate';
@@ -886,11 +887,15 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
       message: `0 B / ${formatDownloadBytes(plan.totalBytes)}（0%）`
     });
     try {
+      // 一次性创建全部远程目录（含目标根与空目录），再逐文件上传。
+      for (const dir of plan.dirs) {
+        if (controller.signal.aborted) break;
+        await ensureRemoteDir(session, dir);
+      }
       for (const file of plan.files) {
         if (controller.signal.aborted) break;
         currentName = path.basename(file.local);
         currentRemote = file.remote;
-        await ensureRemoteDir(session, path.posix.dirname(file.remote));
         const source = createReadStream(file.local);
         const target = await session.writeFileStream(
           file.remote, { create: true, overwrite: true }, controller.signal
@@ -950,36 +955,6 @@ async function collectUploadSources(resources: vscode.Uri[]): Promise<string[]> 
     defaultUri: vscode.Uri.file(os.homedir())
   });
   return picked?.map((uri) => uri.fsPath) ?? [];
-}
-
-interface UploadPlan {
-  files: Array<{ local: string; remote: string }>;
-  totalBytes: number;
-}
-
-/** 递归统计上传清单与总大小（目录 → 逐文件）。 */
-async function planUploads(sources: string[], targetDir: string): Promise<UploadPlan> {
-  const files: UploadPlan['files'] = [];
-  let totalBytes = 0;
-  const walk = async (localPath: string, remoteDir: string): Promise<void> => {
-    const entry = await stat(localPath);
-    if (entry.isDirectory()) {
-      const entries = await readdir(localPath, { withFileTypes: true });
-      for (const child of entries) {
-        await walk(
-          path.join(localPath, child.name),
-          path.posix.join(remoteDir, child.name)
-        );
-      }
-      return;
-    }
-    files.push({ local: localPath, remote: path.posix.join(remoteDir, path.basename(localPath)) });
-    totalBytes += entry.size;
-  };
-  for (const source of sources) {
-    await walk(source, targetDir);
-  }
-  return { files, totalBytes };
 }
 
 function currentRemoteLocation(): { mountName: string; remotePath: string } | undefined {
