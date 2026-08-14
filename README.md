@@ -65,9 +65,9 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 连接。
 
 1. 先在 SAFS 视图的远程文件夹连接项上点击“启用 Agent 转发”按钮（或右键菜单
-   中选择同一命令）。扩展会为检测到的 Agent CLI（默认 `codex` 和 `claude`，
-   可用 `safs.agentForwardingAgents` 扩展，如 `pi`）安装或更新名为 `safs`
-   的固定 HTTP MCP。
+   中选择同一命令）。扩展会为检测到的 Agent CLI（默认 `codex`、`claude`、
+   `pi` 和 `dsh`，可用 `safs.agentForwardingAgents` 扩展）安装或更新名为
+   `safs` 的固定 HTTP MCP。
 2. 验证注册：打开 Agent 并输入 `/mcp`（或打开其 MCP 管理界面），看到
    `safs` 条目即表示 MCP 注册成功。Agent 若是 VS Code 扩展，直接在新窗口的
    Agent 会话中确认即可。

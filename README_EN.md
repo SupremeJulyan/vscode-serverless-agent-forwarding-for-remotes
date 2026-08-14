@@ -77,8 +77,8 @@ platforms.
 1. First click the "Enable Agent Forwarding" button on the connection item in
    the SAFS view (or pick the same command from its context menu). The
    extension installs or updates the fixed `safs` HTTP MCP for the detected
-   Agent CLIs (default `codex` and `claude`; extend with
-   `safs.agentForwardingAgents`, e.g. `pi`).
+   Agent CLIs (default `codex`, `claude`, `pi`, and `dsh`; extend with
+   `safs.agentForwardingAgents`).
 2. Verify the registration: open the Agent and type `/mcp` (or open its MCP
    management view); seeing the `safs` entry means the MCP was registered
    successfully. If the Agent is a VS Code extension, just confirm it in the
