@@ -1108,17 +1108,19 @@ async function remoteRead(input: {
 }): Promise<unknown> {
   const { mount, folder } = await mountAndFolder(input.mountName);
   const remotePath = resolveRemotePath(folder, input.path);
-  const bytes = await (await pool.get(folder.hostName)).readFile(remotePath);
+  const session = await pool.get(folder.hostName);
+  const stat = await session.stat(remotePath);
   const offset = input.offset ?? 0;
-  const end = input.length ? offset + input.length : bytes.length;
-  const selected = bytes.slice(offset, end);
+  const length = input.length ?? Math.max(0, stat.size - offset);
+  // 按字节范围读取，避免大文件整读（remote_read 的 offset/length 语义）。
+  const bytes = await session.readFileRange(remotePath, offset, length);
   return {
     mountName: mount.name,
     path: remotePath,
     offset,
-    bytes: selected.length,
-    truncated: end < bytes.length,
-    content: new TextDecoder().decode(selected)
+    bytes: bytes.length,
+    truncated: offset + length < stat.size,
+    content: new TextDecoder().decode(bytes)
   };
 }
 
@@ -1356,31 +1358,37 @@ async function restoreRemoteWorkspaces(): Promise<void> {
   if (folders.length === 0) return;
   const config = await readConfig();
   for (const workspace of folders) {
-    const location = parseRemoteUri(workspace.uri.toString());
-    const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
-    if (!mount) continue;
-    const folder = await ensureFolder(mount);
-    if (!isRemotePathInsideRoot(folder.workspaceRoot, location.remotePath)) {
-      output.appendLine(
-        `工作区使用不受支持的旧 URI，请从 SAFS 面板重新打开：${mount.name}`
+    try {
+      const location = parseRemoteUri(workspace.uri.toString());
+      const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+      if (!mount) continue;
+      const folder = await ensureFolder(mount);
+      if (!isRemotePathInsideRoot(folder.workspaceRoot, location.remotePath)) {
+        output.appendLine(
+          `工作区使用不受支持的旧 URI，请从 SAFS 面板重新打开：${mount.name}`
+        );
+        continue;
+      }
+      const openedRemotePath = remotePathForUri(folder, location.remotePath);
+      await writeLastRemoteDirectory(
+        localRootForFolder(folder), folder.remoteRoot, openedRemotePath
       );
-      continue;
-    }
-    const openedRemotePath = remotePathForUri(folder, location.remotePath);
-    await writeLastRemoteDirectory(
-      localRootForFolder(folder), folder.remoteRoot, openedRemotePath
-    );
-    if (folder.remoteRoot !== openedRemotePath) {
-      output.appendLine(
-        `远程根目录已变化：${openedRemotePath} -> ${folder.remoteRoot}`
-      );
-    }
-    if (mount.remote_terminal === 'open') {
-      // 标记：本次自动连接后，首次远程文件激活时无条件跟随其目录（标签页恢复）。
-      restoredFileSyncPending.add(mount.name);
-      await openTerminal(vscodeContext, mount, openedRemotePath);
-      // 非阻塞补检，覆盖“文件先激活、终端后创建/事件先于监听器注册”的时序。
-      deferRestoreFollow(mount.name);
+      if (folder.remoteRoot !== openedRemotePath) {
+        output.appendLine(
+          `远程根目录已变化：${openedRemotePath} -> ${folder.remoteRoot}`
+        );
+      }
+      if (mount.remote_terminal === 'open') {
+        // 标记：本次自动连接后，首次远程文件激活时无条件跟随其目录（标签页恢复）。
+        restoredFileSyncPending.add(mount.name);
+        await openTerminal(vscodeContext, mount, openedRemotePath);
+        // 非阻塞补检，覆盖“文件先激活、终端后创建/事件先于监听器注册”的时序。
+        deferRestoreFollow(mount.name);
+      }
+    } catch (error) {
+      // 单个挂载恢复失败（口令取消、连接异常）不阻断其余挂载的恢复。
+      const detail = error instanceof Error ? error.message : String(error);
+      bridgeOutput?.appendLine(`[工作区恢复] ${workspace.uri.toString()}: ${detail}`);
     }
   }
 }
@@ -1503,10 +1511,15 @@ async function ensureAgentHttpRouter(
 
 function startAgentHttpRouterLeadership(context: vscode.ExtensionContext): void {
   if (agentHttpRouterHeartbeat) return;
+  // 相同错误只记录一次，避免非 leader 窗口每 ~4.5s 刷屏（端口被无关程序占用时）。
+  let lastLog = '';
+  const logOnce = (message: string) => {
+    if (lastLog === message) return;
+    lastLog = message;
+    bridgeOutput?.appendLine(`[Agent HTTP Router] ${message}`);
+  };
   const retry = () => void ensureAgentHttpRouter(context).catch((error) => {
-    bridgeOutput?.appendLine(
-      `[Agent HTTP Router] ${error instanceof Error ? error.message : String(error)}`
-    );
+    logOnce(error instanceof Error ? error.message : String(error));
   });
   retry();
   agentHttpRouterHeartbeat = setInterval(retry, 4_000 + Math.floor(Math.random() * 1_000));
@@ -2026,7 +2039,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // re-assert it before any terminal spawns the bridge.
   setWslBundlePath(vscode.Uri.joinPath(context.extensionUri, 'resources', 'wsl').fsPath);
   await ensureWslBridgeExecutable();
-  await ensureSystemDependencies();
+  // 依赖安装后台执行，不阻塞窗口激活（apt install 可能耗时数分钟）；
+  // 终端路径另有 hasRequiredWslDependencies 守卫。
+  void ensureSystemDependencies();
 
   registry = new RemoteFolderRegistry();
   let refreshTree: () => void = () => undefined;

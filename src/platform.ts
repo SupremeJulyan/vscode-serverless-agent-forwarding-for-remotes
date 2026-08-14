@@ -50,13 +50,15 @@ function shellQuote(value: string): string {
 }
 
 function connectionReuseArgs(options?: ConnectionOptions): string[] {
-  return options?.reuseSshConnection
-    ? [
+  // 缺省复用（与 WslAdapter 的 `=== false ? '0' : '1'` 语义一致），
+  // 显式 false 才关闭。
+  return options?.reuseSshConnection === false
+    ? []
+    : [
         '-o', 'ControlMaster=auto',
         '-o', 'ControlPersist=10m',
         '-o', 'ControlPath=~/.ssh/safs-%C'
-      ]
-    : [];
+      ];
 }
 
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {

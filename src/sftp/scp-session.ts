@@ -381,6 +381,13 @@ export class ScpSession implements SftpSession {
     return this.scpRead(remotePath, signal);
   }
 
+  // SCP 协议无法按范围读取：退化为整读后切片（仅 SFTP 子系统不可用的回退路径）。
+  async readFileRange(
+    remotePath: string, offset: number, length: number, signal?: AbortSignal
+  ): Promise<Uint8Array> {
+    return (await this.readFile(remotePath, signal)).subarray(offset, offset + length);
+  }
+
   async writeFile(
     remotePath: string,
     content: Uint8Array,

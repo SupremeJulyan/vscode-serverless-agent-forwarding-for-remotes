@@ -107,6 +107,36 @@ export class Ssh2SftpSession implements SftpSession {
     return callback<Buffer>((done) => this.sftp.readFile(remotePath, done), signal);
   }
 
+  readFileRange(
+    remotePath: string, offset: number, length: number, signal?: AbortSignal
+  ): Promise<Uint8Array> {
+    return new Promise<Uint8Array>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
+      const chunks: Buffer[] = [];
+      // createReadStream 的 start/end 走底层 read 范围，避免整文件下载。
+      const stream = this.sftp.createReadStream(remotePath, {
+        start: offset, end: offset + length - 1
+      });
+      const aborted = () => {
+        stream.destroy();
+        reject(abortError());
+      };
+      signal?.addEventListener('abort', aborted, { once: true });
+      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      stream.once('error', (error: Error) => {
+        signal?.removeEventListener('abort', aborted);
+        reject(error);
+      });
+      stream.once('end', () => {
+        signal?.removeEventListener('abort', aborted);
+        resolve(Buffer.concat(chunks));
+      });
+    });
+  }
+
   async writeFile(
     remotePath: string,
     content: Uint8Array,

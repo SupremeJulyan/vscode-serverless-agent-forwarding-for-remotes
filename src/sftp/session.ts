@@ -30,6 +30,10 @@ export interface SftpSession {
   stat(remotePath: string, signal?: AbortSignal): Promise<SftpFileStat>;
   readDirectory(remotePath: string, signal?: AbortSignal): Promise<SftpDirectoryEntry[]>;
   readFile(remotePath: string, signal?: AbortSignal): Promise<Uint8Array>;
+  /** 按字节范围读取远程文件（offset 起、length 字节）。SCP 回退实现退化为整读后切片。 */
+  readFileRange(
+    remotePath: string, offset: number, length: number, signal?: AbortSignal
+  ): Promise<Uint8Array>;
   writeFile(
     remotePath: string,
     content: Uint8Array,
