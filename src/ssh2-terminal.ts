@@ -84,6 +84,9 @@ class Ssh2ExecSession {
 
   end(): void {
     this._dead = true;
+    // 连接未就绪时被结束：让并发等待 ready 的调用方立即收到错误，避免挂起。
+    this.readyReject?.(new Error('SSH 执行连接已结束'));
+    this.readyReject = undefined;
     this.client.end();
   }
 }
