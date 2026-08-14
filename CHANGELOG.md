@@ -33,6 +33,10 @@
   每连接读取一次。
 - SFTP 连接池空闲回收（`safs.sftp.idleConnectionTtl`，默认 600s）；重连前
   关闭旧会话以释放 WSL 中继租约。
+- SFTP 连接级错误自动恢复：单个操作遇到 `ECONNRESET`/`EPIPE` 等连接级错误时，
+  自动使池中会话失效、重连并在新连接上重试一次（瞬时远端重置不再直接报错，
+  如"无法创建 Agent cwd 占位目录：read ECONNRESET"）；`closeIdle` 回收前复核
+  空闲状态，消除判断-关闭竞态。
 - `remote_read`（MCP）按字节范围读取，不再整文件下载后切片。
 - 激活提速：WSL 依赖安装后台执行不阻塞窗口；工作区恢复逐挂载容错；心跳
   错误日志去重；`reuseSshConnection` 缺省语义统一。

@@ -41,7 +41,7 @@ test('deduplicates concurrent connections to one host', async () => {
   const first = pool.get('dev');
   const second = pool.get('dev');
   release();
-  assert.equal(await first, await second);
+  assert.equal((await first).hostName, (await second).hostName);
   assert.equal(connections, 1);
   assert.equal(pool.state('dev'), 'connected');
 });
@@ -149,4 +149,43 @@ test('closeIdle recycles only sessions idle beyond the threshold', async () => {
   await pool.get('c');
   await pool.closeIdle(60_000);
   assert.deepEqual([...closed].sort(), ['a', 'b']);
+});
+
+test('retries a connection-level failure once on a fresh session', async () => {
+  let attempts = 0;
+  let closes = 0;
+  const pool = new SftpConnectionPool(async (hostName) => {
+    attempts += 1;
+    const attempt = attempts;
+    const session = fakeSession(hostName, () => { closes += 1; });
+    session.realpath = async () => {
+      if (attempt === 1) {
+        const error = new Error('read ECONNRESET');
+        (error as NodeJS.ErrnoException).code = 'ECONNRESET';
+        throw error;
+      }
+      return '/srv/project';
+    };
+    return session;
+  });
+  const session = await pool.get('dev');
+  assert.equal(await session.realpath('/x'), '/srv/project');
+  assert.equal(attempts, 2);
+  assert.equal(closes, 1);
+  assert.equal(pool.state('dev'), 'connected');
+});
+
+test('does not retry non-connection errors', async () => {
+  let attempts = 0;
+  const pool = new SftpConnectionPool(async (hostName) => {
+    attempts += 1;
+    const session = fakeSession(hostName, () => undefined);
+    session.stat = async () => {
+      throw new Error('ENOENT: /srv/missing');
+    };
+    return session;
+  });
+  const session = await pool.get('dev');
+  await assert.rejects(session.stat('/srv/missing'), /ENOENT/);
+  assert.equal(attempts, 1);
 });
