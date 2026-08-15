@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import * as os from 'node:os';
+import * as path from 'node:path';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import test from 'node:test';
+import type { AgentDefinition } from '../src/agent-mcp-registry';
 import {
-  resolveAgentPlatform, resolveAgentPlatformSetting, wslBashInvocation, wslHomeDirectory
+  bundledCliCandidate, resolveAgentPlatform, resolveAgentPlatformSetting,
+  wslBashInvocation, wslHomeDirectory
 } from '../src/agent-platform';
 
 test('resolveAgentPlatformSetting maps wsl and falls back to auto', () => {
@@ -58,4 +62,22 @@ test('wslBashInvocation builds an interactive-config bash command with positiona
   assert.ok(script.includes('. "$HOME/.bashrc"'));
   assert.ok(script.includes('command -v -- "$1"'));
   assert.equal(invocation.args.at(-1), 'codex');
+});
+
+test('bundledCliCandidate picks the first existing candidate on local paths', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'safs-bundled-'));
+  await mkdir(path.join(directory, 'bin'), { recursive: true });
+  const existing = path.join(directory, 'bin', 'codex');
+  await writeFile(existing, '#!/bin/sh\n');
+  const def: AgentDefinition = {
+    cliName: 'codex',
+    displayName: 'Codex',
+    extensionId: 'openai.chatgpt',
+    bundledCandidates: async (extensionPath) => [
+      path.join(extensionPath, 'bin', 'missing'),
+      path.join(extensionPath, 'bin', 'codex')
+    ],
+    mcp: { get: () => [], add: () => [], remove: () => [] }
+  };
+  assert.equal(await bundledCliCandidate(def, directory, 'linux'), existing);
 });

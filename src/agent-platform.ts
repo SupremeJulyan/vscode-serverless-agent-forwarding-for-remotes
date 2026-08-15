@@ -1,6 +1,9 @@
 import * as os from 'node:os';
+import * as path from 'node:path';
 import { executeCaptured } from './process';
 import { detectPlatform } from './platform';
+import type { AgentDefinition } from './agent-mcp-registry';
+import { parseWslUncPath, pathExists, readDirectory } from './wsl-file';
 
 /**
  * Agent 工作位置的解析：默认（auto）与插件运行平台相同；`wsl` 表示 Agent
@@ -100,4 +103,49 @@ export async function wslCommandExists(command: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** 统一的扩展内置 CLI 候选筛选：逐个验证存在性（本地路径走 fs，WSL UNC 走 wsl.exe）。 */
+export async function bundledCliCandidate(
+  def: AgentDefinition, extensionPath: string, platform?: NodeJS.Platform
+): Promise<string | undefined> {
+  if (!def.extensionId || !def.bundledCandidates) return undefined;
+  for (const candidate of await def.bundledCandidates(extensionPath, platform)) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * 在 WSL 的 VS Code Server 扩展目录（`~/.vscode-server/extensions/<extId>-*`）
+ * 中查找 Agent 的内置 CLI（如 `openai.chatgpt-*-linux-x64/bin/linux-x86_64/codex`）。
+ *
+ * 场景：插件运行在 Windows（`agentPlatform=wsl`），Agent 在 WSL 中，而
+ * `vscode.extensions.getExtension` 只能看到 Windows 端的扩展——WSL 里
+ * VS Code Server 安装的扩展只能扫描其目录。返回 WSL 内的 Linux 路径
+ * （供 `wsl.exe` 执行），目录遍历与存在性检查经 wsl.exe 完成（绕开
+ * Node 对 `\\wsl.localhost` UNC 的访问限制）。
+ */
+export async function wslBundledCli(
+  def: AgentDefinition, wslHome: string
+): Promise<string | undefined> {
+  if (!def.extensionId || !def.bundledCandidates) return undefined;
+  const extensionsRoot = path.join(wslHome, '.vscode-server', 'extensions');
+  let entries: string[];
+  try {
+    entries = await readDirectory(extensionsRoot);
+  } catch {
+    return undefined;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith(`${def.extensionId}-`)) continue;
+    const candidate = await bundledCliCandidate(
+      def, path.join(extensionsRoot, entry), 'linux'
+    );
+    if (candidate) {
+      const linuxPath = parseWslUncPath(candidate)?.linuxPath;
+      if (linuxPath) return linuxPath;
+    }
+  }
+  return undefined;
 }

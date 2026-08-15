@@ -1,8 +1,8 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { access, readdir } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import type { CapturedProcessResult } from './process';
-import { readTextFile, writeTextFile } from './wsl-file';
+import { readDirectory, readTextFile, writeTextFile } from './wsl-file';
 
 /**
  * Agent CLI 的 MCP server 注册抽象与内置实现。
@@ -47,8 +47,12 @@ export interface AgentDefinition {
   displayName: string;
   /** 对应 VS Code Agent 扩展 ID，用于查找内置 CLI */
   extensionId?: string;
-  /** 扩展安装路径 → 内置 CLI 候选列表 */
-  bundledCandidates?: (extensionPath: string) => Promise<string[]>;
+  /**
+   * 扩展安装路径 → 内置 CLI 候选列表。
+   * @param platform - 目标 Agent 平台（默认当前进程平台）；WSL 场景显式传
+   * `linux`，避免按 `win32` 生成 `codex.exe`。
+   */
+  bundledCandidates?: (extensionPath: string, platform?: NodeJS.Platform) => Promise<string[]>;
   /** MCP server 注册命令参数模板 */
   mcp: AgentMcpCapability;
 }
@@ -346,15 +350,13 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
     cliName: 'codex',
     displayName: 'Codex',
     extensionId: 'openai.chatgpt',
-    bundledCandidates: async (extensionPath) => {
+    bundledCandidates: async (extensionPath, platform = process.platform) => {
       const binRoot = path.join(extensionPath, 'bin');
       try {
-        const platformDirectories = await readdir(binRoot, { withFileTypes: true });
-        return platformDirectories
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => path.join(
-            binRoot, entry.name, process.platform === 'win32' ? 'codex.exe' : 'codex'
-          ));
+        const platformDirectories = await readDirectory(binRoot);
+        return platformDirectories.map((name) => path.join(
+          binRoot, name, platform === 'win32' ? 'codex.exe' : 'codex'
+        ));
       } catch {
         // The installed Codex extension does not expose a bundled CLI.
         return [];
@@ -371,10 +373,10 @@ export const builtinAgentDefinitions: AgentDefinition[] = [
     legacyIds: ['claudeCode'],
     displayName: 'Claude Code',
     extensionId: 'anthropic.claude-code',
-    bundledCandidates: async (extensionPath) => [
+    bundledCandidates: async (extensionPath, platform = process.platform) => [
       path.join(
         extensionPath, 'resources', 'native-binary',
-        process.platform === 'win32' ? 'claude.exe' : 'claude'
+        platform === 'win32' ? 'claude.exe' : 'claude'
       )
     ],
     mcp: {

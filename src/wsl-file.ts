@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { executeCaptured } from './process';
 
 /**
@@ -48,12 +48,22 @@ export async function readTextFile(filePath: string): Promise<string> {
   return readFile(filePath, 'utf8');
 }
 
-/** 检查文件/目录是否存在（WSL UNC 走 wsl.exe `test -e`）。 */
+/** 列出目录条目名（WSL UNC 路径走 wsl.exe `ls -1`，其它走 fs）。 */
+export async function readDirectory(dirPath: string): Promise<string[]> {
+  const wsl = parseWslUncPath(dirPath);
+  if (wsl) {
+    const out = await wslExec(wsl.distro, 'ls -1 -- "$1" 2>/dev/null || true', [wsl.linuxPath]);
+    return out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  }
+  return readdir(dirPath);
+}
+
+/** 检查文件/目录是否存在（WSL UNC 走 wsl.exe `test -e`；dash 内置 test 不支持 `--`）。 */
 export async function pathExists(filePath: string): Promise<boolean> {
   const wsl = parseWslUncPath(filePath);
   if (wsl) {
     try {
-      await wslExec(wsl.distro, 'test -e -- "$1"', [wsl.linuxPath]);
+      await wslExec(wsl.distro, 'test -e "$1"', [wsl.linuxPath]);
       return true;
     } catch {
       return false;

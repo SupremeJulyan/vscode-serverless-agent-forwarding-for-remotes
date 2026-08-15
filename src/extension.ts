@@ -30,7 +30,7 @@ import {
   resolveAgentDefinitions, runAgentMcpOperation
 } from './agent-mcp-registry';
 import {
-  AgentPlatformContext, resolveAgentPlatform, wslBashInvocation, wslCommandExists
+  AgentPlatformContext, resolveAgentPlatform, wslBashInvocation, wslBundledCli, wslCommandExists
 } from './agent-platform';
 import {
   ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
@@ -1971,8 +1971,15 @@ async function detectAgentCommand(
   // 跳过 PATH 与扩展内置 CLI 检测。
   if (def.mcp.handler) return def.cliName;
   if (platform.wsl) {
-    // Agent 在 WSL 中：CLI 从 WSL 的 PATH 解析。
+    // Agent 在 WSL 中：CLI 从 WSL 的 PATH 解析；PATH 没有时再扫描 WSL 的
+    // VS Code Server 扩展内置 CLI（Windows 端 getExtension 看不到 WSL 里
+    // 安装的扩展）。
     if (await wslCommandExists(def.cliName)) return def.cliName;
+    const bundled = await wslBundledCli(def, platform.home);
+    if (bundled) {
+      bridgeOutput?.appendLine(`[Agent MCP] 使用 WSL VS Code 扩展内置 CLI：${bundled}`);
+      return bundled;
+    }
     return undefined;
   }
   if (await commandExists(def.cliName)) return def.cliName;

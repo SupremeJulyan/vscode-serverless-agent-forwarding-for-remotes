@@ -17,6 +17,12 @@
   WSL 内时无论设置值如何都直接使用本地家目录、不做 `wsl.exe` 间接解析
   （WSL 的 Linux 文件系统无法访问 wsl.exe 返回的 UNC 路径）。"Agent 平台"
   日志改按实际 `wsl` 标志显示。
+- **WSL 内安装的 codex/claude VS Code 扩展可被检测**：`agentPlatform=wsl`
+  时若 CLI 不在 WSL PATH，再扫描 `~/.vscode-server/extensions/<extId>-*`
+  查找内置 CLI（Windows 端 getExtension 看不到 WSL 里安装的扩展），返回
+  Linux 路径经 wsl.exe 执行；`bundledCandidates` 恢复 platform 参数
+  （WSL 场景传 `linux`）。目录遍历/存在性检查经 wsl.exe 完成（绕开 UNC
+  限制），并修复 dash 内置 `test` 不支持 `--` 的问题。
 
 ## 1.4.5
 
