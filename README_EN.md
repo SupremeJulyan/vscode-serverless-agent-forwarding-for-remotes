@@ -132,14 +132,14 @@ platforms.
 #### Determine which remote the Agent session is bound to
 
 - Call `resolve_workspace_execution` at the start of the conversation: the
-  `mountName` in the returned JSON (with `name`, `remoteRoot`, `host`, and
-  `focused`) is the current binding. The MCP instructions require calling it
+  `mountName` in the returned JSON (with `remoteRoot`, `host`, and `focused`)
+  is the current binding. The MCP instructions require calling it
   first and reusing the returned `mountName` to keep the binding stable.
 - `list_remote_folders` lists all active Agent-forwarded mounts (remote root,
   `mountName`, and other metadata come from `resolve_workspace_execution`).
 - **Currently open remote file**: call `current_remote_file` to get the remote
   file open in the VS Code editor (absolute path, path relative to the remote
-  root, file name, size, and whether the editor has unsaved changes). The
+  root, size, and whether the editor has unsaved changes). The
   extension never returns file content to the Agent; to inspect content, run
   remote commands such as `head`, `sed`, `grep`, `tail`, `wc`, or `diff` via
   `run_remote_command` so large files never enter the Agent context. When the
@@ -196,6 +196,14 @@ remote roots. Remote file content is never returned to the Agent — inspect it
 with `run_remote_command` (`head`/`sed`/`grep`/`tail` and similar). Agent routing
 and tool guidance are managed by the fixed MCP service; the
 extension does not create or read Agent guidance files on the remote host.
+
+Tool results are throttled so large output cannot blow up model context:
+`remote_list` returns at most 500 entries by default (raise with `limit`; when
+capped it returns `truncated` and `total`), `remote_search` returns at most 200
+matches with lines trimmed to 300 chars, and `run_remote_command` returns at
+most 64 KB of stdout+stderr by default (configurable via
+`safs.agentMcpMaxOutputBytes`, flagged with `truncated: true` when capped).
+Results are returned as compact JSON to avoid wasting tokens on indentation.
 
 ### Unified Agent MCP (Codex / Claude Code)
 

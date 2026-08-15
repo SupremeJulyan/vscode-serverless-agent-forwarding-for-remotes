@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.9
 
 - **移除 MCP 工具 `remote_read` 与 `read_current_remote_file`，远程文件内容不再返回
   Agent 上下文**：Agent 只需通过 `current_remote_file` 拿到当前打开文件的路径与元数据，
@@ -14,6 +14,22 @@
   完全重复，删除以减少工具定义与调用开销；`list_remote_folders` 不再标记
   `alwaysLoad`，避免每轮请求都常驻其完整定义。精简了 MCP 工具描述以降低基础提示词
   体积。
+- **为 Agent 工具结果加上 token 限流与瘦身**：
+  - `run_remote_command` 的 stdout+stderr 默认上限从 1 MiB 降至 64 KB（新设置
+    `safs.agentMcpMaxOutputBytes` 可调，范围 4 KB–1 MiB），超限截断并返回
+    `truncated: true`，单次 `head`/`cat`/`grep` 不再可能把几十万 token 灌进会话；
+  - `remote_list` 新增 `limit` 入参，默认最多返回 500 条条目，超限返回
+    `truncated: true` 与 `total`，`node_modules` 等巨型目录不再刷屏；
+  - `remote_search` 结果收窄为最多 200 行、每行 300 字符，并跳过
+    `node_modules`、`dist`、`build`、`.venv`、`__pycache__` 等依赖/构建/缓存目录
+    （按目录名在任意层级匹配），minified 文件命中也不会撑爆上下文；
+  - 工具结果统一改为紧凑 JSON（去掉缩进空白，MCP 与 VS Code 内置 Agent 工具均生效），
+    结构化结果普遍节省 15–30% token；
+  - `run_remote_command` 结果不再回显 `command`（Agent 自己刚发过，回显等于重复
+    计费）；`current_remote_file` 去掉与 `path` 重复的 `uri`、`fileName` 字段；
+  - `resolve_workspace_execution`/`list_remote_folders` 的 workspace 元数据瘦身为
+    `mountName`/`remoteRoot`/`host`（窗口级）或含 `execution`/`focused`（路由器级），
+    删除与 `mountName` 重复的 `name` 与已无用途的 `workspaceUri`。
 
 ## 1.4.8
 

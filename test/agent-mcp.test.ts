@@ -53,8 +53,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     assert.deepEqual(JSON.parse(routeText), {
       execution: 'remote',
       workspace: {
-        name: 'project',
-        workspaceUri: 'safs://project/srv/project',
+        mountName: 'project',
         remoteRoot: '/srv/project',
         host: 'dev'
       },
@@ -63,6 +62,11 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       localFilesystemAllowed: false,
       localShellAllowed: false
     });
+    const listed = await client.callTool({
+      name: 'remote_list', arguments: { path: '.', limit: 10 }
+    });
+    const listedText = (listed.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+    assert.equal(JSON.parse(listedText).limit, 10);
   } finally {
     await client.close();
     await server.stop();

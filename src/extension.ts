@@ -204,13 +204,13 @@ function highRiskSettings(): {
 }
 
 async function executeAgentMcpCommand(
-  plan: CommandPlan, signal?: AbortSignal
+  plan: CommandPlan, signal?: AbortSignal, maxOutputBytes = 1024 * 1024
 ): Promise<Awaited<ReturnType<typeof executeCaptured>>> {
   const displayName = redactAgentMcpText(planDisplayName(plan));
   bridgeOutput?.appendLine(`[${new Date().toLocaleString()}] [Agent MCP] $ ${displayName}`);
   try {
     const result = await executeCaptured(
-      { ...plan, cwd: plan.cwd ?? os.homedir() }, signal, 1024 * 1024
+      { ...plan, cwd: plan.cwd ?? os.homedir() }, signal, maxOutputBytes
     );
     bridgeOutput?.appendLine(
       `[Agent MCP] [${result.exitCode === 0 ? '完成' : `失败: exit ${result.exitCode}`}] ${displayName}`
@@ -606,10 +606,8 @@ async function activeRemoteFileDirectory(mountName: string): Promise<string | un
  */
 async function activeRemoteFile(mountName?: string): Promise<{
   mountName: string;
-  uri: string;
   path: string;
   relative: string;
-  fileName: string;
   size: number | null;
   modified: number | null;
   dirty: boolean;
@@ -645,10 +643,8 @@ async function activeRemoteFile(mountName?: string): Promise<{
   }
   return {
     mountName: folder.mountName,
-    uri: uri.toString(),
     path: filePath,
     relative,
-    fileName: path.posix.basename(filePath),
     size: stat?.size ?? null,
     modified: stat?.mtime ?? null,
     dirty: editor?.document.isDirty ?? false,
@@ -1454,14 +1450,21 @@ function resolveRemotePath(folder: RemoteFolder, value = '.'): string {
     : path.posix.resolve(folder.remoteRoot, value);
 }
 
-async function remoteList(input: { mountName: string; path?: string }): Promise<unknown> {
+async function remoteList(input: {
+  mountName: string; path?: string; limit?: number;
+}): Promise<unknown> {
   const { mount, folder } = await mountAndFolder(input.mountName);
   const remotePath = resolveRemotePath(folder, input.path);
   const entries = await (await pool.get(folder.hostName)).readDirectory(remotePath);
+  // 默认 500 条上限：node_modules/dist 等巨型目录的完整列表对 Agent 是纯噪音，
+  // 超限时返回 truncated + total 让 Agent 知道还有更多。
+  const limit = Math.min(input.limit ?? 500, 10000);
+  const truncated = entries.length > limit;
   return {
     mountName: mount.name,
     path: remotePath,
-    entries: entries.map(({ name, type }) => ({ name, type }))
+    entries: entries.slice(0, limit).map(({ name, type }) => ({ name, type })),
+    ...(truncated ? { truncated, total: entries.length } : {})
   };
 }
 
@@ -1488,6 +1491,12 @@ async function executeRemoteCommand(
   if (!isRemotePathInsideRoot(folder.remoteRoot, remoteCwd)) {
     throw new Error(`远程工作目录通过符号链接超出工作区：${requestedCwd}`);
   }
+  // 命令输出上限：Agent 上下文 token 保护。超限截断并标记 truncated: true，
+  // 避免单次 head/cat/grep 把几十万 token 灌进会话。
+  const maxOutputBytes = Math.max(
+    4096,
+    Math.min(1024 * 1024, settings().get<number>('agentMcpMaxOutputBytes', 64 * 1024))
+  );
   const source = input.source ?? 'mcp';
   const logFailure = (error: unknown): void => {
     bridgeOutput?.appendLine(
@@ -1567,7 +1576,7 @@ async function executeRemoteCommand(
         try {
           result = await executeSsh2Command(
             context, resolved.hostConfig, resolved.hostConfig.password,
-            remoteCwd, input.command, controller.signal
+            remoteCwd, input.command, controller.signal, maxOutputBytes
           );
           bridgeOutput?.appendLine(
             `[Agent MCP] [${result.exitCode === 0 ? '完成' : `失败: exit ${result.exitCode}`}] ${redactSensitiveText(input.command)}`
@@ -1589,7 +1598,7 @@ async function executeRemoteCommand(
           ...await bridgeMasterPasswordEnv(context, resolved.hostConfig),
           ...credentials?.env
         };
-        result = await executeAgentMcpCommand(plan, controller.signal);
+        result = await executeAgentMcpCommand(plan, controller.signal, maxOutputBytes);
       }
       if (timedOut) {
         throw new Error(`远程命令执行超时（${commandTimeoutMs}ms）`);
@@ -1597,7 +1606,6 @@ async function executeRemoteCommand(
       return {
         mountName: mount.name,
         remoteCwd,
-        command: input.command,
         ...result
       };
     } finally {
@@ -1621,13 +1629,20 @@ async function remoteSearch(input: {
   const { folder } = await mountAndFolder(input.mountName);
   const requestedPath = resolveRemotePath(folder, input.path);
   const searchPath = await (await pool.get(folder.hostName)).realpath(requestedPath);
+  // 依赖/构建/缓存目录（按目录名在任意层级匹配）一律跳过，避免搜索命中整库噪音；
+  // 结果上限：最多 200 行、每行 300 字符，另有 agentMcpMaxOutputBytes 兜底。
+  const excludeDirs = [
+    '.git', 'node_modules', 'dist', 'build', 'out', 'target',
+    '.venv', 'venv', '__pycache__', '.next', '.cache', 'coverage',
+    'vendor', '.tox', 'site-packages', 'bower_components', 'Pods', '.gradle'
+  ].map((dir) => `--exclude-dir=${dir}`).join(' ');
   return executeRemoteCommand(vscodeContext, {
     mountName: input.mountName,
     remoteCwd: folder.remoteRoot,
     source: 'remote_search',
-    command: `grep -rIn --exclude-dir=.git -- ${shellQuote(input.query)} ${
+    command: `grep -rIn ${excludeDirs} -- ${shellQuote(input.query)} ${
       shellQuote(searchPath)
-    } | head -n 1000`
+    } | cut -c 1-300 | head -n 200`
   });
 }
 
@@ -2651,7 +2666,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       })
     } : {}),
     invoke: async (options) => new vscode.LanguageModelToolResult([
-      new vscode.LanguageModelTextPart(JSON.stringify(await callback(options.input), null, 2))
+      // 紧凑 JSON：缩进空白只会白白消耗模型 token。
+      new vscode.LanguageModelTextPart(JSON.stringify(await callback(options.input)))
     ])
   }));
   tool<{ mountName?: string; path?: string }>('safs_listRemoteFiles', async (input) =>

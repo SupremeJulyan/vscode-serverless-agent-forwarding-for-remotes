@@ -19,7 +19,7 @@ export interface AgentMcpCallbacks {
   currentWorkspace(): Promise<RemoteFolderInfo | null>;
   /** 当前打开的远程文件元数据（无活动远程文件时为 null）。 */
   currentFile(input: { mountName?: string }): Promise<unknown>;
-  list(input: { mountName?: string; path?: string }): Promise<unknown>;
+  list(input: { mountName?: string; path?: string; limit?: number }): Promise<unknown>;
   write(input: { mountName?: string; path: string; content: string }): Promise<unknown>;
   search(input: { mountName?: string; query: string; path?: string }): Promise<unknown>;
   run(input: { command: string; mountName?: string; remoteCwd?: string }): Promise<unknown>;
@@ -69,8 +69,15 @@ export class AgentMcpServer {
       ListResourceTemplatesRequestSchema,
       async () => ({ resourceTemplates: [] })
     );
+    // 紧凑 JSON：结果只回传必要字段，缩进空白会白白消耗模型 token。
     const result = (value: unknown) => ({
-      content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }]
+      content: [{ type: 'text' as const, text: JSON.stringify(value) }]
+    });
+    // 对外只暴露 Agent 需要的字段；name/workspaceUri 与 mountName/path 重复。
+    const publicFolder = (info: RemoteFolderInfo) => ({
+      mountName: info.name,
+      remoteRoot: info.remoteRoot,
+      host: info.host
     });
     server.registerTool(
       'resolve_workspace_execution',
@@ -86,7 +93,7 @@ export class AgentMcpServer {
         const workspace = await this.callbacks.currentWorkspace();
         return result(workspace ? {
           execution: 'remote',
-          workspace,
+          workspace: publicFolder(workspace),
           fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
           commandTool: 'run_remote_command',
           localFilesystemAllowed: false,
@@ -105,14 +112,14 @@ export class AgentMcpServer {
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },
-      async () => result(await this.callbacks.listFolders())
+      async () => result((await this.callbacks.listFolders()).map(publicFolder))
     );
     server.registerTool(
       'current_remote_file',
       {
         title: 'Get the currently open remote file',
         description:
-          'Returns the remote file open in the active VS Code editor of this window: absolute path, relative path, name, size, and dirty (unsaved changes). null when none is open.',
+          'Returns the remote file open in the active VS Code editor of this window: absolute path, relative path, size, and dirty (unsaved changes). null when none is open.',
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {
           mountName: z.string().min(1).optional()
@@ -124,10 +131,12 @@ export class AgentMcpServer {
       'remote_list',
       {
         title: 'List a remote directory',
-        description: 'Lists files directly over SFTP. Paths are relative to the remote root.',
+        description:
+          'Lists files directly over SFTP. Paths are relative to the remote root. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
         inputSchema: {
           mountName: z.string().min(1).optional(),
-          path: z.string().optional()
+          path: z.string().optional(),
+          limit: z.number().int().min(1).max(10000).optional()
         }
       },
       async (input) => result(await this.callbacks.list(input))
@@ -150,7 +159,8 @@ export class AgentMcpServer {
       'remote_search',
       {
         title: 'Search remote files',
-        description: 'Searches file contents on the remote SSH host.',
+        description:
+          'Searches file contents on the remote SSH host. Results are capped (200 matches, lines trimmed to 300 chars).',
         inputSchema: {
           mountName: z.string().min(1).optional(),
           query: z.string().min(1),

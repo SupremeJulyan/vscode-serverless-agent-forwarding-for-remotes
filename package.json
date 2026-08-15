@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -467,6 +467,13 @@
           "minimum": 0,
           "default": 120000,
           "description": "Timeout for Agent MCP remote command/search execution (milliseconds). 0 disables the timeout. On expiry the command is aborted and an error is returned, so a hung Agent cannot leave remote commands running in the background forever."
+        },
+        "safs.agentMcpMaxOutputBytes": {
+          "type": "number",
+          "minimum": 4096,
+          "maximum": 1048576,
+          "default": 65536,
+          "description": "Max stdout+stderr bytes returned to the Agent for a single remote command or search call. Output beyond this cap is truncated and flagged (truncated: true), keeping model context token usage bounded."
         },
         "safs.agentForwardingAgents": {
           "type": "array",

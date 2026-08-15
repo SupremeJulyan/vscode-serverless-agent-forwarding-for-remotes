@@ -64,9 +64,7 @@ export class AgentHttpRouter {
 
   private publicWorkspace(workspace: DiscoveredAgentWorkspace): Record<string, unknown> {
     return {
-      name: workspace.mountName,
       execution: workspace.execution,
-      workspaceUri: workspace.workspaceUri,
       mountName: workspace.mountName,
       remoteRoot: workspace.remoteRoot,
       host: workspace.host,
@@ -79,7 +77,7 @@ export class AgentHttpRouter {
       isError: true,
       content: [{ type: 'text' as const, text: JSON.stringify({
         code, message, ...details
-      }, null, 2) }]
+      }) }]
     };
   }
 
@@ -150,7 +148,7 @@ export class AgentHttpRouter {
         content: [{
           type: 'text' as const,
           text: JSON.stringify(this.workspaces().map((workspace) =>
-            this.publicWorkspace(workspace)), null, 2)
+            this.publicWorkspace(workspace)))
         }]
       };
     }
@@ -174,7 +172,7 @@ export class AgentHttpRouter {
           commandTool: 'run_remote_command',
           localFilesystemAllowed: false,
           localShellAllowed: false
-        }, null, 2) }]
+        }) }]
       };
     }
     const args = { ...input, mountName: workspace.mountName };
@@ -233,13 +231,17 @@ export class AgentHttpRouter {
     );
     register(
       'current_remote_file', 'Get the currently open remote file',
-      'Returns the remote file open in the active VS Code editor of the bound window (absolute path, relative path, name, size, dirty), or null when none is open.',
+      'Returns the remote file open in the active VS Code editor of the bound window (absolute path, relative path, size, dirty), or null when none is open.',
       { mountName: z.string().min(1).optional() },
       { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
-      'remote_list', 'List a remote directory', 'Lists files directly over SFTP.',
-      { path: z.string().optional(), mountName: z.string().min(1).optional() },
+      'remote_list', 'List a remote directory',
+      'Lists files directly over SFTP. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
+      {
+        path: z.string().optional(), mountName: z.string().min(1).optional(),
+        limit: z.number().int().min(1).max(10000).optional()
+      },
       { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
@@ -248,7 +250,8 @@ export class AgentHttpRouter {
       { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
     );
     register(
-      'remote_search', 'Search remote files', 'Searches file contents on the remote SSH host.',
+      'remote_search', 'Search remote files',
+      'Searches file contents on the remote SSH host. Results are capped (200 matches, lines trimmed to 300 chars).',
       {
         query: z.string().min(1), path: z.string().optional(),
         mountName: z.string().min(1).optional()

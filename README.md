@@ -113,7 +113,7 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 #### 确认 Agent 会话绑定哪个远程
 
 - 会话开始时先调用 `resolve_workspace_execution`：返回 JSON 中的
-  `mountName`（以及 `name`、`remoteRoot`、`host`、`focused`）就是当前
+  `mountName`（以及 `remoteRoot`、`host`、`focused` 等元数据）就是当前
   绑定。MCP 指令要求每个会话先调用它，并复用返回的 `mountName` 保持绑定
   稳定。
 - 也可调用 `list_remote_folders` 查看所有已开启转发的活动挂载（远程根、
@@ -178,6 +178,12 @@ Agent 在执行工作区操作前通过 `resolve_workspace_execution` 识别当�
 `run_remote_command` 在远程执行 `head`/`sed`/`grep`/`tail` 等命令。Agent 路由和
 使用约束由固定 MCP 服务统一管理，扩展
 不会在远端创建或读取 Agent 指引文件。
+
+为避免大输出刷爆模型上下文，工具结果做了多层限流：`remote_list` 默认最多返回
+500 条条目（可用 `limit` 上调，超限返回 `truncated` 与 `total`）；`remote_search`
+最多返回 200 行且每行截断到 300 字符；`run_remote_command` 的 stdout+stderr
+默认上限 64 KB（`safs.agentMcpMaxOutputBytes` 可调，超限返回 `truncated: true`）。
+工具结果以紧凑 JSON 返回，减少缩进空白带来的 token 开销。
 
 ### 统一 Agent MCP（Codex / Claude Code）
 
