@@ -595,6 +595,125 @@ async function activeRemoteFileDirectory(mountName: string): Promise<string | un
 }
 
 /**
+ * Metadata for the remote file currently open in the active editor of this
+ * window (falling back to the first visible remote editor), or null when none
+ * is active. Computed live on every call — no listeners or persisted state.
+ * The remote stat is best-effort: a file deleted on the remote still resolves
+ * with exists=false so callers can distinguish "file gone" from "no active
+ * file". `mountName` optionally filters to one mount (the active file of any
+ * other mount is never reported).
+ */
+async function activeRemoteFile(mountName?: string): Promise<{
+  mountName: string;
+  uri: string;
+  path: string;
+  relative: string;
+  fileName: string;
+  size: number | null;
+  modified: number | null;
+  dirty: boolean;
+  exists: boolean;
+} | null> {
+  const editor = vscode.window.activeTextEditor
+    ?? vscode.window.visibleTextEditors.find(
+      (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
+    );
+  const uri = editor?.document.uri;
+  if (uri?.scheme !== remoteFileSystemScheme) return null;
+  let location: { mountName: string; remotePath: string };
+  try {
+    location = parseRemoteUri(uri.toString());
+  } catch {
+    return null;
+  }
+  if (mountName && location.mountName !== mountName) return null;
+  const folder = registry.get(location.mountName);
+  if (!folder) return null;
+  const filePath = remotePathForUri(folder, location.remotePath);
+  const relative = path.posix.relative(folder.remoteRoot, filePath);
+  // 活动编辑器 URI 理论上必在挂载根内；防御性校验，避免越界路径泄漏。
+  if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
+    return null;
+  }
+  let stat: { size: number; mtime: number } | undefined;
+  try {
+    const value = await (await pool.get(folder.hostName)).stat(filePath);
+    if (value.type === 'file') stat = { size: value.size, mtime: value.mtime };
+  } catch {
+    // The file may have been deleted remotely; report exists=false.
+  }
+  return {
+    mountName: folder.mountName,
+    uri: uri.toString(),
+    path: filePath,
+    relative,
+    fileName: path.posix.basename(filePath),
+    size: stat?.size ?? null,
+    modified: stat?.mtime ?? null,
+    dirty: editor?.document.isDirty ?? false,
+    exists: stat !== undefined
+  };
+}
+
+/**
+ * Reads the remote file currently open in the active editor of this window.
+ * Unsaved edits live in the editor buffer, not on disk: when the document is
+ * dirty the buffer is returned (source='editor', byte-based offset/length via
+ * TextEncoder) so the Agent sees exactly what the user is looking at;
+ * otherwise the saved file is read over SFTP (source='sftp'). Returns null
+ * when no matching remote file is active.
+ */
+async function readActiveRemoteFile(input: {
+  mountName?: string; offset?: number; length?: number;
+}): Promise<unknown> {
+  const file = await activeRemoteFile(input.mountName);
+  if (!file) return null;
+  const offset = input.offset ?? 0;
+  const length = input.length ?? 1_048_576;
+  const editor = vscode.window.activeTextEditor
+    ?? vscode.window.visibleTextEditors.find(
+      (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
+    );
+  const document = editor && editor.document.uri.toString() === file.uri
+    ? editor.document
+    : undefined;
+  if (document?.isDirty) {
+    const bytes = new TextEncoder().encode(document.getText());
+    const slice = bytes.slice(offset, offset + length);
+    return {
+      mountName: file.mountName,
+      path: file.path,
+      relative: file.relative,
+      fileName: file.fileName,
+      source: 'editor',
+      dirty: true,
+      offset,
+      bytes: slice.length,
+      size: bytes.length,
+      truncated: offset + slice.length < bytes.length,
+      content: new TextDecoder().decode(slice)
+    };
+  }
+  const session = await pool.get(registry.get(file.mountName)!.hostName);
+  const stat = await session.stat(file.path);
+  const readLength = Math.min(length, Math.max(0, stat.size - offset));
+  const bytes = await session.readFileRange(file.path, offset, readLength);
+  return {
+    mountName: file.mountName,
+    path: file.path,
+    relative: file.relative,
+    fileName: file.fileName,
+    source: 'sftp',
+    dirty: false,
+    offset,
+    bytes: bytes.length,
+    size: stat.size,
+    truncated: offset + bytes.length < stat.size,
+    content: new TextDecoder().decode(bytes)
+  };
+}
+
+/**
  * Live-sync: when the active editor switches to a remote file, send `cd` to
  * every managed terminal of that mount so the terminal follows the file's
  * directory (only when the directory actually changed, to avoid noise).
@@ -1869,6 +1988,8 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
             host: mount.host
           };
         },
+        currentFile: (input) => activeRemoteFile(input.mountName),
+        readCurrentFile: (input) => readActiveRemoteFile(input),
         list: async (input) => remoteList({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
@@ -2589,6 +2710,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   tool<{ mountName?: string; path: string; offset?: number; length?: number }>(
     'safs_readRemoteFile', async (input) =>
       remoteRead({ ...input, mountName: await forwardedMountName(input.mountName) })
+  );
+  tool<{ mountName?: string }>('safs_currentRemoteFile', async (input) =>
+    activeRemoteFile(await forwardedMountName(input.mountName)));
+  tool<{ mountName?: string; offset?: number; length?: number }>(
+    'safs_readCurrentRemoteFile', async (input) =>
+      readActiveRemoteFile({ ...input, mountName: await forwardedMountName(input.mountName) })
   );
   tool<{ mountName?: string; path: string; content: string }>(
     'safs_writeRemoteFile', async (input) =>

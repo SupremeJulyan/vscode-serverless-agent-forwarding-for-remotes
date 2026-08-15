@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.7
+
+- **Agent 转发新增"当前打开的远程文件"感知**：Agent 现在能知道并直接读取 VS Code
+  当前打开的远程文件。新增 MCP 工具 `current_remote_file`（返回当前打开文件的
+  绝对路径、相对挂载根路径、文件名、大小与是否有未保存修改）与
+  `read_current_remote_file`（直接读取当前打开文件内容；编辑器有未保存修改时
+  优先返回缓冲区内容 `source: "editor"`，否则经 SFTP 读取 `source: "sftp"`，
+  支持 offset/length 字节分片，单次上限 1 MiB）。窗口级 MCP 与固定 HTTP 路由器
+  均已注册，路由器按焦点窗口转发；无活动远程文件时返回 `null`。VS Code 内置
+  Agent 同步新增 `#safsCurrentRemoteFile`、`#safsReadCurrentRemoteFile` 工具。
+  `resolve_workspace_execution` 的 `fileTools` 与 MCP instructions 已同步更新。
+
 ## 1.4.6
 
 - 修复 `safs.agentPlatform=wsl` 模式下 pi/dsh 注册失败：扩展宿主（VS Code 内置

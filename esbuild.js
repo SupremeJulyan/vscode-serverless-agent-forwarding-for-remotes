@@ -20,6 +20,8 @@ esbuild.build({
   sourcesContent: false,
   platform: 'node',
   outdir: 'dist',
-  external: ['vscode'],
+  // 原生 .node 模块不能打包（ssh2/ssh2 依赖 cpu-features 的预编译 binding）：
+  // 外部化后运行时 require 失败会被依赖自身的 try/catch 兜底到纯 JS 实现。
+  external: ['vscode', '*.node'],
   logLevel: 'info'
 }).catch(() => process.exit(1));

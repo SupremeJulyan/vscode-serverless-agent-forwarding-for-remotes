@@ -114,7 +114,9 @@ platforms.
 5. The Agent can now use the remote tools directly: `#safsList`, `#safsRead`,
    `#safsWrite`, `#safsSearch`, and `#safsRun` for VS Code agents, or the MCP
    tools `resolve_workspace_execution`, `list_remote_folders`, `remote_list`,
-   `remote_read`, `remote_write`, `remote_search`, and `run_remote_command`.
+   `remote_read`, `remote_write`, `remote_search`, and `run_remote_command`,
+   plus `current_remote_file` and `read_current_remote_file` to inspect/read
+   the remote file currently open in VS Code.
 6. To disable: click "Disable Agent Forwarding" on the connection item. The
    extension runs `mcp remove` only after the last enabled mount is disabled.
 
@@ -136,6 +138,15 @@ platforms.
   first and reusing the returned `mountName` to keep the binding stable.
 - `current_remote_workspace` returns the focused active remote folder
   directly; `list_remote_folders` lists all active Agent-forwarded mounts.
+- **Currently open remote file**: call `current_remote_file` to get the remote
+  file open in the VS Code editor (absolute path, path relative to the remote
+  root, file name, size, and whether the editor has unsaved changes);
+  `read_current_remote_file` reads its content directly — the in-memory editor
+  buffer is returned (`source: "editor"`) when the document has unsaved
+  changes, otherwise the saved file is read over SFTP (`source: "sftp"`).
+  Both accept optional byte `offset`/`length` (single-read cap 1 MiB). When
+  the user says "what is the content of this remote file", call it directly
+  instead of guessing a path.
 - Without `mountName`, the router prefers the focused window, then the most
   recently updated one: the remote window that has focus wins; when none has
   focus, the most recently interacted window is used.
@@ -171,12 +182,14 @@ not mounted into the local filesystem.
 ## Agent access
 
 VS Code tools: `#safsList`, `#safsRead`,
-`#safsWrite`, `#safsSearch`, and
-`#safsRun`.
+`#safsWrite`, `#safsSearch`, `#safsRun`,
+`#safsCurrentRemoteFile` (metadata of the currently open remote file), and
+`#safsReadCurrentRemoteFile` (reads the currently open remote file).
 
 The loopback-only, token-protected MCP service exposes
 `resolve_workspace_execution`, `list_remote_folders`, `remote_list`, `remote_read`, `remote_write`,
-`remote_search`, and `run_remote_command`.
+`remote_search`, `run_remote_command`, `current_remote_file`, and
+`read_current_remote_file`.
 
 Agents call `resolve_workspace_execution` at conversation start to recognize the
 active SFTP virtual workspace. Once forwarding is enabled, tools may omit

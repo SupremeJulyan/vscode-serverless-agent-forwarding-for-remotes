@@ -170,7 +170,7 @@ export class AgentHttpRouter {
         content: [{ type: 'text' as const, text: JSON.stringify({
           execution: 'remote',
           workspace: this.publicWorkspace(workspace),
-          fileTools: ['remote_list', 'remote_read', 'remote_write', 'remote_search'],
+          fileTools: ['remote_list', 'remote_read', 'remote_write', 'remote_search', 'current_remote_file', 'read_current_remote_file'],
           commandTool: 'run_remote_command',
           localFilesystemAllowed: false,
           localShellAllowed: false
@@ -206,7 +206,8 @@ export class AgentHttpRouter {
         instructions: [
           'This MCP server is the complete integration for SAFS virtual workspaces.',
           'Before reading files, editing, searching, running shell commands, using Git, builds, tests, or inferring the OS, call resolve_workspace_execution.',
-          'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, and run_remote_command for that workspace.',
+          'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, current_remote_file, read_current_remote_file, and run_remote_command for that workspace.',
+          'To inspect the remote file currently open in the VS Code window, call current_remote_file (metadata) or read_current_remote_file (content) instead of guessing a path.',
           'Never use local shell or local filesystem tools for a safs workspace because its files do not exist locally.',
           'Reuse the mountName returned by resolve_workspace_execution for every later tool call so background work stays bound to the same remote window.'
         ].join(' ')
@@ -241,6 +242,22 @@ export class AgentHttpRouter {
       'current_remote_workspace', 'Get current remote workspace',
       'Returns the focused active remote folder.',
       { mountName: z.string().min(1).optional() },
+      { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    );
+    register(
+      'current_remote_file', 'Get the currently open remote file',
+      'Returns the remote file currently open in the active VS Code editor of the bound window (path, relative path, name, size, dirty), or null when none is open.',
+      { mountName: z.string().min(1).optional() },
+      { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    );
+    register(
+      'read_current_remote_file', 'Read the currently open remote file',
+      'Reads the content of the remote file currently open in the active VS Code editor of the bound window. Returns the editor buffer (source: "editor") when it has unsaved changes, otherwise reads the saved file over SFTP (source: "sftp"). offset/length are byte ranges, single-read cap 1 MiB, UTF-8. Returns null when no remote file is open.',
+      {
+        mountName: z.string().min(1).optional(),
+        offset: z.number().int().min(0).optional(),
+        length: z.number().int().min(1).max(1_048_576).optional()
+      },
       { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(

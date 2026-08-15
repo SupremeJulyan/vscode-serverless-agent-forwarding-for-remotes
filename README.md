@@ -96,7 +96,9 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 5. 之后 Agent 可直接使用远程工具：VS Code Agent 的 `#safsList`、
    `#safsRead`、`#safsWrite`、`#safsSearch`、`#safsRun`，或 MCP 工具
    `resolve_workspace_execution`、`list_remote_folders`、`remote_list`、
-   `remote_read`、`remote_write`、`remote_search`、`run_remote_command`。
+   `remote_read`、`remote_write`、`remote_search`、`run_remote_command`，
+   以及 `current_remote_file`、`read_current_remote_file`（查看/读取当前
+   打开的远程文件）。
 6. 关闭转发：点击连接项上的“关闭 Agent 转发”。只有最后一个启用挂载也被
    关闭后，扩展才会执行 `mcp remove`。
 
@@ -117,6 +119,12 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
   稳定。
 - 也可调用 `current_remote_workspace` 直接查看当前获得焦点的活动远程
   文件夹，或用 `list_remote_folders` 查看所有已开启转发的活动挂载。
+- **当前打开的远程文件**：调用 `current_remote_file` 获取 VS Code 中当前
+  打开的远程文件（路径、相对挂载根的路径、大小、是否有未保存修改）；
+  `read_current_remote_file` 直接读取该文件内容——编辑器有未保存修改时返回
+  缓冲区内容（`source: "editor"`），否则经 SFTP 读取（`source: "sftp"`），
+  支持 `offset`/`length` 字节分片（单次上限 1 MiB）。用户说"这个远程文件
+  内容是什么"时，直接调用它即可，无需先猜路径。
 - 省略 `mountName` 时，路由器按“获得焦点的窗口优先、其次最近更新”选择：
   哪个远程窗口处于焦点就绑定哪个；都没有焦点时绑定最近交互的窗口。
 - VS Code 侧可运行 `SAFS: 显示状态` 在输出面板查看各挂载的连接状态。
@@ -159,10 +167,12 @@ VS Code Agent 可使用：
 - `#safsWrite`
 - `#safsSearch`
 - `#safsRun`
+- `#safsCurrentRemoteFile`（当前打开的远程文件元数据）
+- `#safsReadCurrentRemoteFile`（直接读取当前打开的远程文件内容）
 
 扩展还在 `127.0.0.1` 上提供令牌保护的 Streamable HTTP MCP 服务，工具包括
 `resolve_workspace_execution`、`list_remote_folders`、`remote_list`、`remote_read`、`remote_write`、
-`remote_search` 和 `run_remote_command`。
+`remote_search`、`run_remote_command`、`current_remote_file` 和 `read_current_remote_file`。
 
 Agent 在执行工作区操作前通过 `resolve_workspace_execution` 识别当前 SFTP 虚拟工作区。
 开启转发后，文件工具可省略 `mountName` 并自动绑定当前工作区。所有远程文件访问
