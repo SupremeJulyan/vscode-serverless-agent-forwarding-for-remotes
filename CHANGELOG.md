@@ -163,7 +163,6 @@
   remote file also real-time `cd`s the terminal into that file's directory.
 
 ## 1.3.4
-## 1.3.4
 
 - `safs.terminalFollowsActiveFile` defaults back to `false`. The restore
   behavior is now unconditional: reopening a remote window restores the
