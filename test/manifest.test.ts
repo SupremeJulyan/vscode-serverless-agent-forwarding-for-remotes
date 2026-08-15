@@ -80,6 +80,10 @@ test('uses only the unified cross-platform config path', async () => {
     ['codex', 'claude', 'pi', 'dsh']
   );
   assert.equal(
+    manifest.contributes?.configuration?.properties?.['safs.agentPlatform']?.default,
+    'auto'
+  );
+  assert.equal(
     manifest.contributes?.configuration?.properties?.['safs.agentHttpRouterPort']
       ?.default,
     9848

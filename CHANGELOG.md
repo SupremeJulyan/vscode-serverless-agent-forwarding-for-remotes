@@ -29,6 +29,10 @@
 - 修复上传/下载进度中的文件名显示：上传显示相对目标目录的路径（含源目录名，
   如 `AF3/af3.bin.zst`），下载目录显示"根目录名 + 相对路径"，同名文件不再
   分不清。
+- 恢复 `safs.agentPlatform` 设置（**Agent 工作位置**：`auto` | `wsl`，默认
+  `auto`）：`wsl` 模式下 MCP 注册读写 WSL 家目录下的配置文件
+  （`~/.pi/agent/mcp.json`、`$DSH_HOME/cordis.patch.yml`），Agent CLI 通过
+  `wsl.exe` 在 WSL 内检测与执行；恢复 `src/agent-platform.ts` 与对应测试。
 
 ## 1.4.3
 
