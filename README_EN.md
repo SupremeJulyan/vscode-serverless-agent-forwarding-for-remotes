@@ -20,6 +20,13 @@ intranet hosts and remote servers that forbid port forwarding.
 - Remembers the last switched directory per remote configuration and restores its workspace and terminal there.
 - Direct remote list/read/write/search tools for VS Code agents and MCP clients.
 - Runs builds, tests, Git, and system commands remotely over SSH.
+- **SAFS: Visual Download** on remote files/folders: streaming download with
+  progress and cancellation; recursive folder download.
+- **SAFS: Visual Sync** on remote files/folders: two-way automatic local ↔ remote
+  sync (incremental, resumes after reload).
+- **SAFS: Visual Upload** on local files/folders: streaming upload to the remote
+  (no open remote directory needed; pick the mount, then the target directory),
+  recursive folder upload.
 
 ## Usage
 
@@ -65,6 +72,19 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
   directory.
 - Each remote config remembers the last opened directory; reopening the
   remote folder restores both the workspace and the terminal there.
+
+### Visual download / upload / sync
+
+- **SAFS: Visual Download**: right-click a remote file/folder — **streaming
+  download** (written as it arrives, progress bar, cancellable); folders are
+  downloaded recursively.
+- **SAFS: Visual Upload**: right-click a **local** file/folder (visible in any
+  window; no remote directory needs to be open) — pick the remote mount, then
+  enter the remote target directory (Tab completion); streaming upload with
+  progress and cancellation, folders upload recursively.
+- **SAFS: Visual Sync** (formerly "Sync…"): right-click a remote file/folder —
+  pick a local target directory to start **two-way automatic sync**
+  (remote ↔ local); incremental and persisted, it resumes after a window reload.
 
 ### Enable Agent Forwarding
 
@@ -277,4 +297,8 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   config files under the WSL home (`~/.pi/agent/mcp.json`,
   `$DSH_HOME/cordis.patch.yml`), and Agent CLIs (`codex`/`claude`) are detected
   and executed through `wsl.exe` inside WSL.
+- `safs.agentMcpTimeoutMs`: timeout for Agent MCP remote command/search
+  execution in milliseconds (default `120000`; `0` disables it).
+- `safs.sftp.idleConnectionTtl`: seconds before an idle SFTP connection is
+  recycled by the pool (default `600`; `0` disables recycling).
 

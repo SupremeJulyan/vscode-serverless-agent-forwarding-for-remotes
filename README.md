@@ -20,6 +20,12 @@
 - 远程文件夹侧栏显示连接状态，可打开、断开或删除配置。
 - GitHub Copilot Language Model Tools 和本机 MCP 服务可直接列出、读取、写入、
   搜索远程文件，并通过 SSH 执行远程命令。
+- 右键远程文件/目录 **SAFS：可视化下载**：大文件**流式下载**（进度条、可取消），
+  目录递归下载。
+- 右键远程文件/目录 **SAFS：可视化同步**：建立本地 ↔ 远程**双向自动同步**任务
+  （增量、重载续传）。
+- 右键本地文件/文件夹 **SAFS：可视化上传**：**流式上传**到远程（无需打开远程
+  目录，两步选择挂载与目标目录），目录递归上传。
 
 ## 使用
 
@@ -56,6 +62,17 @@ code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
   各自的 Agent 转发/MCP 独立绑定各自目录。
 - 每个远程配置会记住最后切换的目录；重新打开远程文件夹时，工作区和终端
   都会恢复到该目录。
+
+### 可视化下载 / 上传 / 同步
+
+- **SAFS：可视化下载**：在远程文件/目录上右键选择——大文件**流式下载**（边下
+  边写、进度条、可取消），目录递归下载到所选位置。
+- **SAFS：可视化上传**：在**本地**文件/文件夹上右键选择（任意窗口可见，无需
+  打开远程目录）——先选远程挂载，再输入远程目标目录（Tab 补全），**流式上传**
+  + 进度条 + 可取消，目录递归上传。
+- **SAFS：可视化同步**（原"同步…"）：在远程文件/目录上右键选择——选择本地
+  目标目录后建立**双向自动同步**（远程 ↔ 本地），增量同步并持久化，重载窗口后
+  继续。
 
 ### 启用 Agent 转发
 
@@ -245,6 +262,9 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   插件运行在 Windows、Agent 在 WSL 中运行时选择 `wsl`：MCP 注册读写 WSL
   家目录下的配置文件（`~/.pi/agent/mcp.json`、`$DSH_HOME/cordis.patch.yml`），
   Agent CLI（`codex`/`claude`）也通过 `wsl.exe` 在 WSL 内检测与执行。
+- `safs.agentMcpTimeoutMs`：Agent MCP 远程命令/搜索执行超时（毫秒，默认
+  120000；`0` 关闭）。
+- `safs.sftp.idleConnectionTtl`：空闲 SFTP 连接回收秒数（默认 600；`0` 关闭）。
 - `safs.highRiskCommandPatterns`：Agent 通过 MCP 请求远程命令时的高危匹配规则（正则数组），
   默认包含递归删除、磁盘/分区/文件系统操作、关机重启、管道执行远程脚本，以及 `sudo`/`su`/
   `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按
