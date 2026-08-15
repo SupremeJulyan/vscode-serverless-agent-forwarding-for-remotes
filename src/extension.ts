@@ -2028,7 +2028,7 @@ async function configureDetectedAgents(
   const mcpRunner = createMcpRunner(agentPlatform);
   bridgeOutput?.appendLine(
     `[Agent MCP] Agent 平台：${
-      agentPlatform.kind === 'wsl' ? `WSL（home=${agentPlatform.home}）` : '与插件相同'
+      agentPlatform.wsl ? `WSL（home=${agentPlatform.home}）` : '与插件相同'
     }`
   );
   bridgeOutput?.appendLine(

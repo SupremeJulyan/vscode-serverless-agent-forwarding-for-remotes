@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import { executeCaptured } from './process';
+import { detectPlatform } from './platform';
 
 /**
  * Agent 工作位置的解析：默认（auto）与插件运行平台相同；`wsl` 表示 Agent
@@ -41,10 +42,24 @@ export async function wslHomeDirectory(): Promise<string | undefined> {
   return undefined;
 }
 
-/** 解析 `safs.agentPlatform` 设置为平台上下文；WSL home 检测失败时回退到插件家目录。 */
-export async function resolveAgentPlatform(value: unknown): Promise<AgentPlatformContext> {
+/**
+ * 解析 `safs.agentPlatform` 设置为平台上下文。
+ *
+ * 插件本身运行在 WSL 中时（VS Code WSL 窗口），Agent 与插件同处 WSL：家目录
+ * 就是 `os.homedir()`（如 `/root`），且 WSL 的 Linux 文件系统无法访问
+ * `wsl.exe` 返回的 Windows UNC 路径——因此无论设置值如何都直接使用本地家目录、
+ * 不做 wsl.exe 间接解析（`agentPlatform=wsl` 与 `auto` 等效）。
+ *
+ * 仅当插件运行在 Windows 且设置为 `wsl` 时，才通过 `wsl.exe` 解析 WSL 家目录
+ * （UNC）；解析失败时回退到插件家目录。
+ */
+export async function resolveAgentPlatform(
+  value: unknown,
+  extensionPlatform = detectPlatform()
+): Promise<AgentPlatformContext> {
   const kind = resolveAgentPlatformSetting(value);
-  if (kind === 'wsl') {
+  const extensionInWsl = extensionPlatform === 'wsl';
+  if (kind === 'wsl' && !extensionInWsl) {
     return {
       kind,
       home: await wslHomeDirectory() ?? os.homedir(),

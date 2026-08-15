@@ -22,11 +22,25 @@ test('resolveAgentPlatform with auto uses the extension-process home and no WSL 
 });
 
 test('resolveAgentPlatform with wsl enables WSL indirection with a resolvable home', async () => {
-  const platform = await resolveAgentPlatform('wsl');
+  const platform = await resolveAgentPlatform('wsl', 'windows');
   assert.equal(platform.kind, 'wsl');
   assert.equal(platform.wsl, true);
   assert.equal(typeof platform.home, 'string');
   assert.ok(platform.home.length > 0);
+});
+
+test('extension running inside WSL treats agentPlatform=wsl as local (equivalent to auto)', async () => {
+  // 插件本身装在 WSL 里（VS Code WSL 窗口）：无论设置值如何都直接使用本地
+  // 家目录、不做 wsl.exe 间接解析（WSL 内无法访问 wsl.exe 返回的 UNC 路径）。
+  const platform = await resolveAgentPlatform('wsl', 'wsl');
+  assert.equal(platform.kind, 'wsl');
+  assert.equal(platform.wsl, false);
+  assert.equal(platform.home, os.homedir());
+  const auto = await resolveAgentPlatform('auto', 'wsl');
+  assert.deepEqual(
+    { home: platform.home, wsl: platform.wsl },
+    { home: auto.home, wsl: auto.wsl }
+  );
 });
 
 test('wslHomeDirectory returns undefined without breaking on missing wsl.exe', async () => {

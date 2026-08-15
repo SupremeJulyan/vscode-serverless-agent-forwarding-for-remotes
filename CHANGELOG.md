@@ -12,6 +12,11 @@
   （如 codex 装在 nvm 的 node 版本 bin 目录）对 `sh -lc` 不可见。WSL 内
   CLI 检测与执行改为**预设 PS1 后加载 `.profile`/`.bashrc` 的 bash**
   （`wslBashInvocation`），nvm 安装的 codex/pi 等可正常检测与执行。
+- **插件本身装在 WSL 里时，`safs.agentPlatform=wsl` 与 `auto` 等效**：
+  `resolveAgentPlatform` 增加插件平台检测（`detectPlatform()`），插件运行在
+  WSL 内时无论设置值如何都直接使用本地家目录、不做 `wsl.exe` 间接解析
+  （WSL 的 Linux 文件系统无法访问 wsl.exe 返回的 UNC 路径）。"Agent 平台"
+  日志改按实际 `wsl` 标志显示。
 
 ## 1.4.5
 
