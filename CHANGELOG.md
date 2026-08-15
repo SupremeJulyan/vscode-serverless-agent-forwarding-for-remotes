@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.8
+
+- **修复 Windows 下 Agent CLI 报 `spawn codex ENOENT`（npm 全局安装的
+  codex/claude shim）**：`where.exe` 能解析出 npm 全局安装的 `*.cmd`/`*.bat`
+  shim，但 Node 的 `spawn` 不能直接执行 `.cmd`/`.bat`（抛 ENOENT）。
+  `resolveExecutable` 在 Windows 上改为经 `where.exe` 解析真实路径，
+  `.cmd`/`.bat` shim 统一经 `cmd.exe /d /s /c` 执行（参数按 cmd 规则引用），
+  `ssh.exe`、`wsl.exe` 等真实可执行文件仍直接 spawn，找不到命令时仍保留
+  ENOENT 语义。pi/dsh 走文件式 MCP 注册、不涉及 CLI spawn，不受影响。
+  新增 `process.ts` 单元/回归测试（`windowsCommandInvocation`、
+  `executeCaptured` 执行 `codex --version`）。
+
 ## 1.4.7
 
 - **Agent 转发新增"当前打开的远程文件"感知**：Agent 现在能知道并直接读取 VS Code

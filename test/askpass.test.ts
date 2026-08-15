@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
-import { promisify } from 'node:util';
 import test from 'node:test';
 import { createAskpassCredentials, platformUsesAskpass } from '../src/askpass';
-
-const execFileAsync = promisify(execFile);
+import { executeCaptured } from '../src/process';
 
 test('all SSH platforms, including WSL, use ASKPASS', () => {
   assert.equal(platformUsesAskpass('macos'), true);
@@ -21,21 +18,29 @@ test('ASKPASS supplies a terminal login password without exposing it in argument
   assert.equal(helper.includes('terminal secret'), false);
   assert.equal(await readFile(passwordFile, 'utf8'), 'terminal secret');
 
-  const result = await execFileAsync(helper, ['alice@host password:'], {
-    env: { ...process.env, ...credentials.env }
-  });
-  assert.equal(result.stdout, 'terminal secret');
+  const result = await executeCaptured(
+    { command: helper, args: ['alice@host password:'], env: credentials.env },
+    undefined, 16 * 1024
+  );
+  assert.equal(result.stdout.trim(), 'terminal secret');
+  // Windows 的 .bat helper 自删除（del "%~f0"）会让 cmd 以错误码 1 收尾，
+  // 但密码已输出；OpenSSH 只消费 stdout，退出码不影响。POSIX 下为 0。
+  if (process.platform !== 'win32') assert.equal(result.exitCode, 0);
   await assert.rejects(access(passwordFile));
   await credentials.cleanup();
 });
 
 test('ASKPASS refuses to use a login password as a private-key passphrase', async () => {
   const credentials = await createAskpassCredentials('login password');
-  await assert.rejects(execFileAsync(
-    credentials.env.SSH_ASKPASS,
-    ['Enter passphrase for key:'],
-    { env: { ...process.env, ...credentials.env } }
-  ));
+  const result = await executeCaptured(
+    {
+      command: credentials.env.SSH_ASKPASS,
+      args: ['Enter passphrase for key:'],
+      env: credentials.env
+    },
+    undefined, 16 * 1024
+  );
+  assert.notEqual(result.exitCode, 0);
   assert.equal(
     await readFile(credentials.env.SERVERLESS_REMOTE_ASKPASS_FILE, 'utf8'),
     'login password'
