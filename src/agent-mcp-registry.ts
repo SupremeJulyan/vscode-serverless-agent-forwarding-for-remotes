@@ -1,7 +1,8 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, readdir } from 'node:fs/promises';
 import type { CapturedProcessResult } from './process';
+import { readTextFile, writeTextFile } from './wsl-file';
 
 /**
  * Agent CLI 的 MCP server 注册抽象与内置实现。
@@ -87,7 +88,7 @@ function fileHandlerResult(exitCode: number, stdout = '', stderr = ''): Captured
 
 export async function readPiMcpConfig(configPath: string): Promise<PiMcpConfigFile> {
   try {
-    const parsed = JSON.parse(await readFile(configPath, 'utf8')) as PiMcpConfigFile;
+    const parsed = JSON.parse(await readTextFile(configPath)) as PiMcpConfigFile;
     if (parsed && typeof parsed === 'object') return parsed;
   } catch {
     // Missing or invalid file: treat as empty config.
@@ -110,7 +111,7 @@ export async function piMcpExtensionInstalled(
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(
-        await readFile(candidate, 'utf8')
+        await readTextFile(candidate)
       ) as { packages?: unknown };
       const packages = Array.isArray(parsed.packages)
         ? parsed.packages.map((item) => String(item))
@@ -132,11 +133,9 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
     try {
       const config = await readPiMcpConfig(configPath);
       mutateFn(config);
-      // 配置文件含 MCP 注册 URL（带 token），目录/文件权限收紧为仅当前用户。
-      await mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
-      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
-        encoding: 'utf8', mode: 0o600
-      });
+      // 配置文件含 MCP 注册 URL（带 token），写入收紧为仅当前用户
+      // （WSL UNC 路径经 wsl.exe 写并在 WSL 侧 chmod）。
+      await writeTextFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 0o600);
       return fileHandlerResult(0, okMessage);
     } catch (error) {
       return fileHandlerResult(
@@ -280,7 +279,7 @@ export function dshAgentMcpHandler(options?: { home?: string }): AgentMcpHandler
   const patchFile = dshPatchFilePath(home);
   const readPatch = async (): Promise<string> => {
     try {
-      return await readFile(patchFile, 'utf8');
+      return await readTextFile(patchFile);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
       throw error;
@@ -292,9 +291,9 @@ export function dshAgentMcpHandler(options?: { home?: string }): AgentMcpHandler
   ): Promise<CapturedProcessResult> => {
     try {
       const updated = mutateFn(await readPatch());
-      // patch 文件含 MCP 注册 URL（带 token），目录/文件权限收紧为仅当前用户。
-      await mkdir(path.dirname(patchFile), { recursive: true, mode: 0o700 });
-      await writeFile(patchFile, updated, { encoding: 'utf8', mode: 0o600 });
+      // patch 文件含 MCP 注册 URL（带 token），写入收紧为仅当前用户
+      // （WSL UNC 路径经 wsl.exe 写并在 WSL 侧 chmod）。
+      await writeTextFile(patchFile, updated, 0o600);
       return fileHandlerResult(0, okMessage);
     } catch (error) {
       return fileHandlerResult(

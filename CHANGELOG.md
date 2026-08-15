@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.6
+
+- 修复 `safs.agentPlatform=wsl` 模式下 pi/dsh 注册失败：扩展宿主（VS Code 内置
+  Node 20.x）对 `\\wsl.localhost\...` UNC 路径有主机白名单检查，直接 fs 读写抛
+  `UNC host 'wsl.localhost' access is not allowed`。pi 的 settings.json/mcp.json
+  与 dsh 的 cordis.patch.yml 读写改为**经 `wsl.exe -d <发行版>` 在 Linux 侧完成**
+  （读取走 `cat`，写入走 `mkdir -p` + base64 解码 + `chmod 600/700`），新增
+  `src/wsl-file.ts` 桥接模块与测试；非 UNC 路径行为不变。
+
 ## 1.4.5
 
 - 新增 **SAFS：可视化下载** 命令（远程文件/目录右键菜单）：大文件**流式下载**
