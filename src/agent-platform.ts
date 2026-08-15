@@ -54,11 +54,31 @@ export async function resolveAgentPlatform(value: unknown): Promise<AgentPlatfor
   return { kind, home: os.homedir(), wsl: false };
 }
 
-/** 在 WSL 内检测 CLI 是否存在于 PATH（`command -v`）。 */
+/**
+ * 构造"激活用户交互环境"的 wsl 命令：预设非空 PS1 绕过 .bashrc 的
+ * `[ -z "$PS1" ] && return` 守卫后加载 .profile/.bashrc——nvm 等只在交互
+ * shell 生效的 PATH 配置（如 codex 装在 nvm 的 node 版本 bin 目录）才能
+ * 被检测/执行。脚本以 $1..$n 接收位置参数。
+ */
+export function wslBashInvocation(
+  script: string, args: string[]
+): { command: string; args: string[] } {
+  return {
+    command: 'wsl.exe',
+    args: [
+      '-e', 'bash', '-c',
+      'export PS1="safs $ "; [ -f "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1;'
+        + ' [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc" >/dev/null 2>&1; ' + script,
+      'safs', ...args
+    ]
+  };
+}
+
+/** 在 WSL 内（激活用户交互环境）检测 CLI 是否存在于 PATH（`command -v`）。 */
 export async function wslCommandExists(command: string): Promise<boolean> {
   try {
     const result = await executeCaptured(
-      { command: 'wsl.exe', args: ['-e', 'sh', '-lc', `command -v '${command}' >/dev/null 2>&1`] },
+      wslBashInvocation('command -v -- "$1" >/dev/null 2>&1', [command]),
       undefined, 16 * 1024
     );
     return result.exitCode === 0;

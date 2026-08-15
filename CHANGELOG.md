@@ -8,6 +8,10 @@
   与 dsh 的 cordis.patch.yml 读写改为**经 `wsl.exe -d <发行版>` 在 Linux 侧完成**
   （读取走 `cat`，写入走 `mkdir -p` + base64 解码 + `chmod 600/700`），新增
   `src/wsl-file.ts` 桥接模块与测试；非 UNC 路径行为不变。
+- 修复 WSL 内 Agent CLI 检测不到：nvm 等只在交互 shell 生效的 PATH 配置
+  （如 codex 装在 nvm 的 node 版本 bin 目录）对 `sh -lc` 不可见。WSL 内
+  CLI 检测与执行改为**预设 PS1 后加载 `.profile`/`.bashrc` 的 bash**
+  （`wslBashInvocation`），nvm 安装的 codex/pi 等可正常检测与执行。
 
 ## 1.4.5
 

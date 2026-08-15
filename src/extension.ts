@@ -30,7 +30,7 @@ import {
   resolveAgentDefinitions, runAgentMcpOperation
 } from './agent-mcp-registry';
 import {
-  AgentPlatformContext, resolveAgentPlatform, wslCommandExists
+  AgentPlatformContext, resolveAgentPlatform, wslBashInvocation, wslCommandExists
 } from './agent-platform';
 import {
   ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
@@ -1996,7 +1996,8 @@ function createMcpRunner(platform: AgentPlatformContext): AgentMcpCliRunner {
   return {
     run: (command, args, signal) => executeAgentMcpCommand(
       platform.wsl
-        ? { command: 'wsl.exe', args: ['-e', command, ...args] }
+        // 经 bash 激活用户交互环境（nvm 等 PATH）后执行，见 wslBashInvocation。
+        ? wslBashInvocation('exec "$1" "${@:2}"', [command, ...args])
         : { command, args },
       signal
     ),

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import * as os from 'node:os';
 import test from 'node:test';
 import {
-  resolveAgentPlatform, resolveAgentPlatformSetting, wslHomeDirectory
+  resolveAgentPlatform, resolveAgentPlatformSetting, wslBashInvocation, wslHomeDirectory
 } from '../src/agent-platform';
 
 test('resolveAgentPlatformSetting maps wsl and falls back to auto', () => {
@@ -33,4 +33,15 @@ test('wslHomeDirectory returns undefined without breaking on missing wsl.exe', a
   // Never throws; either the WSL path resolves (real WSL) or it falls back to undefined.
   const home = await wslHomeDirectory();
   assert.ok(home === undefined || (typeof home === 'string' && home.length > 0));
+});
+
+test('wslBashInvocation builds an interactive-config bash command with positional args', () => {
+  const invocation = wslBashInvocation('command -v -- "$1" >/dev/null 2>&1', ['codex']);
+  assert.equal(invocation.command, 'wsl.exe');
+  assert.ok(invocation.args.includes('bash'));
+  const script = invocation.args[invocation.args.indexOf('-c') + 1];
+  assert.ok(script.includes('export PS1="safs $ "'));
+  assert.ok(script.includes('. "$HOME/.bashrc"'));
+  assert.ok(script.includes('command -v -- "$1"'));
+  assert.equal(invocation.args.at(-1), 'codex');
 });
