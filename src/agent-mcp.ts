@@ -19,10 +19,7 @@ export interface AgentMcpCallbacks {
   currentWorkspace(): Promise<RemoteFolderInfo | null>;
   /** 当前打开的远程文件元数据（无活动远程文件时为 null）。 */
   currentFile(input: { mountName?: string }): Promise<unknown>;
-  /** 直接读取当前打开的远程文件内容（无活动远程文件时为 null）。 */
-  readCurrentFile(input: { mountName?: string; offset?: number; length?: number }): Promise<unknown>;
   list(input: { mountName?: string; path?: string }): Promise<unknown>;
-  read(input: { mountName?: string; path: string; offset?: number; length?: number }): Promise<unknown>;
   write(input: { mountName?: string; path: string; content: string }): Promise<unknown>;
   search(input: { mountName?: string; query: string; path?: string }): Promise<unknown>;
   run(input: { command: string; mountName?: string; remoteCwd?: string }): Promise<unknown>;
@@ -60,8 +57,9 @@ export class AgentMcpServer {
         instructions:
           'This VS Code workspace may use the safs virtual filesystem. Virtual remote files are NOT present in the agent host filesystem. '
           + 'At the start of every conversation, call resolve_workspace_execution before reading files, running shell commands, inferring the OS, or using Git/build/test/package tools. '
-          + 'When it returns execution="remote", use only remote_list, remote_read, remote_write, remote_search, current_remote_file, read_current_remote_file, and run_remote_command for workspace operations. Never substitute the local filesystem or local shell. '
-          + 'To inspect the remote file currently open in the VS Code window, call current_remote_file (metadata) or read_current_remote_file (content) instead of guessing a path. '
+          + 'When it returns execution="remote", use only remote_list, remote_write, remote_search, current_remote_file, and run_remote_command for workspace operations. Never substitute the local filesystem or local shell. '
+          + 'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead. '
+          + 'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata. '
           + 'mountName may be omitted to target the active forwarded remote workspace.'
       }
     );
@@ -79,7 +77,7 @@ export class AgentMcpServer {
       {
         title: 'Resolve workspace execution route',
         description:
-          'MANDATORY first step in every conversation. Detects whether the active VS Code workspace is a forwarded SFTP workspace and returns its remote root and tool routing.',
+          'MANDATORY first step. Detects the active SFTP workspace and returns its remote root, mountName, and tool routing.',
         _meta: { 'anthropic/alwaysLoad': true },
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
@@ -89,7 +87,7 @@ export class AgentMcpServer {
         return result(workspace ? {
           execution: 'remote',
           workspace,
-          fileTools: ['remote_list', 'remote_read', 'remote_write', 'remote_search', 'current_remote_file', 'read_current_remote_file'],
+          fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
           commandTool: 'run_remote_command',
           localFilesystemAllowed: false,
           localShellAllowed: false
@@ -103,50 +101,24 @@ export class AgentMcpServer {
       'list_remote_folders',
       {
         title: 'List SFTP remote folders',
-        description: 'Lists configured SFTP workspaces and their remote roots.',
-        _meta: { 'anthropic/alwaysLoad': true },
+        description: 'Lists active Agent-forwarded remote folders.',
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },
       async () => result(await this.callbacks.listFolders())
     );
     server.registerTool(
-      'current_remote_workspace',
-      {
-        title: 'Get the current remote workspace',
-        description:
-          'Returns the remote folder currently open in the VS Code workspace, including its mount name, remote root path, and host. Call this first to discover which remote folder the user is working in. Returns null when no remote workspace is open.',
-        inputSchema: {}
-      },
-      async () => result(await this.callbacks.currentWorkspace())
-    );
-    server.registerTool(
       'current_remote_file',
       {
         title: 'Get the currently open remote file',
         description:
-          'Returns the remote file currently open in the active VS Code editor of this window: absolute path, path relative to the remote root (usable with remote_read/remote_write), file name, size, and whether the editor has unsaved changes (dirty). Returns null when no remote file is open.',
+          'Returns the remote file open in the active VS Code editor of this window: absolute path, relative path, name, size, and dirty (unsaved changes). null when none is open.',
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {
           mountName: z.string().min(1).optional()
         }
       },
       async (input) => result(await this.callbacks.currentFile(input))
-    );
-    server.registerTool(
-      'read_current_remote_file',
-      {
-        title: 'Read the currently open remote file',
-        description:
-          'Reads the content of the remote file currently open in the active VS Code editor of this window, so the user does not have to tell you its path. When the editor has unsaved changes (dirty) the in-memory editor buffer is returned (source: "editor"); otherwise the saved file is read directly over SFTP (source: "sftp"). offset/length are byte ranges with a single-read cap of 1 MiB; content is decoded as UTF-8. Returns null when no remote file is open.',
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-        inputSchema: {
-          mountName: z.string().min(1).optional(),
-          offset: z.number().int().min(0).optional(),
-          length: z.number().int().min(1).max(1_048_576).optional()
-        }
-      },
-      async (input) => result(await this.callbacks.readCurrentFile(input))
     );
     server.registerTool(
       'remote_list',
@@ -159,20 +131,6 @@ export class AgentMcpServer {
         }
       },
       async (input) => result(await this.callbacks.list(input))
-    );
-    server.registerTool(
-      'remote_read',
-      {
-        title: 'Read a remote file',
-        description: 'Reads a UTF-8 file directly over SFTP, optionally by byte range.',
-        inputSchema: {
-          mountName: z.string().min(1).optional(),
-          path: z.string(),
-          offset: z.number().int().min(0).optional(),
-          length: z.number().int().min(1).max(1_048_576).optional()
-        }
-      },
-      async (input) => result(await this.callbacks.read(input))
     );
     server.registerTool(
       'remote_write',

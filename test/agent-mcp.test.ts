@@ -20,9 +20,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       host: 'dev'
     }),
     currentFile: async (input) => ({ ...input, path: '/srv/project/README.md', dirty: false }),
-    readCurrentFile: async (input) => ({ ...input, content: 'hello' }),
     list: async (input) => ({ ...input, entries: [] }),
-    read: async (input) => ({ ...input, content: 'hello' }),
     write: async (input) => ({ ...input, bytes: input.content.length }),
     search: async (input) => ({ ...input, stdout: 'src/index.ts:1:hello' }),
     run: async (input) => ({ ...input, exitCode: 0, stdout: 'ok' })
@@ -36,34 +34,18 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
       'current_remote_file',
-      'current_remote_workspace',
       'list_remote_folders',
-      'read_current_remote_file',
       'remote_list',
-      'remote_read',
       'remote_search',
       'remote_write',
       'resolve_workspace_execution',
       'run_remote_command'
     ]);
-    const result = await client.callTool({
-      name: 'remote_read',
-      arguments: { mountName: 'project', path: 'README.md' }
-    });
-    const text = (result.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
-    assert.equal(JSON.parse(text).content, 'hello');
     const currentFile = await client.callTool({
       name: 'current_remote_file', arguments: { mountName: 'project' }
     });
     const currentFileText = (currentFile.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
     assert.equal(JSON.parse(currentFileText).path, '/srv/project/README.md');
-    const currentFileContent = await client.callTool({
-      name: 'read_current_remote_file',
-      arguments: { mountName: 'project', length: 5 }
-    });
-    const currentFileContentText = (currentFileContent.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
-    assert.equal(JSON.parse(currentFileContentText).content, 'hello');
-    assert.equal(JSON.parse(currentFileContentText).length, 5);
     const route = await client.callTool({
       name: 'resolve_workspace_execution', arguments: {}
     });
@@ -76,7 +58,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
         remoteRoot: '/srv/project',
         host: 'dev'
       },
-      fileTools: ['remote_list', 'remote_read', 'remote_write', 'remote_search', 'current_remote_file', 'read_current_remote_file'],
+      fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
       commandTool: 'run_remote_command',
       localFilesystemAllowed: false,
       localShellAllowed: false
@@ -97,9 +79,7 @@ test('allocates independent ports for concurrent window MCP servers', async () =
       host: name
     }),
     currentFile: async () => null,
-    readCurrentFile: async () => null,
     list: async () => [],
-    read: async () => ({}),
     write: async () => ({}),
     search: async () => ({}),
     run: async () => ({})

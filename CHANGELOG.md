@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **移除 MCP 工具 `remote_read` 与 `read_current_remote_file`，远程文件内容不再返回
+  Agent 上下文**：Agent 只需通过 `current_remote_file` 拿到当前打开文件的路径与元数据，
+  需要查看内容时用 `run_remote_command` 在远程执行 `head`/`sed`/`grep`/`tail`/`wc`/
+  `diff` 等命令按需查看，避免大文件内容被整段拉进模型上下文造成巨额 token 消耗。
+  VS Code 内置 Agent 工具 `#safsRead`、`#safsReadCurrentRemoteFile` 同步移除；
+  `resolve_workspace_execution` 的 `fileTools` 与 MCP instructions 已更新，并新增
+  "文件内容永不返回会话" 的指令引导。
+- **移除冗余 MCP 工具 `current_remote_workspace` 并去掉 `list_remote_folders` 的
+  强制加载**：`current_remote_workspace` 返回的数据与 `resolve_workspace_execution`
+  完全重复，删除以减少工具定义与调用开销；`list_remote_folders` 不再标记
+  `alwaysLoad`，避免每轮请求都常驻其完整定义。精简了 MCP 工具描述以降低基础提示词
+  体积。
+
 ## 1.4.8
 
 - **修复 Windows 下 Agent CLI 报 `spawn codex ENOENT`（npm 全局安装的

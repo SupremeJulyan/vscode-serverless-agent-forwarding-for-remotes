@@ -657,64 +657,6 @@ async function activeRemoteFile(mountName?: string): Promise<{
 }
 
 /**
- * Reads the remote file currently open in the active editor of this window.
- * Unsaved edits live in the editor buffer, not on disk: when the document is
- * dirty the buffer is returned (source='editor', byte-based offset/length via
- * TextEncoder) so the Agent sees exactly what the user is looking at;
- * otherwise the saved file is read over SFTP (source='sftp'). Returns null
- * when no matching remote file is active.
- */
-async function readActiveRemoteFile(input: {
-  mountName?: string; offset?: number; length?: number;
-}): Promise<unknown> {
-  const file = await activeRemoteFile(input.mountName);
-  if (!file) return null;
-  const offset = input.offset ?? 0;
-  const length = input.length ?? 1_048_576;
-  const editor = vscode.window.activeTextEditor
-    ?? vscode.window.visibleTextEditors.find(
-      (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
-    );
-  const document = editor && editor.document.uri.toString() === file.uri
-    ? editor.document
-    : undefined;
-  if (document?.isDirty) {
-    const bytes = new TextEncoder().encode(document.getText());
-    const slice = bytes.slice(offset, offset + length);
-    return {
-      mountName: file.mountName,
-      path: file.path,
-      relative: file.relative,
-      fileName: file.fileName,
-      source: 'editor',
-      dirty: true,
-      offset,
-      bytes: slice.length,
-      size: bytes.length,
-      truncated: offset + slice.length < bytes.length,
-      content: new TextDecoder().decode(slice)
-    };
-  }
-  const session = await pool.get(registry.get(file.mountName)!.hostName);
-  const stat = await session.stat(file.path);
-  const readLength = Math.min(length, Math.max(0, stat.size - offset));
-  const bytes = await session.readFileRange(file.path, offset, readLength);
-  return {
-    mountName: file.mountName,
-    path: file.path,
-    relative: file.relative,
-    fileName: file.fileName,
-    source: 'sftp',
-    dirty: false,
-    offset,
-    bytes: bytes.length,
-    size: stat.size,
-    truncated: offset + bytes.length < stat.size,
-    content: new TextDecoder().decode(bytes)
-  };
-}
-
-/**
  * Live-sync: when the active editor switches to a remote file, send `cd` to
  * every managed terminal of that mount so the terminal follows the file's
  * directory (only when the directory actually changed, to avoid noise).
@@ -1523,27 +1465,6 @@ async function remoteList(input: { mountName: string; path?: string }): Promise<
   };
 }
 
-async function remoteRead(input: {
-  mountName: string; path: string; offset?: number; length?: number;
-}): Promise<unknown> {
-  const { mount, folder } = await mountAndFolder(input.mountName);
-  const remotePath = resolveRemotePath(folder, input.path);
-  const session = await pool.get(folder.hostName);
-  const stat = await session.stat(remotePath);
-  const offset = input.offset ?? 0;
-  const length = input.length ?? Math.max(0, stat.size - offset);
-  // 按字节范围读取，避免大文件整读（remote_read 的 offset/length 语义）。
-  const bytes = await session.readFileRange(remotePath, offset, length);
-  return {
-    mountName: mount.name,
-    path: remotePath,
-    offset,
-    bytes: bytes.length,
-    truncated: offset + length < stat.size,
-    content: new TextDecoder().decode(bytes)
-  };
-}
-
 async function remoteWrite(input: {
   mountName: string; path: string; content: string;
 }): Promise<unknown> {
@@ -1990,11 +1911,7 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
           };
         },
         currentFile: (input) => activeRemoteFile(input.mountName),
-        readCurrentFile: (input) => readActiveRemoteFile(input),
         list: async (input) => remoteList({
-          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
-        }),
-        read: async (input) => remoteRead({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         write: async (input) => remoteWrite({
@@ -2739,16 +2656,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }));
   tool<{ mountName?: string; path?: string }>('safs_listRemoteFiles', async (input) =>
     remoteList({ ...input, mountName: await forwardedMountName(input.mountName) }));
-  tool<{ mountName?: string; path: string; offset?: number; length?: number }>(
-    'safs_readRemoteFile', async (input) =>
-      remoteRead({ ...input, mountName: await forwardedMountName(input.mountName) })
-  );
   tool<{ mountName?: string }>('safs_currentRemoteFile', async (input) =>
     activeRemoteFile(await forwardedMountName(input.mountName)));
-  tool<{ mountName?: string; offset?: number; length?: number }>(
-    'safs_readCurrentRemoteFile', async (input) =>
-      readActiveRemoteFile({ ...input, mountName: await forwardedMountName(input.mountName) })
-  );
   tool<{ mountName?: string; path: string; content: string }>(
     'safs_writeRemoteFile', async (input) =>
       remoteWrite({ ...input, mountName: await forwardedMountName(input.mountName) }), true

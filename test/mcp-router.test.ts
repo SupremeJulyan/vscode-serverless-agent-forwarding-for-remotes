@@ -14,9 +14,7 @@ function callbacks(label: string) {
       name: 'A', workspaceUri: 'safs://a/srv/a', remoteRoot: '/srv/a', host: 'dev'
     }),
     currentFile: async (input: unknown) => ({ label, input }),
-    readCurrentFile: async (input: unknown) => ({ label, input }),
     list: async (input: unknown) => ({ label, input }),
-    read: async (input: unknown) => ({ label, input }),
     write: async (input: unknown) => ({ label, input }),
     search: async (input: unknown) => ({ label, input }),
     run: async (input: unknown) => ({ label, input })
@@ -78,29 +76,22 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     assert.equal(routeValue.workspace.mountName, 'A');
 
     const connected = await client.callTool({
-      name: 'remote_read', arguments: { path: 'README.md' }
+      name: 'remote_list', arguments: { path: 'README.md' }
     });
     assert.equal(JSON.parse((connected.content as any[])[0].text).label, 'first');
 
-    // current_remote_file / read_current_remote_file are window-specific:
-    // the router forwards them to the focused window's MCP server.
+    // current_remote_file is window-specific: the router forwards it to the
+    // focused window's MCP server.
     const currentFile = await client.callTool({
       name: 'current_remote_file', arguments: {}
     });
     const currentFileValue = JSON.parse((currentFile.content as any[])[0].text);
     assert.equal(currentFileValue.label, 'first');
     assert.equal(currentFileValue.input.mountName, 'A');
-    const currentFileContent = await client.callTool({
-      name: 'read_current_remote_file', arguments: { length: 64 }
-    });
-    const currentFileContentValue = JSON.parse((currentFileContent.content as any[])[0].text);
-    assert.equal(currentFileContentValue.label, 'first');
-    assert.equal(currentFileContentValue.input.length, 64);
-    assert.equal(currentFileContentValue.input.mountName, 'A');
 
     workspaces = [];
     const disconnected = await client.callTool({
-      name: 'remote_read', arguments: { path: 'README.md' }
+      name: 'remote_list', arguments: { path: 'README.md' }
     });
     assert.equal(disconnected.isError, true);
     assert.equal(JSON.parse((disconnected.content as any[])[0].text).code, 'NO_ACTIVE_REMOTE');
@@ -112,7 +103,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
 
     workspaces = [record('new-a', second.url)];
     const reconnected = await client.callTool({
-      name: 'remote_read', arguments: { path: 'README.md' }
+      name: 'remote_list', arguments: { path: 'README.md' }
     });
     assert.equal(JSON.parse((reconnected.content as any[])[0].text).label, 'second');
   } finally {
@@ -164,7 +155,7 @@ test('router refuses to forward to its own port (loop protection)', async () => 
   try {
     await router.start();
     await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
-    const result = await client.callTool({ name: 'remote_read', arguments: { path: 'x' } });
+    const result = await client.callTool({ name: 'remote_list', arguments: { path: 'x' } });
     assert.equal(result.isError, true);
     assert.equal(JSON.parse((result.content as any[])[0].text).code, 'REMOTE_UNAVAILABLE');
   } finally {

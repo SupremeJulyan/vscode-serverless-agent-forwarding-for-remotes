@@ -344,33 +344,6 @@
         }
       },
       {
-        "name": "safs_readRemoteFile",
-        "displayName": "Read Remote File",
-        "toolReferenceName": "safsRead",
-        "canBeReferencedInPrompt": true,
-        "modelDescription": "Reads a file directly over SFTP. Use this instead of local filesystem tools.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "mountName": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "offset": {
-              "type": "number"
-            },
-            "length": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "path"
-          ]
-        }
-      },
-      {
         "name": "safs_writeRemoteFile",
         "displayName": "Write Remote File",
         "toolReferenceName": "safsWrite",
