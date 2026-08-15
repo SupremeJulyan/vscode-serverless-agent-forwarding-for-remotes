@@ -27,7 +27,8 @@ import { AgentMcpServer } from './agent-mcp';import { AgentHttpRouter } from './
 import { AgentWorkspacePublisher } from './agent-discovery';
 import {
   AgentDefinition, AgentMcpCliRunner, agentSupportsMcpFor,
-  resolveAgentDefinitions, runAgentMcpOperation
+  defaultForwardingAgents, resolveAgentDefinitions, resolveUnloadAgentNames,
+  runAgentMcpOperation
 } from './agent-mcp-registry';
 import {
   AgentPlatformContext, resolveAgentPlatform, wslBashInvocation, wslBundledCli, wslCommandExists
@@ -2145,12 +2146,18 @@ async function configureDetectedAgents(
     (item): item is string => typeof item === 'string'
   ) : []);
   const forwardingAgents = settings().get<string[]>(
-    'agentForwardingAgents', ['codex', 'claude', 'pi', 'dsh']
+    'agentForwardingAgents', defaultForwardingAgents
   );
   const agentPlatform = await resolveAgentPlatform(
     settings().get<string>('agentPlatform', 'auto')
   );
-  const definitions = resolveAgentDefinitions(forwardingAgents, {
+  // 卸载路径的探测集合 = 当前设置 ∪ 曾成功配置的记录（`<cliName>:safs`），
+  // 两者皆空时兜底内置默认集合——保证设置被清空/Agent 被移出列表后，
+  // 残留的固定 MCP 仍能被探测并移除（而非静默跳过）。
+  const agentNames = shouldRegister
+    ? forwardingAgents
+    : resolveUnloadAgentNames(forwardingAgents, [...configured]);
+  const definitions = resolveAgentDefinitions(agentNames, {
     agentHome: agentPlatform.home
   });
   const mcpRunner = createMcpRunner(agentPlatform);
@@ -2162,6 +2169,11 @@ async function configureDetectedAgents(
   bridgeOutput?.appendLine(
     `[Agent MCP] 转发目标：${[...forwardingAgents].join(', ') || '<empty>'}`
   );
+  if (!shouldRegister) {
+    bridgeOutput?.appendLine(
+      `[Agent MCP] 卸载探测集合：${agentNames.join(', ') || '<empty>'}`
+    );
+  }
 
   interface AgentState {
     def: AgentDefinition;
@@ -2248,6 +2260,17 @@ async function configureDetectedAgents(
             : '固定 HTTP MCP 未注册';
     bridgeOutput?.appendLine(`[Agent MCP] 注册状态：${state.def.displayName} ${statusText}`);
   }
+  if (!shouldRegister) {
+    // 卸载路径：曾成功配置、但当前探测不到（如 CLI 已卸载）的 Agent 保留记录，
+    // 避免静默漏删——CLI 恢复后下次卸载会重试。
+    for (const state of states) {
+      if (configured.has(`${state.def.cliName}:safs`) && !state.command) {
+        bridgeOutput?.appendLine(
+          `[Agent MCP] ${state.def.displayName} 曾注册过固定 MCP 但当前未找到 CLI，保留卸载记录，待 CLI 可用时重试。`
+        );
+      }
+    }
+  }
   if (shouldRegister && unsupportedMcp.length > 0) {
     vscode.window.showWarningMessage(
       `SAFS：以下 Agent CLI 不支持 MCP，已跳过自动注册：${
@@ -2267,9 +2290,14 @@ async function configureDetectedAgents(
       state.command && (!shouldRegister || !state.enabled) && state.fixedExists
     )
   );
-  for (const state of states) {
-    const key = `${state.def.cliName}:safs`;
-    if (!state.enabled || !state.fixedConfigured) configured.delete(key);
+  // 启用路径：清理不再匹配的记录（Agent 未启用或已不是当前 URL）；
+  // 卸载路径不在此处删除记录——删除只发生在 remove 成功之后，保证
+  // 探测不到的 Agent 记录保留、下次可重试。
+  if (shouldRegister) {
+    for (const state of states) {
+      const key = `${state.def.cliName}:safs`;
+      if (!state.enabled || !state.fixedConfigured) configured.delete(key);
+    }
   }
   if (needsSetup.length === 0 && needsDisable.length === 0) {
     await context.globalState.update(agentSetupCompletedKey, [...configured]);
@@ -2401,8 +2429,12 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
       }
     } else if (enabled.size === 0) {
       agentTrace('Preference', '已无启用挂载，移除固定 MCP 注册');
-      integrationSucceeded = await configureDetectedAgents(vscodeContext, false);
-      await stopAgentHttpRouterLeadership();
+      try {
+        integrationSucceeded = await configureDetectedAgents(vscodeContext, false);
+      } finally {
+        // 无论移除是否成功/抛错，都要停掉固定路由心跳，避免残留。
+        await stopAgentHttpRouterLeadership();
+      }
     }
     void vscode.window.showInformationMessage(
       `"${mount.name}" Agent 转发已${enabledValue ? '启用' : '关闭'}。${enabledValue

@@ -8,7 +8,7 @@ import {
   agentSupportsMcp, agentSupportsMcpFor, dshAgentMcpHandler,
   dshHomeDirectory, dshPatchFilePath, findDshEntryBlock, piAgentMcpHandler,
   piMcpExtensionInstalled, readPiMcpConfig, resolveAgentDefinitions,
-  runAgentMcpOperation, upsertDshEntry
+  resolveUnloadAgentNames, runAgentMcpOperation, upsertDshEntry
 } from '../src/agent-mcp-registry.js';
 import type { CapturedProcessResult } from '../src/process.js';
 
@@ -216,12 +216,12 @@ test('remove deletes only the target server', async () => {
   }
 });
 
-test('get reports not-configured with exit 0', async () => {
+test('get reports not-configured with exit 1', async () => {
   const home = await tempHome();
   try {
     const handler = piAgentMcpHandler({ baseDir: home });
     const result = await handler.get('safs');
-    assert.equal(result.exitCode, 0);
+    assert.equal(result.exitCode, 1);
     assert.match(result.stdout, /not configured/);
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -372,12 +372,12 @@ test('dsh remove deletes only the target entry and restores [] when empty', asyn
   }
 });
 
-test('dsh get reports not-configured with exit 0', async () => {
+test('dsh get reports not-configured with exit 1', async () => {
   const home = await tempDshHome();
   try {
     const handler = dshAgentMcpHandler({ home });
     const result = await handler.get('safs');
-    assert.equal(result.exitCode, 0);
+    assert.equal(result.exitCode, 1);
     assert.match(result.stdout, /not configured/);
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -419,4 +419,23 @@ test('upsertDshEntry and findDshEntryBlock tolerate other entries', () => {
   assert.ok(!/^\[\s*\]$/m.test(updated));
   const block = findDshEntryBlock(updated, 'safs')!;
   assert.equal(updated.slice(block.start, block.end), `${entry}\n`);
+});
+
+test('resolveUnloadAgentNames unions settings and configured records, falls back to defaults', () => {
+  // 设置列表 ∪ 配置记录，去重。
+  assert.deepEqual(
+    resolveUnloadAgentNames(['codex', 'dsh'], ['pi:safs', 'claude:safs']),
+    ['codex', 'dsh', 'pi', 'claude']
+  );
+  // 设置被清空：仍从记录中解析出曾注册的 Agent。
+  assert.deepEqual(resolveUnloadAgentNames([], ['dsh:safs']), ['dsh']);
+  // 两者皆空：兜底内置默认集合，保证"清理残留"能探测。
+  assert.deepEqual(
+    resolveUnloadAgentNames([], []),
+    ['codex', 'claude', 'pi', 'dsh']
+  );
+  // 畸形/无关记录键被忽略。
+  assert.deepEqual(resolveUnloadAgentNames([], ['safs', 'pi:other', 'pi:safs']), ['pi']);
+  // 空项不进入集合。
+  assert.deepEqual(resolveUnloadAgentNames(['', 'dsh'], []), ['dsh']);
 });

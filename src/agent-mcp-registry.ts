@@ -1,8 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { access } from 'node:fs/promises';
 import type { CapturedProcessResult } from './process';
-import { readDirectory, readTextFile, writeTextFile } from './wsl-file';
+import { pathExists, readDirectory, readTextFile, writeTextFile } from './wsl-file';
 
 /**
  * Agent CLI 的 MCP server 注册抽象与内置实现。
@@ -154,7 +153,7 @@ export function piAgentMcpHandler(options?: { baseDir?: string }): AgentMcpHandl
     get: async (serverName) => {
       const server = (await readPiMcpConfig(configPath)).mcpServers?.[serverName];
       if (!server) {
-        return fileHandlerResult(0, `pi-mcp: server "${serverName}" not configured`);
+        return fileHandlerResult(1, `pi-mcp: server "${serverName}" not configured`);
       }
       return fileHandlerResult(0, JSON.stringify({ serverName, ...server }, null, 2));
     },
@@ -313,7 +312,7 @@ export function dshAgentMcpHandler(options?: { home?: string }): AgentMcpHandler
       const text = await readPatch();
       const block = findDshEntryBlock(text, serverName);
       if (!block) {
-        return fileHandlerResult(0, `dsh: server "${serverName}" not configured`);
+        return fileHandlerResult(1, `dsh: server "${serverName}" not configured`);
       }
       return fileHandlerResult(0, text.slice(block.start, block.end).trimEnd());
     },
@@ -333,12 +332,11 @@ export function dshAgentMcpHandler(options?: { home?: string }): AgentMcpHandler
       + dshEntryYaml(serverName, url)
     ),
     prerequisiteCheck: async () => {
-      try {
-        await access(path.join(home, 'profiles'));
-        return undefined;
-      } catch {
-        return `未检测到 DeepSeek Harness（${path.join(home, 'profiles')} 不存在）。请先安装并启动一次 dsh 后再启用转发。`;
-      }
+      // WSL 场景 home 是 `\\wsl.localhost\...` UNC 路径，扩展宿主 Node 对 UNC
+      // 有主机白名单（直接 fs.access 会抛 'UNC host ... access is not allowed'），
+      // 必须与读写一样经 wsl-file 的 pathExists 走 wsl.exe 检查。
+      if (await pathExists(path.join(home, 'profiles'))) return undefined;
+      return `未检测到 DeepSeek Harness（${path.join(home, 'profiles')} 不存在）。请先安装并启动一次 dsh 后再启用转发。`;
     }
   };
 }
@@ -462,6 +460,37 @@ export function resolveAgentDefinitions(
     result.push(def);
   }
   return result;
+}
+
+/** `safs.agentForwardingAgents` 的默认值；也是卸载兜底探测的内置 Agent 集合。 */
+export const defaultForwardingAgents = ['codex', 'claude', 'pi', 'dsh'];
+
+/**
+ * 卸载（shouldRegister=false）路径的 Agent 探测集合：
+ * 当前设置列表 ∪ `agentSetupCompleted` 记录（`<cliName>:safs`）中的 cliName。
+ *
+ * 卸载必须依据"实际注册过什么"而非"当前设置列表"：设置被清空、或某个 Agent
+ * 被移出列表时，此前注册过的固定 MCP 仍要能被探测并移除；两者皆空时回退到
+ * 内置默认集合，保证激活期"清理可能残留的固定 MCP"能探测到注册过但记录缺失
+ * 的 Agent（未注册的探测 `get` 非 0，不会误删用户手工配置）。
+ */
+export function resolveUnloadAgentNames(
+  forwardingAgents: string[],
+  configuredKeys: string[],
+  defaults: readonly string[] = defaultForwardingAgents
+): string[] {
+  const names = new Set<string>();
+  for (const name of forwardingAgents) {
+    if (name) names.add(name);
+  }
+  for (const key of configuredKeys) {
+    const cliName = key.endsWith(':safs') ? key.slice(0, -':safs'.length) : undefined;
+    if (cliName) names.add(cliName);
+  }
+  if (names.size === 0) {
+    for (const name of defaults) names.add(name);
+  }
+  return [...names];
 }
 
 // ─── 探测与操作分发 ───────────────────────────────────────────────────────────
