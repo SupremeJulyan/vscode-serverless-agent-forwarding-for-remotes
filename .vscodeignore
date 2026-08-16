@@ -8,3 +8,4 @@ node_modules/**
 *.vsix
 *.png
 !images/icon.png
+build/**

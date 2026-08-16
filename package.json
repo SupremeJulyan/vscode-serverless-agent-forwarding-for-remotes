@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.4.9",
+  "version": "1.5.0",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -432,7 +432,7 @@
         "safs.sftp.cacheTtl": {
           "type": "number",
           "minimum": 0,
-          "default": 5,
+          "default": 30,
           "description": "SFTP metadata and directory cache lifetime in seconds."
         },
         "safs.sftp.watchInterval": {

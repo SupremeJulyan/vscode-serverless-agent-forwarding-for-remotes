@@ -353,8 +353,8 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   const config = await readConfig();
   const resolved = resolveMount(config, mount);
   const session = await pool.get(resolved.hostConfig.name);
-  const remoteRoot = await session.realpath(mount.remote_path);
-  const stat = await session.stat(remoteRoot);
+  // realpath + stat 一步完成（SCP 回退下合并为单条 exec）。
+  const { path: remoteRoot, stat } = await session.statResolved(mount.remote_path);
   if (stat.type !== 'directory') throw new Error(`远程路径不是目录：${remoteRoot}`);
   const placeholder = await ensureAgentCwdPlaceholder(
     remoteRoot, vscodeContext.globalStorageUri.fsPath, mount.name
@@ -391,9 +391,10 @@ async function cachedRemoteDirectory(folder: RemoteFolder): Promise<string> {
   }
   try {
     const session = await pool.get(folder.hostName);
-    const resolved = await session.realpath(cached);
+    // realpath + stat 一步完成（SCP 回退下合并为单条 exec）。
+    const { path: resolved, stat } = await session.statResolved(cached);
     if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) return folder.remoteRoot;
-    if ((await session.stat(resolved)).type !== 'directory') return folder.remoteRoot;
+    if (stat.type !== 'directory') return folder.remoteRoot;
     await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
     validatedRemoteCwdCache.set(folder.mountName, { path: resolved, at: Date.now() });
     return resolved;
@@ -416,22 +417,37 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
     await ensureAgentHttpRouter(vscodeContext);
     await configureDetectedAgents(vscodeContext, true);
   }
-  await vscode.window.withProgress({
-    location: vscode.ProgressLocation.Notification,
-    title: `正在连接 ${mount.name}…`,
-    cancellable: false
-  }, async (progress) => {
-    progress.report({ message: '正在验证远程目录…' });
-    const folder = await ensureFolder(mount);
-    const remoteDirectory = await cachedRemoteDirectory(folder);
-    agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
-    progress.report({ message: '正在打开工作区…' });
-    await vscode.commands.executeCommand(
-      'vscode.openFolder',
-      vscode.Uri.parse(folderUri(folder, remoteDirectory)),
-      true
-    );
-  });
+  const traceOpenFolder = async (): Promise<void> => {
+    await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `正在连接 ${mount.name}…`,
+      cancellable: false
+    }, async (progress) => {
+      progress.report({ message: '正在验证远程目录…' });
+      const folder = await ensureFolder(mount);
+      const remoteDirectory = await cachedRemoteDirectory(folder);
+      agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
+      progress.report({ message: '正在打开工作区…' });
+      await vscode.commands.executeCommand(
+        'vscode.openFolder',
+        vscode.Uri.parse(folderUri(folder, remoteDirectory)),
+        true
+      );
+    });
+  };
+
+  const session = await pool.get(resolveMount(await readConfig(), mount).hostConfig.name);
+  if (session.transport === 'scp') {
+    const startedAt = Date.now();
+    try {
+      await traceOpenFolder();
+    } finally {
+      bridgeOutput?.appendLine(`[SCP 耗时] 打开远程目录: ${Date.now() - startedAt}ms`);
+    }
+    return;
+  }
+
+  await traceOpenFolder();
 }
 
 async function switchRemoteDirectory(): Promise<void> {
@@ -2505,13 +2521,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   pool = new SftpConnectionPool(
     async (hostName, signal) => {
       const host = await resolvedHost(context, hostName);
-      return connectSftp(
+      const session = await connectSftp(
         host,
         platformAdapter.kind === 'wsl',
         signal,
         settings().get<string>('sshClientIdent', defaultSshClientIdent),
-        hostVerifierFor(context, host, (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`))
+        hostVerifierFor(context, host, (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`)),
+        (reason) => bridgeOutput?.appendLine(
+          `[SFTP] ${host.name} SFTP 子系统不可用，回退到 SCP/exec：${reason}`
+        )
       );
+      agentTrace('SFTP', `${host.name} 传输通道：${session.transport}`);
+      return session;
     },
     () => refreshTree()
   );
@@ -2575,9 +2596,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   provider = new SftpFileSystemProvider(
     pool,
     registry,
-    settings().get<number>('sftp.cacheTtl', 5) * 1000,
+    settings().get<number>('sftp.cacheTtl', 30) * 1000,
     settings().get<number>('sftp.watchInterval', 5) * 1000,
-    (uri, kind, targetUri) => void syncManager?.notifyRemoteChange(uri, kind, targetUri)
+    (uri, kind, targetUri) => void syncManager?.notifyRemoteChange(uri, kind, targetUri),
+    // 慢操作诊断：单个 stat/readDirectory/readFile 超过 1.5s 时记录，
+    // 用于定位慢的是传输通道本身还是调用方（VS Code 资源管理器）。
+    (label, ms) => bridgeOutput?.appendLine(`[慢操作] ${label} ${ms}ms`),
+    (label, ms) => bridgeOutput?.appendLine(`[SCP 耗时] ${label}: ${ms}ms`)
   );
 
   const tree = new RemoteFoldersProvider(context);

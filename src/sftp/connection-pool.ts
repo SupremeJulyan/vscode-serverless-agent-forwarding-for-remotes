@@ -38,6 +38,11 @@ class RetryingSftpSession implements SftpSession {
     this.hostName = hostName;
   }
 
+  get transport(): 'sftp' | 'scp' {
+    // 重连后传输通道可能变化（如 SFTP 中途失效回退 SCP），实时读取当前会话。
+    return this.session.transport;
+  }
+
   private withRetry<T>(op: (session: SftpSession) => Promise<T>): Promise<T> {
     return op(this.session).catch(async (error: unknown) => {
       if (!isConnectionError(error)) throw error;
@@ -56,8 +61,20 @@ class RetryingSftpSession implements SftpSession {
     return this.withRetry((session) => session.realpath(remotePath, signal));
   }
 
+  statResolved(
+    remotePath: string, signal?: AbortSignal
+  ): Promise<{ path: string; stat: SftpFileStat }> {
+    return this.withRetry((session) => session.statResolved(remotePath, signal));
+  }
+
   stat(remotePath: string, signal?: AbortSignal): Promise<SftpFileStat> {
     return this.withRetry((session) => session.stat(remotePath, signal));
+  }
+
+  readDirectoryResolved(
+    remotePath: string, signal?: AbortSignal
+  ): ReturnType<SftpSession['readDirectoryResolved']> {
+    return this.withRetry((session) => session.readDirectoryResolved(remotePath, signal));
   }
 
   readDirectory(remotePath: string, signal?: AbortSignal): ReturnType<SftpSession['readDirectory']> {
@@ -72,6 +89,14 @@ class RetryingSftpSession implements SftpSession {
     remotePath: string, content: Uint8Array, options: SftpWriteOptions, signal?: AbortSignal
   ): Promise<void> {
     return this.withRetry((session) => session.writeFile(remotePath, content, options, signal));
+  }
+
+  replaceFile(
+    sourcePath: string, targetPath: string, mode?: number, signal?: AbortSignal
+  ): Promise<void> {
+    return this.withRetry(
+      (session) => session.replaceFile(sourcePath, targetPath, mode, signal)
+    );
   }
 
   writeFileStream(

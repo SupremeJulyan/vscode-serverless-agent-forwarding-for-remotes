@@ -50,19 +50,38 @@ const sftpWriteChunkTimeoutMs = 60_000;
 
 function callback<T>(
   invoke: (done: (error: Error | undefined | null, value: T) => void) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs?: number
 ): Promise<T> {
   if (signal?.aborted) return Promise.reject(abortError());
   return new Promise<T>((resolve, reject) => {
-    const aborted = () => reject(abortError());
+    let timer: NodeJS.Timeout | undefined;
+    if (timeoutMs !== undefined && timeoutMs > 0) {
+      // ssh2 的 SFTP 请求本身没有超时：网关偶发“收到请求但永不回复”
+      // （半开/坏包）会让该操作永久挂起。控制类操作加超时保护。
+      timer = setTimeout(() => {
+        signal?.removeEventListener('abort', aborted);
+        reject(new Error(`SFTP 操作超时（${timeoutMs}ms）`));
+      }, timeoutMs);
+      timer.unref?.();
+    }
+    const aborted = () => {
+      if (timer) clearTimeout(timer);
+      reject(abortError());
+    };
     signal?.addEventListener('abort', aborted, { once: true });
     invoke((error, value) => {
+      if (timer) clearTimeout(timer);
       signal?.removeEventListener('abort', aborted);
       if (error) reject(error);
       else resolve(value);
     });
   });
 }
+
+/** SFTP 控制类操作（元数据/目录/重命名等）的超时：防止请求石沉大海永久挂起。
+ * 文件内容传输（readFile/writeFile/流式读写）不走该超时，避免大文件被误杀。 */
+const sftpControlTimeoutMs = 60_000;
 
 export class Ssh2SftpSession implements SftpSession {
   readonly transport = 'sftp' as const;
@@ -87,11 +106,20 @@ export class Ssh2SftpSession implements SftpSession {
   }
 
   realpath(remotePath: string, signal?: AbortSignal): Promise<string> {
-    return callback((done) => this.sftp.realpath(remotePath, done), signal);
+    return callback((done) => this.sftp.realpath(remotePath, done), signal, sftpControlTimeoutMs);
+  }
+
+  async statResolved(
+    remotePath: string, signal?: AbortSignal
+  ): Promise<{ path: string; stat: SftpFileStat }> {
+    const path = await this.realpath(remotePath, signal);
+    return { path, stat: await this.stat(path, signal) };
   }
 
   async stat(remotePath: string, signal?: AbortSignal): Promise<SftpFileStat> {
-    return fileStat(await callback((done) => this.sftp.lstat(remotePath, done), signal));
+    return fileStat(await callback(
+      (done) => this.sftp.lstat(remotePath, done), signal, sftpControlTimeoutMs
+    ));
   }
 
   async readDirectory(
@@ -99,12 +127,20 @@ export class Ssh2SftpSession implements SftpSession {
   ): Promise<SftpDirectoryEntry[]> {
     const entries = await callback<FileEntryWithStats[]>(
       (done) => this.sftp.readdir(remotePath, done),
-      signal
+      signal,
+      sftpControlTimeoutMs
     );
     return entries.map((entry) => ({
       name: entry.filename,
       ...fileStat(entry.attrs)
     }));
+  }
+
+  async readDirectoryResolved(
+    remotePath: string, signal?: AbortSignal
+  ): Promise<{ path: string; entries: SftpDirectoryEntry[] }> {
+    const path = await this.realpath(remotePath, signal);
+    return { path, entries: await this.readDirectory(path, signal) };
   }
 
   readFile(remotePath: string, signal?: AbortSignal): Promise<Uint8Array> {
@@ -177,6 +213,15 @@ export class Ssh2SftpSession implements SftpSession {
       (done) => this.sftp.writeFile(remotePath, Buffer.from(content), { flag }, done),
       signal
     );
+  }
+
+  async replaceFile(
+    sourcePath: string, targetPath: string, mode?: number, signal?: AbortSignal
+  ): Promise<void> {
+    if (mode !== undefined) {
+      await this.chmod(sourcePath, mode, signal);
+    }
+    await this.rename(sourcePath, targetPath, true, signal);
   }
 
   writeFileStream(
@@ -252,19 +297,21 @@ export class Ssh2SftpSession implements SftpSession {
   }
 
   async chmod(remotePath: string, mode: number, signal?: AbortSignal): Promise<void> {
-    await callback<void>((done) => this.sftp.chmod(remotePath, mode, done), signal);
+    await callback<void>(
+      (done) => this.sftp.chmod(remotePath, mode, done), signal, sftpControlTimeoutMs
+    );
   }
 
   async createDirectory(remotePath: string, signal?: AbortSignal): Promise<void> {
-    await callback<void>((done) => this.sftp.mkdir(remotePath, done), signal);
+    await callback<void>((done) => this.sftp.mkdir(remotePath, done), signal, sftpControlTimeoutMs);
   }
 
   async deleteFile(remotePath: string, signal?: AbortSignal): Promise<void> {
-    await callback<void>((done) => this.sftp.unlink(remotePath, done), signal);
+    await callback<void>((done) => this.sftp.unlink(remotePath, done), signal, sftpControlTimeoutMs);
   }
 
   async deleteDirectory(remotePath: string, signal?: AbortSignal): Promise<void> {
-    await callback<void>((done) => this.sftp.rmdir(remotePath, done), signal);
+    await callback<void>((done) => this.sftp.rmdir(remotePath, done), signal, sftpControlTimeoutMs);
   }
 
   async rename(
@@ -289,7 +336,9 @@ export class Ssh2SftpSession implements SftpSession {
         if (code !== 2 && code !== 'ENOENT') throw error;
       }
     }
-    await callback<void>((done) => this.sftp.rename(sourcePath, targetPath, done), signal);
+    await callback<void>(
+      (done) => this.sftp.rename(sourcePath, targetPath, done), signal, sftpControlTimeoutMs
+    );
   }
 
   async close(): Promise<void> {
@@ -343,7 +392,7 @@ async function acquireWslVpnRelay(host: HostConfig): Promise<RelayLease> {
  * a gateway MOTD/`garbage corrupts the version handshake. These trigger the
  * exec/SCP fallback. */
 const sftpUnusablePattern =
-  /Unable to start subsystem|packet length|wrong packet|bad packet|exchange encryption keys/i;
+  /Unable to start subsystem|packet length|wrong packet|bad packet|exchange encryption keys|Expected VERSION packet|Unknown packet type|Malformed VERSION/i;
 
 /** Handshake-stage errors worth retrying with a fresh connection. */
 const retryableHandshakePattern =
@@ -358,7 +407,8 @@ export async function connectSftp(
   useWslVpnRelay = false,
   signal?: AbortSignal,
   clientIdent = defaultSshClientIdent,
-  hostVerifier?: HostVerifier
+  hostVerifier?: HostVerifier,
+  onSftpFallback?: (reason: string) => void
 ): Promise<SftpSession> {
   if (signal?.aborted) throw abortError();
   const relay = useWslVpnRelay && host.vpn ? await acquireWslVpnRelay(host) : undefined;
@@ -396,7 +446,7 @@ export async function connectSftp(
   let attempt = 0;
   while (true) {
     try {
-      return await attemptConnect(host, config, releaseRelay, signal);
+      return await attemptConnect(host, config, releaseRelay, signal, onSftpFallback);
     } catch (error) {
       if (signal?.aborted) throw error;
       if (!retryableHandshakePattern.test(errorMessage(error)) || attempt >= 2) {
@@ -413,7 +463,8 @@ function attemptConnect(
   host: HostConfig,
   config: ConnectConfig,
   releaseRelay: () => Promise<void>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onSftpFallback?: (reason: string) => void
 ): Promise<SftpSession> {
   const client = new Client();
   return new Promise<SftpSession>((resolve, reject) => {
@@ -435,6 +486,12 @@ function attemptConnect(
     const ready = () => {
       client.sftp((error, sftp) => {
         if (error) {
+          // 握手失败时附上通道首字节 hex（由构建期补丁暂存在 client 上），
+          // 便于识别网关 banner 的实际格式并精确匹配。
+          const probe = (client as unknown as { _safsMotdProbe?: Buffer })._safsMotdProbe;
+          const probeDetail = probe && probe.length
+            ? `；通道首 64 字节 hex=${probe.subarray(0, 64).toString('hex')}`
+            : '';
           // Server has no usable SFTP subsystem: either it rejects the
           // subsystem request (NSG gateways without sftp-server) or a gateway
           // MOTD banner corrupts the SFTP version handshake ("Packet length
@@ -448,6 +505,7 @@ function attemptConnect(
             }
             settled = true;
             cleanup();
+            onSftpFallback?.(`${error.message}${probeDetail}`);
             resolve(new ScpSession(host.name, client, releaseRelay));
             return;
           }

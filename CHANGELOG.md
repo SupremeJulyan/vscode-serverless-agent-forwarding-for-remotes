@@ -1,5 +1,128 @@
 # Changelog
 
+## 1.5.0
+
+- 合并 1.4.11~1.4.14 的关键修正：
+  - 每主机 SCP 回退记忆与过期清理；
+  - NSG 网关直连真实 SFTP 的 banner 容忍与回退改进；
+  - SCP/SFTP 连接挂起、超时与并发回收；
+  - 传输通道记忆移除、目录/文件大小写提速、Base64 写读通道优化，以及慢操作诊断。
+- 1.5.0 作为统一发布版本，后续仅保留当前双平台/单包产物。
+
+## 1.4.14
+
+- **打开文件提速：读文件改走 exec + base64 通道**（与写入同一思路）。gsx 实测打开
+  一行文件要 3 秒——慢的不是 SCP 协议理念，而是 `scp -f` 进程启动 + SCP 协议多次
+  往返在网关上开销巨大，而 exec 通道（find/stat/mv）实测每条约 0.5s。读文件现在：
+  - `ScpSession.readFile` 走 `base64 < 文件`（exec 通道，可靠且快），本地解码；
+    空文件正确返回空 buffer；base64 缺失自动回退 legacy SCP；
+  - 大下载（可视化下载/同步）仍走 `readFileStream`（scpRead 流式，带停滞看门狗）；
+  - 编辑器打开文件从“stat(缓存命中) + scpRead”变为“stat(缓存命中) + base64 读取”，
+    预期 gsx 上从 ~3s 降到 ~1s。
+- **慢操作诊断**：provider 的 stat/readDirectory/readFile 单次超过 1.5s 时输出
+  `[慢操作] <操作> <毫秒>` 到 SAFS Log 通道——如果还慢，日志直接告诉我们慢的是
+  传输通道本身还是调用方（VS Code 资源管理器）发起的调用次数。
+
+## 1.4.13
+
+- **修复 SCP 回退写入永久挂起（gsx 实测“正在创建文件”卡 2 分多钟）**：部分网关上
+  `scp -t` 通道（SCP 上传）收不到确认字节就永久等待，而此前 60s 超时只覆盖了 exec
+  通道，没覆盖 scpRead/scpWrite——通道挂起 = 永久占用并发额度 = 所有操作排队。
+  - **小文件（≤2MB）写入改走 exec + base64 通道**：与列举/stat/mv 同一条在 gsx 上
+    验证可靠的通路（内容 base64 编码走 stdin，远端 `base64 -d` 落盘；显式 mode 时
+    `umask 0 && … && chmod` 保证权限不受远端 umask 影响）。编辑器场景（新建/保存/
+    小脚本）全覆盖；base64 不可用的非 GNU 环境自动回退 legacy SCP。
+  - **scpRead/scpWrite 增加 60s 停滞看门狗**：无数据/无进度即销毁通道并断开连接
+    （连接池下次操作重连自愈），不再永久挂起；大文件传输以 stdin drain 续命，
+    不会误杀正常慢速传输。
+  - 预期：gsx 上新建/保存小文件从“卡死”变为 ~1.5s 内完成（3 条 exec：写入 + stat +
+    mv），且任何情况下最多 60s 报错而不是无限等待。
+
+## 1.4.12
+
+- **移除传输通道记忆**（1.4.11 引入后验证发现收益极小）：对比基线日志，
+  gsx 的 2.7 秒耗时大头是 SSH 传输层握手（TCP + 密钥交换 + 认证，网关侧慢），
+  SFTP 子系统探测只占其中零点几秒；记忆省掉的正是这部分，但被握手时间盖过。
+  恢复为每次连接都正常探测（SFTP 主机探测即握手本身，无额外代价）。
+- **SCP 回退进一步提速：realpath + 操作合并为单条 exec**。gsx 每条 exec 约 0.5s
+  （固定开销：开 channel + 起 shell），此前挂载验证、首次列目录都是“先 realpath
+  再操作”两条命令。新增 `SftpSession.statResolved` / `readDirectoryResolved`：
+  - `ScpSession` 实现为单条 exec（`cd` + `pwd -P` 出规范路径 + `stat`/`find`）；
+    `Ssh2SftpSession` 等价于原两步（SFTP 快，无需合并）；
+  - `SftpFileSystemProvider.readDirectory` 改用 `readDirectoryResolved`，首次列目录
+    从 2 条 exec 降为 1 条，并继续对返回的规范路径做符号链接越界校验；
+  - 挂载验证（`ensureFolder`、`cachedRemoteDirectory`）改用 `statResolved`，
+    从 2 条 exec 降为 1 条，`statResolved` 的 `cd` 语义天然保证“是目录”，
+    非目录/非 GNU stat 自动退化为原有两步（报错语义不变）。
+  - 预期：gsx 打开远程目录的“握手后”耗时（验证 + 根目录列举）从 ~2s 降到 ~1s。
+- **打开远程文件提速：目录列举预填子项 stat 缓存**。列举本来就带每个子项的完整
+  元数据（size/mtime/mode），此前只存了类型，编辑器/资源管理器对子项的 stat 还要
+  单独走一次网络。现在非符号链接子项在列举后直接命中 statCache（30s TTL，随目录
+  缓存同生命周期，写/删/重命名时同步失效）——打开文件从“stat + SCP 下载”两条
+  通道操作降为**仅 SCP 下载一条**（gsx 上约 1s → 约 0.5s）；符号链接维持按需 stat，
+  避免缓存类型与实际目标类型不一致。
+- **写入文件提速（Ctrl+S，SCP 回退）**：此前保存要走 ~6 条 exec（临时文件 exists
+  检查、权限探测、chmod、rename 内部的 pathExists+stat+mv）+ 1 个 SCP 通道，
+  gsx 上约 3.5 秒。本次：
+  - 临时文件写入改传显式 `mode`（`SftpWriteOptions.mode`）——跳过 exists/权限探测；
+  - 新增 `SftpSession.replaceFile(source, target, mode)`：SCP 下 **chmod + mv -f
+    合并为一条 exec**（SFTP 下等价 chmod + rename）；
+  - 目录目标（罕见）仍走原 chmod + rename 流程，行为不变。
+  - 预期：保存从 ~6 exec + 1 通道降为 **2 exec + 1 通道 ≈ 1.5s**。
+  - 子目录展开此前已是 1 条 exec（合并列举命令），本次无需改动。
+
+## 1.4.11
+
+- **每主机 SCP 回退记忆（跳过重复的 SFTP 子系统探测）**：同一网关（如 gsx）每次
+  连接都要被拒 SFTP 子系统（约 3s 等待），本版把探测结果记入 globalState。
+  **只记忆 SCP**——SFTP 主机的正常连接没有可省的步骤（子系统请求即握手本身），
+  不写入记忆：
+  - key=主机名，同时记录当时的 IP——配置里 IP 变更即失效重新探测；
+  - 记忆 24 小时后过期重探（网关侧若日后开放 SFTP 能自动升级通道）；
+  - 记过的主机下次连接**直接走 SCP**，不再尝试 SFTP 子系统（`connectSftp` 新增
+    `skipSftpProbe` 参数）；实际连接为 SFTP 时自动清除残留的过期 scp 记忆；
+  - 输出通道日志标注 `（记忆命中 scp）` / `（新探测）`，SFTP 主机无标注。
+
+## 1.4.10
+
+- **NSG 网关直连真 SFTP（不再回退 exec/SCP）**：网关在每个 SSH channel 开头注入的
+  MOTD banner（`\r \r … 一\r\n`）会污染 SFTP 子系统通道的首个数据包（长度字段变成
+  ASCII 文本），ssh2 报 `Packet length … exceeds max length` 后整体失败，插件被迫
+  回退 exec/SCP（网关上每条 exec 秒级，目录加载极慢）。MobaXterm 的 SFTP 实现能容忍
+  该 banner，本次在**打包时**把同样的容忍逻辑注入 ssh2 的 SFTP 版本握手
+  （`build/sftp-banner-patch.js`，经 esbuild onLoad 插件生效）：
+  - 版本握手阶段先暂存流入数据，采用**两阶段剥离**：阶段 1 在缓冲区内任意位置找
+    `\r \r` 签名（允许前导空行）并扫描 `一\r\n` 终止符后开始解析；阶段 2 无签名时
+    逐字节跳过首个“合法 SFTP 包长度”之前的前缀（文本字节不可能构成合法长度，
+    误判时类型校验失败仍回退，不会卡死）；探测上限 256KB，banner 可跨 chunk；
+  - 无 banner 的服务器行为完全不变（单测覆盖单块/逐字节/边界/前导换行/二进制前缀/
+    异常垃圾等 8 个场景）；
+  - 失败仍走原有报错 → SCP 回退，不会卡死；
+  - 回退判定加宽（`Expected VERSION packet`/`Unknown packet type`/`Malformed
+    VERSION` 等 banner 污染的其他错误形态也触发回退），并在输出通道记录回退原因、
+    实际传输通道（`[SFTP] xxx 传输通道：sftp/scp`）以及**通道首 64 字节 hex**
+    （诊断网关 banner 实际格式用）。
+- **修复 SCP 回退下“一直加载中”的永久挂起**：NSG 网关偶发命令永久挂起（半开连接/
+  网络挂载卡死），此前 exec 无超时，挂起的命令会永久占用并发 channel 额度——
+  并行轮询下几条挂起命令即可耗尽全部 5 个额度，之后所有操作永久排队。本次：
+  - `ScpSession` 每条 exec 增加 **60s 超时**：超时后销毁 channel、断开连接
+    （释放并发额度），连接池在下次操作时自动重连自愈，不再永久卡死；
+  - SFTP 通道的控制类操作（realpath/stat/readdir/rename/mkdir/rmdir/unlink/
+    chmod）同样增加 **60s 超时**（ssh2 的 SFTP 请求本身无超时，防止请求石沉大海）；
+    文件内容传输（readFile/writeFile/流式读写）不受影响，大文件不会被误杀。
+- **SCP 回退大幅提速**（NSG 网关无 SFTP 子系统时）：
+  - `ScpSession.realpath` 增加 60s 缓存：同一路径在窗口期内复用规范路径，不再重复
+    `readlink -f`；
+  - `ScpSession.readDirectory` 把 realpath + 列举压成**一条 exec**（`cd` + `pwd -P`
+    输出 `P\t<规范路径>` 行，再 `find`/`ls` 列举），命令数减半；空目录也直接返回
+    `[]`（旧实现会多跑一次 ls 回退）；
+  - 列举后顺带把**非符号链接子项的规范路径**一并缓存（符号链接仍按需解析以防越界），
+    资源管理器随后对子项的 stat 不再产生任何 exec；
+  - `SftpFileSystemProvider.pollWatches` 改为**并行轮询**（并发由会话自身 channel
+    信号量约束），单次慢操作不再拖住全部 watch 项；
+  - `safs.sftp.cacheTtl` 默认值 5s → **30s**：轮询周期内的 stat/目录命中缓存，
+    不再每 5 秒穿透到网络（远程变更检测延迟随之变为最多 ~30s，可按需调回）。
+
 ## 1.4.9
 
 - **移除 MCP 工具 `remote_read` 与 `read_current_remote_file`，远程文件内容不再返回

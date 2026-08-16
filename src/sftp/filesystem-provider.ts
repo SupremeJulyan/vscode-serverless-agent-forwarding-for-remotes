@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { SftpConnectionPool } from './connection-pool';
 import { SftpFileStat, SftpSession } from './session';
+import { recordScpOperationTime } from '../scp-timing';
 import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
 } from './uri';
@@ -112,6 +113,8 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
   private readonly watched = new Map<string, WatchedResource>();
   private readonly watchTimer: NodeJS.Timeout;
   readonly onDidChangeFile = this.changes.event;
+  /** 单个文件系统操作超过该时长时上报 onSlowOperation（诊断慢操作的调用方）。 */
+  private static readonly slowOpThresholdMs = 1500;
 
   constructor(
     private readonly pool: SftpConnectionPool,
@@ -120,15 +123,22 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
     watchIntervalMs: number,
     private readonly onMutation?: (
       uri: vscode.Uri, kind: 'write' | 'delete' | 'rename' | 'mkdir', targetUri?: vscode.Uri
-    ) => void
+    ) => void,
+    private readonly onSlowOperation?: (label: string, ms: number) => void,
+    private readonly onScpTiming?: (label: string, ms: number) => void
   ) {
     this.watchTimer = setInterval(() => void this.pollWatches(), watchIntervalMs);
     this.watchTimer.unref();
   }
 
-  private async resolve(uri: vscode.Uri, allowMissing = false): Promise<{
+  private traceSlow(label: string, start: number): void {
+    const ms = Date.now() - start;
+    if (ms > SftpFileSystemProvider.slowOpThresholdMs) this.onSlowOperation?.(label, ms);
+  }
+
+  private async resolveBase(uri: vscode.Uri): Promise<{
     folder: RemoteFolder;
-    remotePath: string;
+    translatedPath: string;
     session: SftpSession;
   }> {
     if (uri.scheme !== remoteFileSystemScheme) {
@@ -147,6 +157,15 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
       throw vscode.FileSystemError.NoPermissions('The path is outside the remote workspace root');
     }
     const session = await this.pool.get(folder.hostName);
+    return { folder, translatedPath, session };
+  }
+
+  private async resolve(uri: vscode.Uri, allowMissing = false): Promise<{
+    folder: RemoteFolder;
+    remotePath: string;
+    session: SftpSession;
+  }> {
+    const { folder, translatedPath, session } = await this.resolveBase(uri);
     let securedPath: string;
     try {
       securedPath = await session.realpath(translatedPath);
@@ -191,37 +210,84 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
   }
 
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
+    const start = Date.now();
     const key = uri.toString();
     const cached = this.valid(this.statCache, key);
     if (cached) return cached;
     try {
       const { session, remotePath } = await this.resolve(uri);
-      return this.store(this.statCache, key, fileStat(await session.stat(remotePath)));
+      const value = this.store(this.statCache, key, fileStat(await session.stat(remotePath)));
+      this.traceSlow('stat', start);
+      return value;
     } catch (error) {
+      this.traceSlow('stat', start);
       providerError(error, uri);
     }
   }
 
   async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
+    const start = Date.now();
     const key = uri.toString();
     const cached = this.valid(this.directoryCache, key);
     if (cached) return cached;
     try {
-      const { session, remotePath } = await this.resolve(uri);
-      const entries = (await session.readDirectory(remotePath))
-        .filter((entry) => entry.name !== '.' && entry.name !== '..')
-        .map((entry): [string, vscode.FileType] => [entry.name, fileType(entry.type)]);
-      return this.store(this.directoryCache, key, entries);
+      // 合并 realpath + 列举（SCP 回退下一条 exec，SFTP 下等价原两步），
+      // 由返回的规范路径做符号链接越界校验。
+      const { folder, translatedPath, session } = await this.resolveBase(uri);
+      const { path: securedPath, entries } = await recordScpOperationTime(
+        '列出远程目录',
+        async () => session.readDirectoryResolved(translatedPath),
+        {
+          transport: session.transport,
+          log: (message) => this.onScpTiming?.('列出远程目录', Number(message.match(/(\d+)ms$/)?.[1] ?? 0)),
+          onTiming: this.onScpTiming
+        }
+      );
+      if (!isRemotePathInsideRoot(folder.remoteRoot, securedPath)) {
+        throw vscode.FileSystemError.NoPermissions(
+          'A symbolic link resolves outside the remote workspace root'
+        );
+      }
+      const result: [string, vscode.FileType][] = [];
+      for (const entry of entries) {
+        if (entry.name === '.' || entry.name === '..') continue;
+        result.push([entry.name, fileType(entry.type)]);
+        // 预填子项 stat 缓存：列举已带完整元数据（size/mtime/mode），随后编辑器/
+        // 资源管理器对子项的 stat 直接命中，不再产生网络请求（打开文件少一次往返）。
+        // 符号链接除外：其真实类型需按需 stat（与 realpath 缓存同策略，防不一致）。
+        if (entry.type !== 'symbolic-link') {
+          this.store(
+            this.statCache,
+            vscode.Uri.joinPath(uri, entry.name).toString(),
+            fileStat(entry)
+          );
+        }
+      }
+      this.traceSlow('readDirectory', start);
+      return this.store(this.directoryCache, key, result);
     } catch (error) {
+      this.traceSlow('readDirectory', start);
       providerError(error, uri);
     }
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
+    const start = Date.now();
     try {
       const { session, remotePath } = await this.resolve(uri);
-      return await session.readFile(remotePath);
+      const value = await recordScpOperationTime(
+        '打开远程文件',
+        async () => session.readFile(remotePath),
+        {
+          transport: session.transport,
+          log: (message) => this.onScpTiming?.('打开远程文件', Number(message.match(/(\d+)ms$/)?.[1] ?? 0)),
+          onTiming: this.onScpTiming
+        }
+      );
+      this.traceSlow('readFile', start);
+      return value;
     } catch (error) {
+      this.traceSlow('readFile', start);
       providerError(error, uri);
     }
   }
@@ -233,7 +299,19 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
       const { session, remotePath } = await this.resolve(uri, true);
       const temporaryPath = `${remotePath}.safs-${randomBytes(6).toString('hex')}`;
       try {
-        await session.writeFile(temporaryPath, content, { create: true, overwrite: false });
+        // 临时文件写入：随机名 + 显式 mode（SCP 回退下跳过 exists/权限探测，
+        // 少一条 exec）；覆盖语义由下面针对最终路径的 stat 保证。
+        await recordScpOperationTime(
+          '修改远程文件',
+          async () => session.writeFile(temporaryPath, content, {
+            create: true, overwrite: true, mode: 0o644
+          }),
+          {
+            transport: session.transport,
+            log: (message) => this.onScpTiming?.('修改远程文件', Number(message.match(/(\d+)ms$/)?.[1] ?? 0)),
+            onTiming: this.onScpTiming
+          }
+        );
         let existing: import('./session').SftpFileStat | undefined;
         if (!options.overwrite) {
           try {
@@ -252,13 +330,17 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
             }
           }
         }
-        if (existing?.permissions !== undefined) {
-          // Some SFTP servers do not implement POSIX chmod. Preserve the mode
-          // when possible, but do not prevent the edited content from being
-          // saved when the server rejects this optional metadata operation.
-          await session.chmod(temporaryPath, existing.permissions).catch(() => undefined);
+        if (existing === undefined || existing.type === 'file') {
+          // 常规：新文件或覆盖普通文件——chmod（保留权限）+ mv 合并为一条命令
+          // （SCP 回退下从 3-4 条 exec 降为 1 条）。
+          await session.replaceFile(temporaryPath, remotePath, existing?.permissions);
+        } else {
+          // 目录目标（罕见）：维持原有行为（chmod + rename，rename 会先删目标目录）。
+          if (existing.permissions !== undefined) {
+            await session.chmod(temporaryPath, existing.permissions).catch(() => undefined);
+          }
+          await session.rename(temporaryPath, remotePath, options.overwrite);
         }
-        await session.rename(temporaryPath, remotePath, options.overwrite);
       } catch (error) {
         await session.deleteFile(temporaryPath).catch(() => undefined);
         throw error;
@@ -366,7 +448,11 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
   }
 
   private async pollWatches(): Promise<void> {
-    for (const watched of this.watched.values()) {
+    // 并行轮询所有 watch 项：串行版在网关（SCP 回退，每条 exec 秒级）下会让
+    // 单次慢操作拖住全部 watch 项，且长时间占满会话并发额度，用户操作排队。
+    // 并发上限由会话自身的 channel 信号量（ScpSession 5）天然约束。
+    const targets = [...this.watched.values()];
+    await Promise.allSettled(targets.map(async (watched) => {
       try {
         const stat = await this.stat(watched.uri);
         const snapshot = `${stat.type}:${stat.mtime}:${stat.size}`;
@@ -382,7 +468,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
           this.changes.fire([{ type: vscode.FileChangeType.Deleted, uri: watched.uri }]);
         }
       }
-    }
+    }));
   }
 
   dispose(): void {
