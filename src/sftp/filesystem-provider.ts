@@ -3,7 +3,6 @@ import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { SftpConnectionPool } from './connection-pool';
 import { SftpFileStat, SftpSession } from './session';
-import { recordScpOperationTime } from '../scp-timing';
 import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
 } from './uri';
@@ -113,9 +112,6 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
   private readonly watched = new Map<string, WatchedResource>();
   private readonly watchTimer: NodeJS.Timeout;
   readonly onDidChangeFile = this.changes.event;
-  /** 单个文件系统操作超过该时长时上报 onSlowOperation（诊断慢操作的调用方）。 */
-  private static readonly slowOpThresholdMs = 1500;
-
   constructor(
     private readonly pool: SftpConnectionPool,
     private readonly registry: RemoteFolderRegistry,
@@ -123,17 +119,10 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
     watchIntervalMs: number,
     private readonly onMutation?: (
       uri: vscode.Uri, kind: 'write' | 'delete' | 'rename' | 'mkdir', targetUri?: vscode.Uri
-    ) => void,
-    private readonly onSlowOperation?: (label: string, ms: number) => void,
-    private readonly onScpTiming?: (label: string, ms: number) => void
+    ) => void
   ) {
     this.watchTimer = setInterval(() => void this.pollWatches(), watchIntervalMs);
     this.watchTimer.unref();
-  }
-
-  private traceSlow(label: string, start: number): void {
-    const ms = Date.now() - start;
-    if (ms > SftpFileSystemProvider.slowOpThresholdMs) this.onSlowOperation?.(label, ms);
   }
 
   private async resolveBase(uri: vscode.Uri): Promise<{
@@ -210,23 +199,19 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
   }
 
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-    const start = Date.now();
     const key = uri.toString();
     const cached = this.valid(this.statCache, key);
     if (cached) return cached;
     try {
       const { session, remotePath } = await this.resolve(uri);
       const value = this.store(this.statCache, key, fileStat(await session.stat(remotePath)));
-      this.traceSlow('stat', start);
       return value;
     } catch (error) {
-      this.traceSlow('stat', start);
       providerError(error, uri);
     }
   }
 
   async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
-    const start = Date.now();
     const key = uri.toString();
     const cached = this.valid(this.directoryCache, key);
     if (cached) return cached;
@@ -234,15 +219,7 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
       // 合并 realpath + 列举（SCP 回退下一条 exec，SFTP 下等价原两步），
       // 由返回的规范路径做符号链接越界校验。
       const { folder, translatedPath, session } = await this.resolveBase(uri);
-      const { path: securedPath, entries } = await recordScpOperationTime(
-        '列出远程目录',
-        async () => session.readDirectoryResolved(translatedPath),
-        {
-          transport: session.transport,
-          log: (message) => this.onScpTiming?.('列出远程目录', Number(message.match(/(\d+)ms$/)?.[1] ?? 0)),
-          onTiming: this.onScpTiming
-        }
-      );
+      const { path: securedPath, entries } = await session.readDirectoryResolved(translatedPath);
       if (!isRemotePathInsideRoot(folder.remoteRoot, securedPath)) {
         throw vscode.FileSystemError.NoPermissions(
           'A symbolic link resolves outside the remote workspace root'
@@ -263,31 +240,18 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
           );
         }
       }
-      this.traceSlow('readDirectory', start);
       return this.store(this.directoryCache, key, result);
     } catch (error) {
-      this.traceSlow('readDirectory', start);
       providerError(error, uri);
     }
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const start = Date.now();
     try {
       const { session, remotePath } = await this.resolve(uri);
-      const value = await recordScpOperationTime(
-        '打开远程文件',
-        async () => session.readFile(remotePath),
-        {
-          transport: session.transport,
-          log: (message) => this.onScpTiming?.('打开远程文件', Number(message.match(/(\d+)ms$/)?.[1] ?? 0)),
-          onTiming: this.onScpTiming
-        }
-      );
-      this.traceSlow('readFile', start);
+      const value = await session.readFile(remotePath);
       return value;
     } catch (error) {
-      this.traceSlow('readFile', start);
       providerError(error, uri);
     }
   }
@@ -301,17 +265,9 @@ export class SftpFileSystemProvider implements vscode.FileSystemProvider, vscode
       try {
         // 临时文件写入：随机名 + 显式 mode（SCP 回退下跳过 exists/权限探测，
         // 少一条 exec）；覆盖语义由下面针对最终路径的 stat 保证。
-        await recordScpOperationTime(
-          '修改远程文件',
-          async () => session.writeFile(temporaryPath, content, {
-            create: true, overwrite: true, mode: 0o644
-          }),
-          {
-            transport: session.transport,
-            log: (message) => this.onScpTiming?.('修改远程文件', Number(message.match(/(\d+)ms$/)?.[1] ?? 0)),
-            onTiming: this.onScpTiming
-          }
-        );
+        await session.writeFile(temporaryPath, content, {
+          create: true, overwrite: true, mode: 0o644
+        });
         let existing: import('./session').SftpFileStat | undefined;
         if (!options.overwrite) {
           try {

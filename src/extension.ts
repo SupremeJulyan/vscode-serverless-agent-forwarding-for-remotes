@@ -417,37 +417,22 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
     await ensureAgentHttpRouter(vscodeContext);
     await configureDetectedAgents(vscodeContext, true);
   }
-  const traceOpenFolder = async (): Promise<void> => {
-    await vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: `正在连接 ${mount.name}…`,
-      cancellable: false
-    }, async (progress) => {
-      progress.report({ message: '正在验证远程目录…' });
-      const folder = await ensureFolder(mount);
-      const remoteDirectory = await cachedRemoteDirectory(folder);
-      agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
-      progress.report({ message: '正在打开工作区…' });
-      await vscode.commands.executeCommand(
-        'vscode.openFolder',
-        vscode.Uri.parse(folderUri(folder, remoteDirectory)),
-        true
-      );
-    });
-  };
-
-  const session = await pool.get(resolveMount(await readConfig(), mount).hostConfig.name);
-  if (session.transport === 'scp') {
-    const startedAt = Date.now();
-    try {
-      await traceOpenFolder();
-    } finally {
-      bridgeOutput?.appendLine(`[SCP 耗时] 打开远程目录: ${Date.now() - startedAt}ms`);
-    }
-    return;
-  }
-
-  await traceOpenFolder();
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `正在连接 ${mount.name}…`,
+    cancellable: false
+  }, async (progress) => {
+    progress.report({ message: '正在验证远程目录…' });
+    const folder = await ensureFolder(mount);
+    const remoteDirectory = await cachedRemoteDirectory(folder);
+    agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
+    progress.report({ message: '正在打开工作区…' });
+    await vscode.commands.executeCommand(
+      'vscode.openFolder',
+      vscode.Uri.parse(folderUri(folder, remoteDirectory)),
+      true
+    );
+  });
 }
 
 async function switchRemoteDirectory(): Promise<void> {
@@ -2598,11 +2583,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     registry,
     settings().get<number>('sftp.cacheTtl', 30) * 1000,
     settings().get<number>('sftp.watchInterval', 5) * 1000,
-    (uri, kind, targetUri) => void syncManager?.notifyRemoteChange(uri, kind, targetUri),
-    // 慢操作诊断：单个 stat/readDirectory/readFile 超过 1.5s 时记录，
-    // 用于定位慢的是传输通道本身还是调用方（VS Code 资源管理器）。
-    (label, ms) => bridgeOutput?.appendLine(`[慢操作] ${label} ${ms}ms`),
-    (label, ms) => bridgeOutput?.appendLine(`[SCP 耗时] ${label}: ${ms}ms`)
+    (uri, kind, targetUri) => void syncManager?.notifyRemoteChange(uri, kind, targetUri)
   );
 
   const tree = new RemoteFoldersProvider(context);
