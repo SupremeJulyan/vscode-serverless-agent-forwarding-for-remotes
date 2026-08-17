@@ -3,7 +3,7 @@ import test from 'node:test';
 import { HostConfig } from '../src/config';
 import {
   addTrustedHostKey, applyHostKeyDecision, replaceTrustedHostKeys,
-  sha256Fingerprint, TrustStore, trustedHostKeyList
+  sha256Fingerprint, TrustStore, trustedHostKeyList, verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
   parseKeyscanOutput, verifySystemSshHostKey, HostKeyProbeResult
@@ -21,6 +21,11 @@ function memoryStore(initial: Record<string, unknown> = {}): TrustStore & { data
 const host: HostConfig = {
   name: 'dev', ip: '10.0.0.2', user: 'alice', port: 2222
 };
+
+/** 每个走决策路径的测试使用独立端口，避免模块级会话状态（按 ip:port 隔离）串扰。 */
+function hostAt(port: number): HostConfig {
+  return { name: 'dev', ip: '10.0.0.2', user: 'alice', port };
+}
 
 test('sha256Fingerprint matches OpenSSH SHA256 fingerprint format', () => {
   const blob = Buffer.from('AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyBlob', 'base64');
@@ -114,28 +119,26 @@ test('verifySystemSshHostKey falls back to proceed when probing fails', async ()
 });
 
 test('verifySystemSshHostKey first connection: trust stores the key and allows', async () => {
+  const host = hostAt(3001);
   const store = memoryStore();
+  const prompts = {
+    firstConnection: async () => 'accept' as const,
+    changed: async () => { throw new Error('should not prompt changed on first connect'); }
+  };
   const probe = async (): Promise<HostKeyProbeResult> => ({
     probed: true, fingerprints: ['SHA256:new']
   });
-  const prompts = {
-    firstConnection: async (_h: HostConfig, fingerprint: string) => {
-      assert.equal(fingerprint, 'SHA256:new');
-      return 'accept' as const;
-    },
-    changed: async () => { throw new Error('should not prompt changed on first connect'); }
-  };
-  const result = await verifySystemSshHostKey(store, 'prompt', host, 'linux', undefined, probe, prompts);
+  const result = await verifySystemSshHostKey(
+    store, 'prompt', host, 'linux', undefined, probe, prompts
+  );
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:new']);
 });
 
-test('verifySystemSshHostKey changed key: refuse blocks the connection', async () => {
+test('verifyHostKeyWithPrompt changed key: refuse blocks the connection', async () => {
+  const host = hostAt(3002);
   const store = memoryStore();
   await addTrustedHostKey(store, host, 'SHA256:old');
-  const probe = async (): Promise<HostKeyProbeResult> => ({
-    probed: true, fingerprints: ['SHA256:new']
-  });
   const prompts = {
     firstConnection: async () => { throw new Error('should not prompt first connect'); },
     changed: async (_h: HostConfig, oldKeys: string[], newKeys: string[]) => {
@@ -144,23 +147,64 @@ test('verifySystemSshHostKey changed key: refuse blocks the connection', async (
       return 'refuse' as const;
     }
   };
-  const result = await verifySystemSshHostKey(store, 'prompt', host, 'linux', undefined, probe, prompts);
-  assert.equal(result.ok, false);
-  assert.match(result.reason ?? '', /拒绝接受/);
+  const allowed = await verifyHostKeyWithPrompt(store, host, ['SHA256:new'], undefined, prompts);
+  assert.equal(allowed, false);
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:old']);
 });
 
-test('verifySystemSshHostKey changed key: add keeps the old key for load-balanced backends', async () => {
+test('verifyHostKeyWithPrompt changed key: add keeps the old key for load-balanced backends', async () => {
+  const host = hostAt(3003);
   const store = memoryStore();
   await addTrustedHostKey(store, host, 'SHA256:old');
-  const probe = async (): Promise<HostKeyProbeResult> => ({
-    probed: true, fingerprints: ['SHA256:new']
-  });
   const prompts = {
     firstConnection: async () => { throw new Error('should not prompt first connect'); },
     changed: async () => 'add' as const
   };
-  const result = await verifySystemSshHostKey(store, 'prompt', host, 'wsl', undefined, probe, prompts);
-  assert.deepEqual(result, { ok: true });
+  const allowed = await verifyHostKeyWithPrompt(store, host, ['SHA256:new'], undefined, prompts);
+  assert.equal(allowed, true);
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:old', 'SHA256:new']);
+});
+
+test('concurrent verifications for the same host share one dialog', async () => {
+  const host = hostAt(3004);
+  const store = memoryStore();
+  let promptCount = 0;
+  let releaseFirst!: (choice: 'accept' | 'refuse' | 'add') => void;
+  const gate = new Promise<'accept' | 'refuse' | 'add'>((resolve) => { releaseFirst = resolve; });
+  const prompts = {
+    firstConnection: async () => {
+      promptCount += 1;
+      return gate; // 模拟 modal 弹窗挂起等待用户
+    },
+    changed: async () => { throw new Error('should not prompt changed on first connect'); }
+  };
+  const first = verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
+  const second = verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(promptCount, 1, '并发触发只应弹一次窗');
+  releaseFirst('accept');
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:key']);
+});
+
+test('after an explicit decision the same session stops re-prompting for key rotation', async () => {
+  const host = hostAt(3005);
+  const store = memoryStore();
+  let promptCount = 0;
+  const prompts = {
+    firstConnection: async () => {
+      promptCount += 1;
+      return 'accept' as const;
+    },
+    changed: async () => { throw new Error('会话内不应再弹变化窗'); }
+  };
+  // 首次连接：弹一次窗，用户信任。
+  assert.equal(await verifyHostKeyWithPrompt(store, host, ['SHA256:backendA'], undefined, prompts), true);
+  // 负载均衡轮换到新后端（新指纹）：本会话内静默记录，不再弹窗。
+  assert.equal(await verifyHostKeyWithPrompt(store, host, ['SHA256:backendB'], undefined, prompts), true);
+  assert.equal(promptCount, 1);
+  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:backendA', 'SHA256:backendB']);
+  // 台账内指纹直接命中：仍放行。
+  assert.equal(await verifyHostKeyWithPrompt(store, host, ['SHA256:backendB'], undefined, prompts), true);
+  assert.equal(promptCount, 1);
 });

@@ -2,9 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { HostConfig } from './config';
 import {
-  applyHostKeyDecision, HostKeyChangedAction, HostKeyDecision,
-  promptFirstConnection, promptHostKeyChanged, sha256Fingerprint,
-  TrustStore, trustedHostKeyList
+  defaultPrompts, HostKeyChangedAction, HostKeyPrompts,
+  sha256Fingerprint, TrustStore, verifyHostKeyWithPrompt
 } from './host-key';
 import { PlatformKind } from './platform';
 import { resolveExecutable } from './process';
@@ -140,18 +139,6 @@ export async function probeHostKey(
   return result;
 }
 
-export interface HostKeyPrompts {
-  firstConnection(host: HostConfig, fingerprint: string): Promise<HostKeyDecision>;
-  changed(
-    host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
-  ): Promise<HostKeyDecision>;
-}
-
-const defaultPrompts: HostKeyPrompts = {
-  firstConnection: promptFirstConnection,
-  changed: promptHostKeyChanged
-};
-
 export interface HostKeyVerification {
   ok: boolean;
   reason?: string;
@@ -161,8 +148,11 @@ export interface HostKeyVerification {
  * 系统 ssh 路径连接前的主机密钥校验（仅 prompt 模式执行；accept/reject
  * 沿用 platform.ts 的 known_hosts 映射，不做预检）。
  *
+ * 决策统一走 host-key.ts 的 verifyHostKeyWithPrompt（与内置 ssh2 通道共用），
+ * 具备并发去重与本会话不重复弹窗语义。
+ *
  * @param probe   可注入的探测实现（测试用）
- * @param prompts 可注入的弹窗实现（测试用）
+ * @param prompts 可注入的弹窗实现（测试用，默认走 host-key 的 MobaXterm 风格弹窗）
  */
 export async function verifySystemSshHostKey(
   store: TrustStore,
@@ -182,24 +172,12 @@ export async function verifySystemSshHostKey(
     log?.(`主机密钥探测失败（${host.name}）：${result.error ?? '未知错误'} — 跳过校验继续连接`);
     return { ok: true };
   }
-  const trusted = trustedHostKeyList(store, host);
-  const known = result.fingerprints.filter((fingerprint) => trusted.includes(fingerprint));
-  if (known.length > 0) {
-    log?.(`主机密钥校验通过（${host.name}）：${known.join(', ')}`);
-    return { ok: true };
-  }
-  const decision = trusted.length === 0
-    ? await prompts.firstConnection(host, result.fingerprints[0])
-    : await prompts.changed(host, trusted, result.fingerprints);
-  if (decision === 'refuse') {
+  const allowed = await verifyHostKeyWithPrompt(store, host, result.fingerprints, log, prompts);
+  if (!allowed) {
     return {
       ok: false,
       reason: `已拒绝接受主机"${host.name}"的新 SSH 主机密钥（指纹：${result.fingerprints.join(', ')}）`
     };
   }
-  const allowed = await applyHostKeyDecision(store, host, decision, result.fingerprints);
-  log?.(`已信任主机"${host.name}"的主机密钥 ${result.fingerprints.join(', ')}（${
-    decision === 'add' ? '保存为附加密钥' : '接受新密钥'
-  }）`);
-  return { ok: allowed };
+  return { ok: true };
 }

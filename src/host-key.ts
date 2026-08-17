@@ -91,12 +91,17 @@ export async function promptFirstConnection(
 export async function promptHostKeyChanged(
   host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
 ): Promise<HostKeyDecision> {
+  // 附加密钥累积后旧指纹可能很多，最多展示 3 个。
+  const shownOld = oldFingerprints.length > 3
+    ? [...oldFingerprints.slice(0, 3), `…（共 ${oldFingerprints.length} 个）`]
+    : oldFingerprints;
   const choice = await vscode.window.showWarningMessage(
     `主机"${host.name}"的 SSH 主机密钥已改变。\n\n` +
     `服务器身份自上次连接后已改变：这可能是服务器主机密钥已更换（重新安装或升级），` +
     `或者你实际上连接到了一台伪装成该服务器的计算机。\n\n` +
-    `旧密钥：${oldFingerprints.join('\n')}\n新密钥：${newFingerprints.join('\n')}\n\n` +
-    `（若多台服务器共用此 IP 或为负载均衡 VIP，可选择"保存为附加密钥"保留旧密钥。）`,
+    `旧密钥：${shownOld.join('\n')}\n新密钥：${newFingerprints.join('\n')}\n\n` +
+    `（若多台服务器共用此 IP 或为负载均衡 VIP，可选择"保存为附加密钥"保留旧密钥；` +
+    `本会话内将不再对该主机重复提示。）`,
     { modal: true },
     '接受新密钥并继续连接', '拒绝新密钥并中止连接', '接受并保存为附加密钥（保留现有）'
   );
@@ -104,6 +109,86 @@ export async function promptHostKeyChanged(
     case '接受并保存为附加密钥（保留现有）': return 'add';
     case '拒绝新密钥并中止连接': return 'refuse';
     default: return 'accept';
+  }
+}
+
+/** 弹窗实现（可注入以便测试）。 */
+export interface HostKeyPrompts {
+  firstConnection(host: HostConfig, fingerprint: string): Promise<HostKeyDecision>;
+  changed(
+    host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
+  ): Promise<HostKeyDecision>;
+}
+
+const defaultPrompts: HostKeyPrompts = {
+  firstConnection: promptFirstConnection,
+  changed: promptHostKeyChanged
+};
+
+/** 默认弹窗实现（verifySystemSshHostKey 等可注入覆盖以便测试）。 */
+export { defaultPrompts };
+
+/** 同主机尚未完成的决策（去重：并发触发时只弹一次窗）。 */
+const pendingHostKeyDecisions = new Map<string, Promise<HostKeyDecision>>();
+
+/**
+ * 本会话内用户已明确信任过的主机（首次连接信任 / 接受新密钥 / 保存为附加密钥）。
+ * 这些主机的密钥轮换（负载均衡 VIP 多后端）在本次 VS Code 会话内静默记录，
+ * 不再重复弹窗；新会话重新校验，保持跨会话安全姿态。
+ */
+const sessionAcknowledgedHosts = new Set<string>();
+
+/**
+ * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用）：
+ * 1. 台账已有匹配指纹 → 直接放行；
+ * 2. 本会话已明确信任过该主机 → 静默记录新指纹并放行；
+ * 3. 同主机已有弹窗在等待 → 等其完成后重新核对（不再重复弹窗）；
+ * 4. 否则弹窗（首次连接 / 密钥变化三选），并按决策更新台账。
+ *
+ * @returns 是否放行连接。
+ */
+export async function verifyHostKeyWithPrompt(
+  store: TrustStore, host: HostConfig, fingerprints: string[],
+  log?: (message: string) => void, prompts: HostKeyPrompts = defaultPrompts
+): Promise<boolean> {
+  const key = trustKeyFor(host);
+  const trusted = trustedHostKeyList(store, host);
+  if (fingerprints.some((fingerprint) => trusted.includes(fingerprint))) {
+    return true;
+  }
+  if (sessionAcknowledgedHosts.has(key)) {
+    for (const fingerprint of fingerprints) {
+      await addTrustedHostKey(store, host, fingerprint);
+    }
+    log?.(`本会话已信任该主机，静默记录新密钥：${fingerprints.join(', ')}`);
+    return true;
+  }
+  const pending = pendingHostKeyDecisions.get(key);
+  if (pending) {
+    // 同主机已有弹窗在等待（如 SFTP 与终端同时触发）：等其完成后重新核对台账。
+    const choice = await pending;
+    if (choice === 'refuse') return false;
+    return verifyHostKeyWithPrompt(store, host, fingerprints, log, prompts);
+  }
+  const first = trusted.length === 0;
+  const decision = first
+    ? prompts.firstConnection(host, fingerprints[0])
+    : prompts.changed(host, trusted, fingerprints);
+  pendingHostKeyDecisions.set(key, decision);
+  try {
+    const choice = await decision;
+    if (choice === 'refuse') return false;
+    // 用户已明确决策：本会话内不再对该主机重复弹窗（密钥轮换静默记录）。
+    sessionAcknowledgedHosts.add(key);
+    const allowed = await applyHostKeyDecision(store, host, choice, fingerprints);
+    if (!allowed) {
+      log?.(`用户拒绝接受主机"${host.name}"的主机密钥`);
+    }
+    return allowed;
+  } finally {
+    if (pendingHostKeyDecisions.get(key) === decision) {
+      pendingHostKeyDecisions.delete(key);
+    }
   }
 }
 
@@ -167,12 +252,8 @@ export function hostVerifierFor(
         .then(() => callback(true));
       return;
     }
-    // prompt：首次连接与密钥变化（含负载均衡 VIP 多后端）均弹窗，MobaXterm 风格。
-    const decision = trusted.length === 0
-      ? promptFirstConnection(host, fingerprint)
-      : promptHostKeyChanged(host, trusted, [fingerprint]);
-    void decision
-      .then((choice) => applyHostKeyDecision(store, host, choice, [fingerprint]))
+    // prompt：统一入口（与系统 ssh 路径共用）——并发去重、会话内不重复弹窗。
+    void verifyHostKeyWithPrompt(store, host, [fingerprint], log)
       .then((ok) => callback(ok))
       .catch((error) => {
         // 存储失败放行（信任决策已由用户做出），仅记录警告。
