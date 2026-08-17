@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process';
-import { appendFile, chmod, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { HostConfig } from './config';
 import {
-  defaultPrompts, HostKeyChangedAction, HostKeyPrompts,
-  sha256Fingerprint, TrustStore, verifyHostKeyWithPrompt
+  appendKnownHostsFile, defaultPrompts, getKnownHostsFilePath,
+  HostKeyChangedAction, HostKeyPrompts, ProbedHostKey,
+  sha256Fingerprint, verifyHostKeyWithPrompt
 } from './host-key';
 import { PlatformKind } from './platform';
 import { resolveExecutable } from './process';
@@ -14,26 +14,16 @@ import { sshBridgePath } from './wsl-bridge';
 /**
  * 系统 ssh 路径（WSL/Linux/macOS/Windows 非内置通道）的主机密钥校验：
  * 系统 ssh 无法弹 VS Code 对话框，因此由扩展在连接前用 ssh-keyscan 探测
- * 当前后端密钥，与信任台账比对；未受信任时弹 MobaXterm 风格对话框
- * （首次连接 / 每次新密钥：接受、拒绝）。
+ * 当前后端密钥，与扩展 known_hosts 文件比对；未确认时弹 MobaXterm 风格
+ * 对话框（首次连接 / 每次新密钥：接受、拒绝）。
  *
- * 校验通过后把探测到的密钥写入**扩展独立的 known_hosts 文件**，随后系统
+ * 确认通过后把探测到的密钥写入扩展独立的 known_hosts 文件，随后系统
  * ssh 以 `StrictHostKeyChecking=yes` + 该文件启动（见 platform.ts）：
- * OpenSSH 原生校验作为最后一道兜底——即使扩展台账/弹窗逻辑出错，
+ * OpenSSH 原生校验作为最后一道兜底——即使扩展弹窗逻辑出错，
  * 文件里没有的密钥也会被 OpenSSH 拒绝，不再是无校验裸奔。
  */
 
 const execFileAsync = promisify(execFile);
-
-/** 探测到的服务器主机密钥行（OpenSSH known_hosts 格式：host type blob）。 */
-export interface ProbedHostKey {
-  /** known_hosts 条目主机字段（`ip` 或 `[ip]:port`，与 ssh 连接参数一致）。 */
-  host: string;
-  /** 密钥类型（ssh-ed25519 / ssh-rsa / ecdsa-sha2-nistp256 …）。 */
-  type: string;
-  /** base64 密钥 blob。 */
-  blob: string;
-}
 
 export interface HostKeyProbeResult {
   /** 探测是否成功；false 时调用方按“跳过校验继续连接”降级（不阻断已有流程）。 */
@@ -179,29 +169,6 @@ export async function probeHostKey(
   return result;
 }
 
-/**
- * 把密钥行追加到扩展独立的 known_hosts 文件（幂等：已存在的行跳过）。
- * 供系统 ssh 以 StrictHostKeyChecking=yes 原生校验兜底（见 platform.ts）。
- */
-export async function appendKnownHostsFile(
-  filePath: string, keys: ProbedHostKey[], log?: (message: string) => void
-): Promise<void> {
-  const lines = keys.map((key) => `${key.host} ${key.type} ${key.blob}`);
-  let existing = '';
-  try {
-    existing = await readFile(filePath, 'utf8');
-  } catch {
-    // 文件不存在：首次写入。
-  }
-  const existingLines = new Set(existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
-  const missing = lines.filter((line) => !existingLines.has(line));
-  if (missing.length === 0) return;
-  const content = `${existing.endsWith('\n') || existing === '' ? '' : '\n'}${missing.join('\n')}\n`;
-  await appendFile(filePath, content, { mode: 0o600 });
-  await chmod(filePath, 0o600).catch(() => undefined);
-  log?.(`已写入主机密钥记录（${missing.length} 条）：${filePath}`);
-}
-
 export interface HostKeyVerification {
   ok: boolean;
   reason?: string;
@@ -213,22 +180,20 @@ export interface HostKeyVerification {
  *
  * 决策统一走 host-key.ts 的 verifyHostKeyWithPrompt（与内置 ssh2 通道共用），
  * MobaXterm 风格：首次连接与每次新密钥（后端轮换/重装）都弹窗确认。
- * 确认通过后把探测到的密钥写入 knownHostsFile，由 OpenSSH 原生校验兜底。
+ * 确认通过后把探测到的密钥写入扩展独立 known_hosts 文件
+ * （setKnownHostsFilePath 注入的路径），由 OpenSSH 原生校验兜底。
  *
- * @param probe          可注入的探测实现（测试用）
- * @param prompts        可注入的弹窗实现（测试用，默认走 host-key 的首次连接弹窗）
- * @param knownHostsFile 扩展独立 known_hosts 文件路径（确认通过后写入）
+ * @param probe   可注入的探测实现（测试用）
+ * @param prompts 可注入的弹窗实现（测试用，默认走 host-key 的首次连接弹窗）
  */
 export async function verifySystemSshHostKey(
-  store: TrustStore,
   action: HostKeyChangedAction,
   host: HostConfig,
   platformKind: PlatformKind,
   log?: (message: string) => void,
   probe: HostKeyProbe = probeHostKey,
   prompts: HostKeyPrompts = defaultPrompts,
-  env?: NodeJS.ProcessEnv,
-  knownHostsFile?: string
+  env?: NodeJS.ProcessEnv
 ): Promise<HostKeyVerification> {
   if (action !== 'prompt') {
     return { ok: true };
@@ -240,13 +205,14 @@ export async function verifySystemSshHostKey(
     log?.(`主机密钥探测失败（${host.name}）：${result.error ?? '未知错误'} — 跳过校验，由 OpenSSH 按已知记录兜底`);
     return { ok: true };
   }
-  const allowed = await verifyHostKeyWithPrompt(store, host, result.fingerprints, log, prompts);
+  const allowed = await verifyHostKeyWithPrompt(host, result.fingerprints, log, prompts);
   if (!allowed) {
     return {
       ok: false,
       reason: `已拒绝接受主机"${host.name}"的新 SSH 主机密钥（指纹：${result.fingerprints.join(', ')}）`
     };
   }
+  const knownHostsFile = getKnownHostsFilePath();
   if (knownHostsFile && result.keys && result.keys.length > 0) {
     try {
       await appendKnownHostsFile(knownHostsFile, result.keys, log);

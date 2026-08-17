@@ -12,7 +12,7 @@ function shellQuote(value: string): string {
 }
 
 async function connectConfig(
-  context: vscode.ExtensionContext, host: HostConfig, password?: string
+  host: HostConfig, password?: string
 ): Promise<ConnectConfig> {
   return {
     host: host.ip,
@@ -28,7 +28,7 @@ async function connectConfig(
     keepaliveInterval: 15_000,
     keepaliveCountMax: 3,
     algorithms: { serverHostKey: serverHostKeyAlgorithms },
-    hostVerifier: hostVerifierFor(context, host)
+    hostVerifier: hostVerifierFor(host)
   };
 }
 
@@ -99,7 +99,7 @@ function execSessionKey(host: HostConfig): string {
 }
 
 async function getExecSession(
-  context: vscode.ExtensionContext, host: HostConfig, password?: string
+  host: HostConfig, password?: string
 ): Promise<Ssh2ExecSession> {
   const key = execSessionKey(host);
   const existing = execSessions.get(key);
@@ -111,7 +111,7 @@ async function getExecSession(
   }
   const promise = (async () => {
     const session = new Ssh2ExecSession(
-      await connectConfig(context, host, password), password
+      await connectConfig(host, password), password
     );
     execSessions.set(key, session);
     return session;
@@ -132,10 +132,10 @@ export function closeSsh2ExecSessions(): void {
 }
 
 export async function executeSsh2Command(
-  context: vscode.ExtensionContext, host: HostConfig, password: string | undefined,
+  host: HostConfig, password: string | undefined,
   remoteCwd: string, command: string, signal?: AbortSignal, maxOutputBytes = 1024 * 1024
 ): Promise<Ssh2CommandResult> {
-  const session = await getExecSession(context, host, password);
+  const session = await getExecSession(host, password);
   await session.ready;
   return new Promise<Ssh2CommandResult>((resolve, reject) => {
     let settled = false;
@@ -216,7 +216,6 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
   private pendingInput = '';
 
   constructor(
-    private readonly context: vscode.ExtensionContext,
     private readonly host: HostConfig,
     password: string,
     private readonly remoteCwd?: string,
@@ -240,7 +239,7 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
       keepaliveInterval: 15_000,
       keepaliveCountMax: 3,
       algorithms: { serverHostKey: serverHostKeyAlgorithms },
-      hostVerifier: hostVerifierFor(this.context, this.host)
+      hostVerifier: hostVerifierFor(this.host)
     };
     this.client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
       const replies = this.password

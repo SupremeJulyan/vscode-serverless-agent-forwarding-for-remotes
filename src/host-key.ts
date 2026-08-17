@@ -1,34 +1,77 @@
 import { createHash } from 'node:crypto';
+import { appendFile, chmod, readFile } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import type { HostVerifier } from 'ssh2';
 import { HostConfig } from './config';
 
 /**
- * SSH 主机密钥信任（MobaXterm 风格）的共享实现，供三条传输路径统一使用：
+ * SSH 主机密钥信任的共享实现，供三条传输路径统一使用：
  * 内置 ssh2 终端（ssh2-terminal.ts）、内置 ssh2 SFTP（sftp/client.ts，
  * 经 extension.ts 注入）、以及系统 ssh（platform.ts 通过
  * StrictHostKeyChecking 设置项映射 + extension.ts 连接前探测校验）。
  *
- * 信任台账（globalState，key 为 ip:port）保存的是该主机的受信任密钥指纹
- * 集合（负载均衡 VIP / 多台服务器共用同一 IP 时，集合中保留所有确认过的
- * 后端密钥）。
- *
- * prompt（默认）模式为 MobaXterm 风格：首次连接与每次遇到不在台账中的
- * 新密钥（后端轮换、重装等）都弹窗确认，接受后记录到台账；已确认过的
- * 密钥直接放行，不重复打扰。
+ * **唯一信任记录是扩展独立的 known_hosts 文件**（~/.safs/known_hosts，
+ * 由 extension.ts 激活时通过 setKnownHostsFilePath 注入路径）：
+ * 文件里有该主机的密钥指纹 = 已确认（直接放行）；没有 = 弹窗确认
+ * （首次连接 / 每次新密钥，MobaXterm 风格），确认后写入文件。
+ * 系统 ssh 以 StrictHostKeyChecking=yes + 同一文件做 OpenSSH 原生校验兜底。
+ * 与 MobaXterm 同构（隔离文件 + OpenSSH 原生校验），只是确认方式为弹窗。
  */
 
 export type HostKeyChangedAction = 'prompt' | 'reject' | 'accept';
 
-/** 用户对首次连接弹窗的决策：信任并连接 / 取消。 */
+/** 用户对主机密钥弹窗的决策：接受 / 拒绝。 */
 export type HostKeyDecision = 'accept' | 'refuse';
 
-export const trustedHostKeysState = 'safs.trustedSsh2HostKeys';
+let knownHostsFilePath = '';
 
-/** 最小信任存储接口（vscode.ExtensionContext.globalState 满足该结构）。 */
-export interface TrustStore {
-  get<T>(key: string, defaultValue: T): T;
-  update(key: string, value: unknown): Thenable<void>;
+/** 注入扩展独立 known_hosts 文件路径（extension.ts 激活时调用一次）。 */
+export function setKnownHostsFilePath(filePath: string): void {
+  knownHostsFilePath = filePath;
+}
+
+export function getKnownHostsFilePath(): string {
+  return knownHostsFilePath;
+}
+
+/** 探测/记录到的服务器主机密钥行（OpenSSH known_hosts 格式：host type blob）。 */
+export interface ProbedHostKey {
+  /** known_hosts 条目主机字段（`ip` 或 `[ip]:port`，与 ssh 连接参数一致）。 */
+  host: string;
+  /** 密钥类型（ssh-ed25519 / ssh-rsa / ecdsa-sha2-nistp256 …）。 */
+  type: string;
+  /** base64 密钥 blob。 */
+  blob: string;
+}
+
+/** 该主机在 known_hosts 中的规范条目名（写入用）：port 22 → `ip`，否则 `[ip]:port`。 */
+export function hostEntryName(host: HostConfig): string {
+  const port = host.port ?? 22;
+  if (port === 22) {
+    return host.ip.includes(':') ? `[${host.ip}]` : host.ip;
+  }
+  return `[${host.ip}]:${port}`;
+}
+
+/** 该主机的候选条目名集合（匹配用：兼容裸 IP / [IP] / [IP]:port 三种写法）。 */
+export function hostEntryNames(host: HostConfig): string[] {
+  const port = host.port ?? 22;
+  const bracketed = `[${host.ip}]`;
+  return [host.ip, bracketed, ...(port !== 22 ? [`${bracketed}:${port}`] : [])];
+}
+
+/** 从 OpenSSH 密钥 blob 提取类型字符串（blob 前 4 字节为类型名长度）。 */
+export function keyTypeFromBlob(blob: Buffer): string {
+  try {
+    const length = blob.readUInt32BE(0);
+    if (length > 0 && length <= blob.length - 4) {
+      const type = blob.toString('utf8', 4, 4 + length);
+      if (/^[a-z0-9-]+$/i.test(type)) return type;
+    }
+  } catch {
+    // 无法解析的 blob：类型未知。
+  }
+  return 'unknown';
 }
 
 export function sha256Fingerprint(key: Buffer): string {
@@ -40,46 +83,70 @@ export function hostKeyChangedAction(): HostKeyChangedAction {
     .get<HostKeyChangedAction>('hostKeyChangedAction', 'prompt');
 }
 
-export function trustKeyFor(host: HostConfig): string {
-  return `${host.ip}:${host.port ?? 22}`;
+/**
+ * 把密钥行追加到 known_hosts 文件（幂等：已存在的行跳过）。
+ */
+export async function appendKnownHostsFile(
+  filePath: string, keys: ProbedHostKey[], log?: (message: string) => void
+): Promise<void> {
+  const lines = keys.map((key) => `${key.host} ${key.type} ${key.blob}`);
+  let existing = '';
+  try {
+    existing = await readFile(filePath, 'utf8');
+  } catch {
+    // 文件不存在：首次写入。
+  }
+  const existingLines = new Set(existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+  const missing = lines.filter((line) => !existingLines.has(line));
+  if (missing.length === 0) return;
+  const content = `${existing.endsWith('\n') || existing === '' ? '' : '\n'}${missing.join('\n')}\n`;
+  await appendFile(filePath, content, { mode: 0o600 });
+  await chmod(filePath, 0o600).catch(() => undefined);
+  log?.(`已写入主机密钥记录（${missing.length} 条）：${filePath}`);
 }
 
 /**
- * 读取某主机的受信任密钥指纹集合。兼容旧版单指纹字符串存储（迁移为数组）。
+ * 读取文件中某主机的已确认密钥指纹集合（按 host 字段过滤）。
  */
-export function trustedHostKeyList(store: TrustStore, host: HostConfig): string[] {
-  const stored = store.get<Record<string, string | string[]>>(trustedHostKeysState, {});
-  const value = stored[trustKeyFor(host)];
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string') return [value];
-  return [];
-}
-
-async function writeTrustedHostKeyList(
-  store: TrustStore, host: HostConfig, fingerprints: string[]
-): Promise<void> {
-  const stored = store.get<Record<string, string | string[]>>(trustedHostKeysState, {});
-  await store.update(trustedHostKeysState, {
-    ...stored, [trustKeyFor(host)]: fingerprints
-  });
-}
-
-/** 向信任集合追加一个指纹（已存在则跳过）。 */
-export async function addTrustedHostKey(
-  store: TrustStore, host: HostConfig, fingerprint: string
-): Promise<void> {
-  const current = trustedHostKeyList(store, host);
-  if (current.includes(fingerprint)) return;
-  await writeTrustedHostKeyList(store, host, [...current, fingerprint]);
-}
-
-/** 向信任集合追加多个指纹（去重；负载均衡多后端场景保留所有见过的密钥）。 */
-export async function appendTrustedHostKeys(
-  store: TrustStore, host: HostConfig, fingerprints: string[]
-): Promise<void> {
-  for (const fingerprint of fingerprints) {
-    await addTrustedHostKey(store, host, fingerprint);
+export async function readTrustedFingerprints(
+  filePath: string, host: HostConfig
+): Promise<string[]> {
+  const names = new Set(hostEntryNames(host));
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch {
+    return [];
   }
+  const fingerprints = new Set<string>();
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^(\S+)\s+(\S+)\s+(\S+)\s*$/.exec(line.trim());
+    if (!match || !names.has(match[1])) continue;
+    const encoded = match[3];
+    // 严格 base64 校验：Node 的宽松解码会忽略非法字符，导致垃圾行被误判为密钥。
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) continue;
+    try {
+      const blob = Buffer.from(encoded, 'base64');
+      if (blob.length > 0) fingerprints.add(sha256Fingerprint(blob));
+    } catch {
+      // 忽略无法解析的行。
+    }
+  }
+  return [...fingerprints];
+}
+
+/** 当前扩展 known_hosts 文件中该主机的已确认指纹（未设置路径时视为空）。 */
+export async function trustedFingerprintsFor(host: HostConfig): Promise<string[]> {
+  if (!knownHostsFilePath) return [];
+  return readTrustedFingerprints(knownHostsFilePath, host);
+}
+
+/** 把确认过的密钥写入扩展 known_hosts 文件。 */
+export async function recordTrustedHostKey(
+  keys: ProbedHostKey[], log?: (message: string) => void
+): Promise<void> {
+  if (!knownHostsFilePath) return;
+  await appendKnownHostsFile(knownHostsFilePath, keys, log);
 }
 
 /** 首次连接弹窗文案（目标主机 IP 单独成行突出，便于用户确认连的是否正确的机器）。 */
@@ -111,7 +178,7 @@ export function changedKeyPromptMessage(
 ): string {
   const port = host.port ?? 22;
   const login = host.user ? `（登录用户 ${host.user}）` : '';
-  // 台账累积后旧指纹可能很多，最多展示 3 个。
+  // 文件累积后旧指纹可能很多，最多展示 3 个。
   const shownOld = oldFingerprints.length > 3
     ? [...oldFingerprints.slice(0, 3), `…（共 ${oldFingerprints.length} 个）`]
     : oldFingerprints;
@@ -152,20 +219,19 @@ export { defaultPrompts };
 
 /**
  * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用，MobaXterm 风格）。
- * 目录/终端的打开顺序为串行（先目录后终端，见 extension.ts），同一时刻
- * 不会有两个校验并发触发，因此这里不做并发去重：
- * 1. 台账已有匹配指纹 → 直接放行；
- * 2. 台账为空（首次连接）→ 弹窗确认；
- * 3. 台账非空但出现新密钥（后端轮换/重装）→ 弹窗确认，接受后记入台账
- *    （保留旧密钥，负载均衡多后端各确认一次后不再打扰）。
+ * 信任记录 = 扩展 known_hosts 文件（文件里有 = 已确认）：
+ * 1. 文件已有匹配指纹 → 直接放行；
+ * 2. 文件为空（首次连接）→ 弹窗确认；
+ * 3. 文件非空但出现新密钥（后端轮换/重装）→ 弹窗确认。
+ * 确认后的写入由调用方完成（hostVerifierFor / verifySystemSshHostKey）。
  *
  * @returns 是否放行连接。
  */
 export async function verifyHostKeyWithPrompt(
-  store: TrustStore, host: HostConfig, fingerprints: string[],
+  host: HostConfig, fingerprints: string[],
   log?: (message: string) => void, prompts: HostKeyPrompts = defaultPrompts
 ): Promise<boolean> {
-  const trusted = trustedHostKeyList(store, host);
+  const trusted = await trustedFingerprintsFor(host);
   if (fingerprints.some((fingerprint) => trusted.includes(fingerprint))) {
     return true;
   }
@@ -177,60 +243,69 @@ export async function verifyHostKeyWithPrompt(
     log?.(`用户拒绝信任主机"${host.name}"的新密钥，已中止连接`);
     return false;
   }
-  await appendTrustedHostKeys(store, host, fingerprints);
-  log?.(`已信任主机"${host.name}"的密钥：${fingerprints.join(', ')}`);
+  log?.(`已确认主机"${host.name}"的密钥：${fingerprints.join(', ')}`);
   return true;
 }
 
 /**
  * 内置 ssh2 通道（终端 / SFTP）的主机密钥校验器。
- * 信任记录存 globalState（key 为 ip:port，指向真实目标主机，WSL 中继场景
- * 连接的虽是 127.0.0.1:localPort，中继转发的是真实服务器的密钥）。
+ * 信任记录 = 扩展 known_hosts 文件；WSL 中继场景连接的虽是
+ * 127.0.0.1:localPort，中继转发的是真实服务器的密钥，条目名用真实目标主机。
  *
- * 信任记录写入失败时仅记录警告并放行：信任决策本身已由用户交互（或显式
+ * 记录写入失败时仅记录警告并放行：信任决策本身已由用户交互（或显式
  * accept 设置）做出，记录丢失只会在下次连接时再次提示，方向是更安全而非
  * 更危险；拒绝连接会让存储损坏时完全无法使用。
  *
  * @param log - 可选日志回调（如输出通道），用于记录存储失败等诊断信息。
  */
 export function hostVerifierFor(
-  context: vscode.ExtensionContext, host: HostConfig, log?: (message: string) => void
+  host: HostConfig, log?: (message: string) => void
 ): HostVerifier {
   const warnStoreFailure = (error: unknown) => {
-    log?.(`存储主机密钥信任记录失败（${host.name}）：${
+    log?.(`写入主机密钥信任记录失败（${host.name}）：${
       error instanceof Error ? error.message : String(error)
     }`);
   };
+  const entry = (key: Buffer): ProbedHostKey => ({
+    host: hostEntryName(host),
+    type: keyTypeFromBlob(key),
+    blob: key.toString('base64')
+  });
   return (key, callback) => {
     const fingerprint = sha256Fingerprint(key);
-    const trusted = trustedHostKeyList(context.globalState, host);
-    if (trusted.includes(fingerprint)) {
-      callback(true);
-      return;
-    }
-    const action = hostKeyChangedAction();
-    if (action === 'reject') {
-      void vscode.window.showErrorMessage(
-        `主机"${host.name}"的 SSH 主机密钥未受信任，已拒绝连接。`, { modal: true }
-      );
-      callback(false);
-      return;
-    }
-    const store = context.globalState;
-    if (action === 'accept') {
-      void addTrustedHostKey(store, host, fingerprint)
-        .catch(warnStoreFailure)
-        .then(() => callback(true));
-      return;
-    }
-    // prompt（MobaXterm 风格）：统一入口（与系统 ssh 路径共用）——
-    // 首次连接与每次新密钥都弹窗确认。
-    void verifyHostKeyWithPrompt(store, host, [fingerprint], log)
-      .then((ok) => callback(ok))
-      .catch((error) => {
-        // 存储失败放行（信任决策已由用户做出），仅记录警告。
-        warnStoreFailure(error);
+    void (async () => {
+      const trusted = await trustedFingerprintsFor(host);
+      if (trusted.includes(fingerprint)) {
         callback(true);
-      });
+        return;
+      }
+      const action = hostKeyChangedAction();
+      if (action === 'reject') {
+        void vscode.window.showErrorMessage(
+          `主机"${host.name}"的 SSH 主机密钥未受信任，已拒绝连接。`, { modal: true }
+        );
+        callback(false);
+        return;
+      }
+      if (action === 'accept') {
+        try {
+          await recordTrustedHostKey([entry(key)]);
+        } catch (error) {
+          warnStoreFailure(error);
+        }
+        callback(true);
+        return;
+      }
+      // prompt（MobaXterm 风格）：文件比对 + 弹窗确认，确认后写入文件。
+      const allowed = await verifyHostKeyWithPrompt(host, [fingerprint], log);
+      if (allowed) {
+        try {
+          await recordTrustedHostKey([entry(key)]);
+        } catch (error) {
+          warnStoreFailure(error);
+        }
+      }
+      callback(allowed);
+    })();
   };
 }

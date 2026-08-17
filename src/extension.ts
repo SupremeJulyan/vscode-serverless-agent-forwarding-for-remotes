@@ -54,7 +54,7 @@ import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
 } from './sftp/uri';
 import { ensureWslBridgeExecutable, setWslBundlePath } from './wsl-bridge';
-import { hostVerifierFor } from './host-key';
+import { hostVerifierFor, setKnownHostsFilePath } from './host-key';
 import { verifySystemSshHostKey } from './system-ssh-host-key';
 import {
   hasRequiredWslDependencies, installWslDependencies
@@ -1159,18 +1159,17 @@ async function openTerminal(
       && Boolean(resolved.hostConfig.password)
       && !resolved.hostConfig.private_key_path;
     // MobaXterm 式主机密钥校验：系统 ssh 路径无法弹 VS Code 对话框，由扩展在
-    // 连接前 ssh-keyscan 探测当前后端密钥并与信任台账比对（仅 prompt 模式；
+    // 连接前 ssh-keyscan 探测当前后端密钥并与扩展 known_hosts 文件比对（仅 prompt 模式；
     // accept 走 known_hosts 空设备静默接受，reject 走系统 ssh 严格校验）。
     const hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
       'hostKeyChangedAction', 'prompt'
     );
     if (!useBuiltinSsh && hostKeyPolicy === 'prompt') {
       const verification = await verifySystemSshHostKey(
-        context.globalState, hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
+        hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
         (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
         undefined, undefined,
-        { WSL_VPN_SSH_CONFIG: configPath() },
-        knownHostsFilePath()
+        { WSL_VPN_SSH_CONFIG: configPath() }
       );
       if (!verification.ok) {
         void vscode.window.showErrorMessage(verification.reason!);
@@ -1191,7 +1190,7 @@ async function openTerminal(
       ? (() => {
         let created!: vscode.Terminal;
         const pty = new Ssh2Terminal(
-          context, resolved.hostConfig, resolved.hostConfig.password!, remoteCwd,
+          resolved.hostConfig, resolved.hostConfig.password!, remoteCwd,
           (error) => {
             // Server rejected the pty/shell negotiation (gateway appliance):
             // mark this terminal for a system-ssh retry instead of the
@@ -1605,7 +1604,7 @@ async function executeRemoteCommand(
         );
         try {
           result = await executeSsh2Command(
-            context, resolved.hostConfig, resolved.hostConfig.password,
+            resolved.hostConfig, resolved.hostConfig.password,
             remoteCwd, input.command, controller.signal, maxOutputBytes
           );
           bridgeOutput?.appendLine(
@@ -1623,11 +1622,10 @@ async function executeRemoteCommand(
         );
         if (hostKeyPolicy === 'prompt') {
           const verification = await verifySystemSshHostKey(
-            context.globalState, hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
+            hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
             (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
             undefined, undefined,
-            { WSL_VPN_SSH_CONFIG: configPath() },
-            knownHostsFilePath()
+            { WSL_VPN_SSH_CONFIG: configPath() }
           );
           if (!verification.ok) {
             throw new Error(verification.reason);
@@ -2541,6 +2539,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // strip the executable bit from ssh-bridge (Windows builds store 0666), so
   // re-assert it before any terminal spawns the bridge.
   setWslBundlePath(vscode.Uri.joinPath(context.extensionUri, 'resources', 'wsl').fsPath);
+  setKnownHostsFilePath(knownHostsFilePath());
   await ensureWslBridgeExecutable();
   // 依赖安装后台执行，不阻塞窗口激活（apt install 可能耗时数分钟）；
   // 终端路径另有 hasRequiredWslDependencies 守卫。
@@ -2556,7 +2555,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         platformAdapter.kind === 'wsl',
         signal,
         settings().get<string>('sshClientIdent', defaultSshClientIdent),
-        hostVerifierFor(context, host, (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`)),
+        hostVerifierFor(host, (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`)),
         (reason) => bridgeOutput?.appendLine(
           `[SFTP] ${host.name} SFTP 子系统不可用，回退到 SCP/exec：${reason}`
         )
