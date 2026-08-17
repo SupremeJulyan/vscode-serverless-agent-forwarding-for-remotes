@@ -12,8 +12,9 @@
     扩展先用 ssh-keyscan（WSL 走 ssh-bridge probe，含 VPN 中继路径）探测当前
     后端密钥，与台账比对后决定放行 / 首次确认 / 拒绝，不再是无校验裸奔；
   - 内置 ssh2 通道（Windows 终端、SFTP）沿用同一台账与决策逻辑；
-  - 同主机并发触发（SFTP 握手 + 终端连接前校验）共享同一个决策弹窗，后到者
-    等待先到者结果后重新核对台账，不弹重复窗；
+  - 目录与终端按 VS Code 自然顺序**串行**打开（先目录后终端）：SFTP 连接
+    完成后台账已就绪，终端校验直接通过，同一主机全程最多一个确认弹窗，
+    无需并发去重；
   - `accept` 保持完全静默（known_hosts 空设备），`reject` 保持严格校验。
 - 修复系统 ssh 路径二次连接失败：known_hosts 指向空设备避免密钥轮换触发
   OpenSSH "禁用密码认证"分支（continue_unsafe）+ LogLevel=ERROR 消除

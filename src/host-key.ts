@@ -106,15 +106,13 @@ const defaultPrompts: HostKeyPrompts = {
 /** 默认弹窗实现（verifySystemSshHostKey 等可注入覆盖以便测试）。 */
 export { defaultPrompts };
 
-/** 同主机尚未完成的决策（去重：并发触发时只弹一次窗）。 */
-const pendingHostKeyDecisions = new Map<string, Promise<HostKeyDecision>>();
-
 /**
- * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用，TOFU 语义）：
+ * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用，TOFU 语义）。
+ * 目录/终端的打开顺序为串行（先目录后终端，见 extension.ts），同一时刻
+ * 不会有两个校验并发触发，因此这里不做并发去重：
  * 1. 台账已有匹配指纹 → 直接放行；
  * 2. 台账非空（该主机已确认信任过）→ 密钥变化静默记录并放行；
- * 3. 同主机已有弹窗在等待 → 等其完成后重新核对（不再重复弹窗）；
- * 4. 台账为空（首次连接）→ 弹窗确认一次，信任后记录并放行。
+ * 3. 台账为空（首次连接）→ 弹窗确认一次，信任后记录并放行。
  *
  * @returns 是否放行连接。
  */
@@ -132,30 +130,15 @@ export async function verifyHostKeyWithPrompt(
     log?.(`主机"${host.name}"已信任，静默记录新密钥：${fingerprints.join(', ')}`);
     return true;
   }
-  const key = trustKeyFor(host);
-  const pending = pendingHostKeyDecisions.get(key);
-  if (pending) {
-    // 同主机已有弹窗在等待（如 SFTP 与终端同时触发）：等其完成后重新核对台账。
-    const choice = await pending;
-    if (choice === 'refuse') return false;
-    return verifyHostKeyWithPrompt(store, host, fingerprints, log, prompts);
-  }
   const decision = prompts.firstConnection(host, fingerprints[0]);
-  pendingHostKeyDecisions.set(key, decision);
-  try {
-    const choice = await decision;
-    if (choice === 'refuse') {
-      log?.(`用户拒绝信任主机"${host.name}"，已中止连接`);
-      return false;
-    }
-    await appendTrustedHostKeys(store, host, fingerprints);
-    log?.(`首次信任主机"${host.name}"：${fingerprints.join(', ')}`);
-    return true;
-  } finally {
-    if (pendingHostKeyDecisions.get(key) === decision) {
-      pendingHostKeyDecisions.delete(key);
-    }
+  const choice = await decision;
+  if (choice === 'refuse') {
+    log?.(`用户拒绝信任主机"${host.name}"，已中止连接`);
+    return false;
   }
+  await appendTrustedHostKeys(store, host, fingerprints);
+  log?.(`首次信任主机"${host.name}"：${fingerprints.join(', ')}`);
+  return true;
 }
 
 /**
@@ -199,8 +182,8 @@ export function hostVerifierFor(
         .then(() => callback(true));
       return;
     }
-    // prompt（TOFU）：统一入口（与系统 ssh 路径共用）——并发去重、
-    // 首次确认一次、之后该主机的密钥变化静默记录。
+    // prompt（TOFU）：统一入口（与系统 ssh 路径共用）——首次确认一次，
+    // 之后该主机的密钥变化静默记录。
     void verifyHostKeyWithPrompt(store, host, [fingerprint], log)
       .then((ok) => callback(ok))
       .catch((error) => {

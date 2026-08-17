@@ -130,27 +130,6 @@ test('verifyHostKeyWithPrompt first connection: refuse blocks', async () => {
   assert.deepEqual(trustedHostKeyList(store, host), []);
 });
 
-test('concurrent verifications for the same host share one dialog', async () => {
-  const host = hostAt(3003);
-  const store = memoryStore();
-  let promptCount = 0;
-  let releaseFirst!: (choice: 'accept' | 'refuse') => void;
-  const gate = new Promise<'accept' | 'refuse'>((resolve) => { releaseFirst = resolve; });
-  const prompts = {
-    firstConnection: async () => {
-      promptCount += 1;
-      return gate; // 模拟 modal 弹窗挂起等待用户
-    }
-  };
-  const first = verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
-  const second = verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(promptCount, 1, '并发触发只应弹一次窗');
-  releaseFirst('accept');
-  assert.deepEqual(await Promise.all([first, second]), [true, true]);
-  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:key']);
-});
-
 test('TOFU: after the first trust, key rotation is silently recorded without prompting', async () => {
   const host = hostAt(3004);
   const store = memoryStore();
