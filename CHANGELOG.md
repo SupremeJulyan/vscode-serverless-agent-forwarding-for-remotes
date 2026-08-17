@@ -1,7 +1,16 @@
 # Changelog
 
-## 1.5.3
+## 1.5.1
 
+- **主机密钥安全姿态对齐 MobaXterm（默认 `safs.hostKeyChangedAction` 改为 `prompt`）**：
+  - 信任台账从单指纹改为**指纹集合**，支持负载均衡 VIP / 多台服务器共用 IP 时
+    保存多个后端的密钥（MobaXterm "保存为附加密钥"语义）；
+  - 系统 ssh 路径（WSL/Linux/macOS/Windows 非内置通道）新增**连接前密钥校验**：
+    扩展先用 ssh-keyscan（WSL 走 ssh-bridge probe，含 VPN 中继路径）探测当前后端
+    密钥，与台账比对；首次连接与密钥变化均弹窗（变化时三选：接受新密钥 / 拒绝 /
+    接受并保存为附加密钥），不再是无校验裸奔；
+  - 内置 ssh2 通道（Windows 终端、SFTP）沿用同一台账与弹窗逻辑；
+  - `accept` 保持静默接受（known_hosts 空设备），`reject` 保持严格校验。
 - **修复主机密钥弹窗重复与"保存为附加密钥"无效的观感**：
   - 同主机并发触发（SFTP 握手 + 终端连接前校验）时共享同一个决策弹窗，
     后到者等待先到者的结果后重新核对台账，不再弹两次完全相同的窗；
@@ -9,22 +18,9 @@
     附加密钥）后续密钥轮换**静默记录到台账**，不再重复弹窗；新会话重新
     校验，保持跨会话安全姿态；
   - 变化弹窗旧指纹超过 3 个时折叠展示，避免台账累积后文案过长。
-- 其余同 1.5.2。
-
-## 1.5.2
-
-- **主机密钥安全姿态对齐 MobaXterm（默认 `safs.hostKeyChangedAction` 改为 `prompt`）**：
-  - 信任台账从单指纹改为**指纹集合**，支持负载均衡 VIP / 多台服务器共用 IP 时
-    保存多个后端的密钥（MobaXterm “保存为附加密钥”语义）；
-  - 系统 ssh 路径（WSL/Linux/macOS/Windows 非内置通道）新增**连接前密钥校验**：
-    扩展先用 ssh-keyscan（WSL 走 ssh-bridge probe，含 VPN 中继路径）探测当前后端
-    密钥，与台账比对；首次连接与密钥变化均弹窗（变化时三选：接受新密钥 / 拒绝 /
-    接受并保存为附加密钥），不再是无校验裸奔；
-  - 内置 ssh2 通道（Windows 终端、SFTP）沿用同一台账与弹窗逻辑；
-  - `accept` 保持静默接受（known_hosts 空设备），`reject` 保持严格校验。
 - 修复系统 ssh 路径二次连接失败：known_hosts 指向空设备避免密钥轮换触发
-  OpenSSH “禁用密码认证”分支（continue_unsafe）+ LogLevel=ERROR 消除
-  “Permanently added” 噪音。
+  OpenSSH "禁用密码认证"分支（continue_unsafe）+ LogLevel=ERROR 消除
+  "Permanently added" 噪音。
 
 ## 1.5.0
 
