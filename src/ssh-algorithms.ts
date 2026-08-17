@@ -45,7 +45,7 @@ export const serverHostKeyAlgorithms: ServerHostKeyAlgorithm[] = [
 /**
  * SSH client identification string sent after `SSH-2.0-`. The ssh2 default
  * (`ssh2js1.x`) is unusual, and some NSG/gateway appliances whitelist known
- * SSH clients (OpenSSH, PuTTY/MobaXterm, SecureCRT…) while rejecting
+ * SSH clients (OpenSSH, PuTTY, SecureCRT…) while rejecting
  * unknown ones at the channel level (e.g. "Unable to start subsystem: sftp",
  * "Unable to request a pseudo-terminal"). Default to an OpenSSH banner;
  * override via the `safs.sshClientIdent` setting.

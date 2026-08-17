@@ -7,8 +7,7 @@ import {
 
 /**
  * Exec/SCP-backed session used when the server has no SFTP subsystem
- * (e.g. NSG gateways running old OpenSSH without sftp-server). This is the
- * same mechanism MobaXterm's file browser falls back to: it reuses the
+ * (e.g. NSG gateways running old OpenSSH without sftp-server). This reuses the
  * authenticated ssh2 connection and speaks the legacy SCP protocol plus plain
  * shell commands over exec channels.
  *

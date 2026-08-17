@@ -14,8 +14,8 @@ import { sshBridgePath } from './wsl-bridge';
 /**
  * 系统 ssh 路径（WSL/Linux/macOS/Windows 非内置通道）的主机密钥校验：
  * 系统 ssh 无法弹 VS Code 对话框，因此由扩展在连接前用 ssh-keyscan 探测
- * 当前后端密钥，与扩展 known_hosts 文件比对；未确认时弹 MobaXterm 风格
- * 对话框（首次连接 / 每次新密钥：接受、拒绝）。
+ * 当前后端密钥，与扩展 known_hosts 文件比对；未确认时弹对话框
+ * （首次连接 / 每次新密钥：接受、拒绝）。
  *
  * 确认通过后把探测到的密钥写入扩展独立的 known_hosts 文件，随后系统
  * ssh 以 `StrictHostKeyChecking=yes` + 该文件启动（见 platform.ts）：
@@ -179,7 +179,7 @@ export interface HostKeyVerification {
  * 沿用 platform.ts 的 known_hosts 映射，不做预检）。
  *
  * 决策统一走 host-key.ts 的 verifyHostKeyWithPrompt（与内置 ssh2 通道共用），
- * MobaXterm 风格：首次连接与每次新密钥（后端轮换/重装）都弹窗确认。
+ * 首次连接与每次新密钥（后端轮换/重装）都弹窗确认。
  * 确认通过后把探测到的密钥写入扩展独立 known_hosts 文件
  * （setKnownHostsFilePath 注入的路径），由 OpenSSH 原生校验兜底。
  *

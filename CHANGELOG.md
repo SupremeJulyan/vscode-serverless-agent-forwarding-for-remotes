@@ -2,9 +2,9 @@
 
 ## 1.5.1
 
-- **主机密钥校验对齐 MobaXterm（默认 `safs.hostKeyChangedAction` 为 `prompt`）**：
+- **主机密钥校验对齐（默认 `safs.hostKeyChangedAction` 为 `prompt`）**：
   - **唯一信任记录 = 扩展独立的 known_hosts 文件**（`~/.safs/known_hosts`，
-    0600，不碰用户真实文件），与 MobaXterm 的沙盒 known_hosts 同构；
+    0600，不碰用户真实文件）；
   - **首次连接与每次遇到新主机密钥（后端轮换 / 重装）都弹窗确认**：弹窗
     突出显示目标主机 IP:端口与登录用户，并展示旧/新密钥指纹；接受后写入
     文件，拒绝则中止连接（每次确认弹一个窗口，无附加密钥等多余选项）；
@@ -111,8 +111,8 @@
 - **NSG 网关直连真 SFTP（不再回退 exec/SCP）**：网关在每个 SSH channel 开头注入的
   MOTD banner（`\r \r … 一\r\n`）会污染 SFTP 子系统通道的首个数据包（长度字段变成
   ASCII 文本），ssh2 报 `Packet length … exceeds max length` 后整体失败，插件被迫
-  回退 exec/SCP（网关上每条 exec 秒级，目录加载极慢）。MobaXterm 的 SFTP 实现能容忍
-  该 banner，本次在**打包时**把同样的容忍逻辑注入 ssh2 的 SFTP 版本握手
+  回退 exec/SCP（网关上每条 exec 秒级，目录加载极慢）。本次在**打包时**把同样的
+  容忍逻辑注入 ssh2 的 SFTP 版本握手
   （`build/sftp-banner-patch.js`，经 esbuild onLoad 插件生效）：
   - 版本握手阶段先暂存流入数据，采用**两阶段剥离**：阶段 1 在缓冲区内任意位置找
     `\r \r` 签名（允许前导空行）并扫描 `一\r\n` 终止符后开始解析；阶段 2 无签名时
@@ -267,7 +267,7 @@
   密钥校验（此前完全无校验）；系统 ssh 路径（macOS/Linux/WSL/Windows 系统
   ssh）不再无条件 `StrictHostKeyChecking=no`，改由 `safs.hostKeyChangedAction`
   驱动（`accept`→`no` / `prompt`→`accept-new` / `reject`→`yes`），默认值
-  保持 `accept`（MobaXterm 风格：负载均衡 VIP 场景静默接受变化）。
+  保持 `accept`（负载均衡 VIP 场景静默接受变化）。
 - MCP 路由器转发信任边界：禁止 3xx 重定向跳出 loopback、拒绝转发到路由器
   自身端口、带 `x-safs-forwarded` 标记的请求一律拒绝（防路由器间环）、发现
   记录时间戳双向校验（未来时间不再永不过期）。
@@ -331,10 +331,10 @@
   default `accept`): controls what happens when a remote SSH host key changes
   (e.g. load-balanced VIPs where each backend has its own key). `prompt` shows
   the old and new fingerprints and lets you accept the new key and continue
-  (MobaXterm-style) instead of hard-failing; `reject` keeps the previous
+  instead of hard-failing; `reject` keeps the previous
   strict behaviour; `accept` silently accepts and updates the stored key.
 - WSL/Linux/macOS system-OpenSSH terminals and command execution now use
-  `StrictHostKeyChecking=no` (MobaXterm-style) instead of `accept-new`, so a
+  `StrictHostKeyChecking=no` instead of `accept-new`, so a
   changed host key on a load-balanced VIP no longer aborts the connection.
 
 ## 1.3.10
@@ -628,7 +628,7 @@
 - SCP fallback filesystem: when the server has no SFTP subsystem (e.g. NSG
   gateways running old OpenSSH without sftp-server, like 10.68.0.1), the
   extension now automatically falls back to an exec/SCP session on the same
-  connection — the same mechanism MobaXterm's file browser uses. The remote
+  connection — reusing the authenticated ssh2 connection. The remote
   folder, file tree, read/write/search and Agent MCP tools all keep working
   over the legacy SCP protocol plus shell commands (find/stat/mv/mkdir/rm).
   Verified end-to-end against a real sftp-less gateway.
@@ -638,11 +638,10 @@
 - New setting `safs.sshClientIdent` (default `OpenSSH_9.6`): the client
   identification sent after `SSH-2.0-` on all ssh2 connections (SFTP,
   built-in terminal, remote commands). Some NSG/gateway appliances whitelist
-  well-known SSH clients (OpenSSH, PuTTY/MobaXterm…) and reject unusual ones
+  well-known SSH clients (OpenSSH, PuTTY…) and reject unusual ones
   like `ssh2js`, producing `Unable to start subsystem: sftp` / `Unable to
   request a pseudo-terminal` even though the server supports SFTP. If the
-  default is still rejected, try `PuTTY_Release_0.78` (the same banner
-  MobaXterm uses).
+  default is still rejected, try `PuTTY_Release_0.78`.
 
 ## 1.1.5
 

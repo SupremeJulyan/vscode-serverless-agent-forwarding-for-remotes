@@ -1158,7 +1158,7 @@ async function openTerminal(
       && platformAdapter.kind === 'windows'
       && Boolean(resolved.hostConfig.password)
       && !resolved.hostConfig.private_key_path;
-    // MobaXterm 式主机密钥校验：系统 ssh 路径无法弹 VS Code 对话框，由扩展在
+    // 主机密钥校验：系统 ssh 路径无法弹 VS Code 对话框，由扩展在
     // 连接前 ssh-keyscan 探测当前后端密钥并与扩展 known_hosts 文件比对（仅 prompt 模式；
     // accept 走 known_hosts 空设备静默接受，reject 走系统 ssh 严格校验）。
     const hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(

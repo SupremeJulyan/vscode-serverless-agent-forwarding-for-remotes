@@ -412,7 +412,7 @@
         "safs.sshClientIdent": {
           "type": "string",
           "default": "OpenSSH_9.6",
-          "markdownDescription": "SSH 客户端标识字符串（`SSH-2.0-` 之后的部分）。部分 NSG/网关按客户端指纹白名单放行，默认的 `ssh2js` 标识可能被拒绝（表现为 `Unable to start subsystem: sftp` / `Unable to request a pseudo-terminal`）。默认伪装为 `OpenSSH_9.6`；如仍被拒可尝试 `PuTTY_Release_0.78`（MobaXterm 同款）等常见客户端标识。"
+          "markdownDescription": "SSH 客户端标识字符串（`SSH-2.0-` 之后的部分）。部分 NSG/网关按客户端指纹白名单放行，默认的 `ssh2js` 标识可能被拒绝（表现为 `Unable to start subsystem: sftp` / `Unable to request a pseudo-terminal`）。默认伪装为 `OpenSSH_9.6`；如仍被拒可尝试 `PuTTY_Release_0.78` 等常见客户端标识。"
         },
         "safs.reuseSshConnection": {
           "type": "boolean",
@@ -427,7 +427,7 @@
             "accept"
           ],
           "default": "prompt",
-          "markdownDescription": "SSH 主机密钥的处理方式（负载均衡 VIP 每次可能连接到不同后端、各后端密钥不同）：`prompt`（默认，MobaXterm 风格）首次连接与每次遇到新主机密钥（后端轮换/重装）都弹窗确认（突出显示目标主机 IP:端口、旧/新密钥指纹），接受后记录，已确认的密钥不再询问；`accept` 完全静默接受并记录新密钥；`reject` 密钥变化直接拒绝连接。该设置作用于所有传输路径：内置 ssh2 通道（Windows 终端、SFTP 文件系统与命令执行）的主机密钥校验，以及系统 ssh 路径（WSL/Linux/macOS 终端与命令执行，accept→静默、prompt→连接前探测指纹并弹窗、reject→StrictHostKeyChecking=yes 严格校验）。"
+          "markdownDescription": "SSH 主机密钥的处理方式（负载均衡 VIP 每次可能连接到不同后端、各后端密钥不同）：`prompt`（默认）首次连接与每次遇到新主机密钥（后端轮换/重装）都弹窗确认（突出显示目标主机 IP:端口、旧/新密钥指纹），接受后记录，已确认的密钥不再询问；`accept` 完全静默接受并记录新密钥；`reject` 密钥变化直接拒绝连接。该设置作用于所有传输路径：内置 ssh2 通道（Windows 终端、SFTP 文件系统与命令执行）的主机密钥校验，以及系统 ssh 路径（WSL/Linux/macOS 终端与命令执行，accept→静默、prompt→连接前探测指纹并弹窗、reject→StrictHostKeyChecking=yes 严格校验）。"
         },
         "safs.sftp.cacheTtl": {
           "type": "number",

@@ -242,11 +242,11 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - 服务器只接受 `keyboard-interactive` 认证（如 NSG/公司网关）时，SFTP 与终端路径
   都会用配置的密码自动应答交互式提示。
 - 内置终端被服务器拒绝 pty/shell（如 NSG 网关设备）时，会自动改用系统 `ssh` 重连。
-- 部分 NSG/网关按客户端标识白名单放行（MobaXterm 用 PuTTY 标识可以连，ssh2js 被拒）。
+- 部分 NSG/网关按客户端标识白名单放行（PuTTY 标识可以连，ssh2js 被拒）。
   插件默认把 SFTP/内置终端的客户端标识伪装为 `OpenSSH_9.6`，可用设置
   `safs.sshClientIdent` 改为 `PuTTY_Release_0.78` 等。
 - 服务器没有 SFTP 子系统（如老版本 OpenSSH 未装 sftp-server 的 NSG 网关）时，
-  远程文件夹会自动降级到 SCP/exec 传输（与 MobaXterm 文件浏览器同机制），
+  远程文件夹会自动降级到 SCP/exec 传输，
   文件树、读写、搜索与 Agent MCP 工具均可继续使用。列目录/路径解析优先使用
   GNU 命令（`find -printf`/`readlink -f`），BSD/macOS/Solaris 等非 GNU 服务器
   会自动回退到 `ls`/`pwd` 解析。

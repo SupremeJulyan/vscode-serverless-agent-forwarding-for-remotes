@@ -161,7 +161,7 @@ test('verifyHostKeyWithPrompt first connection: refuse blocks', async () => {
   assert.equal(await verifyHostKeyWithPrompt(host, [fps], undefined, injected), false);
 });
 
-test('MobaXterm style: every new backend key prompts once and is then remembered', async () => {
+test('every new backend key prompts once and is then remembered', async () => {
   const { file } = tempKnownHosts();
   setKnownHostsFilePath(file);
   const host = hostAt(3004);

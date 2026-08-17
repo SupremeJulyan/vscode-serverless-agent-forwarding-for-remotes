@@ -97,7 +97,7 @@ test('uses only the unified cross-platform config path', async () => {
   assert.deepEqual(matches, ['**/.safs/config.json']);
 });
 
-test('declares MobaXterm-style host key change action setting', async () => {
+test('declares host key change action setting', async () => {
   const manifest = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;

@@ -496,7 +496,7 @@ function attemptConnect(
           // subsystem request (NSG gateways without sftp-server) or a gateway
           // MOTD banner corrupts the SFTP version handshake ("Packet length
           // … exceeds max length"). Fall back to an exec/SCP session on the
-          // same connection, like MobaXterm's file browser does.
+          // same connection, reusing the authenticated ssh2 connection.
           if (sftpUnusablePattern.test(error.message)) {
             if (settled) {
               sftp?.end();

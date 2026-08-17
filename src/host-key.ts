@@ -13,9 +13,8 @@ import { HostConfig } from './config';
  * **唯一信任记录是扩展独立的 known_hosts 文件**（~/.safs/known_hosts，
  * 由 extension.ts 激活时通过 setKnownHostsFilePath 注入路径）：
  * 文件里有该主机的密钥指纹 = 已确认（直接放行）；没有 = 弹窗确认
- * （首次连接 / 每次新密钥，MobaXterm 风格），确认后写入文件。
+ * （首次连接 / 每次新密钥），确认后写入文件。
  * 系统 ssh 以 StrictHostKeyChecking=yes + 同一文件做 OpenSSH 原生校验兜底。
- * 与 MobaXterm 同构（隔离文件 + OpenSSH 原生校验），只是确认方式为弹窗。
  */
 
 export type HostKeyChangedAction = 'prompt' | 'reject' | 'accept';
@@ -161,7 +160,7 @@ export function firstConnectionPromptMessage(
     `是否信任此密钥并继续连接？`;
 }
 
-/** 首次连接弹窗（MobaXterm 风格：每主机首次确认）。 */
+/** 首次连接弹窗（每主机首次确认）。 */
 export async function promptFirstConnection(
   host: HostConfig, fingerprint: string
 ): Promise<HostKeyDecision> {
@@ -178,7 +177,7 @@ export function firstConnectionDecision(choice: string | undefined): HostKeyDeci
   return choice === '信任并连接' ? 'accept' : 'refuse';
 }
 
-/** 密钥变化弹窗文案（MobaXterm 风格：每次遇到新密钥都确认，两按钮）。 */
+/** 密钥变化弹窗文案（每次遇到新密钥都确认）。 */
 export function changedKeyPromptMessage(
   host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
 ): string {
@@ -196,13 +195,13 @@ export function changedKeyPromptMessage(
     `是否接受新密钥并继续连接？`;
 }
 
-/** 密钥变化弹窗（MobaXterm 风格：接受 / 拒绝，无附加密钥选项）。 */
+/** 密钥变化弹窗（只保留一个接受按钮，X / Esc 即拒绝）。 */
 export async function promptHostKeyChanged(
   host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
 ): Promise<HostKeyDecision> {
   const choice = await vscode.window.showWarningMessage(
     changedKeyPromptMessage(host, oldFingerprints, newFingerprints),
-    { modal: true }, '接受新密钥并继续连接', '拒绝新密钥并中止连接'
+    { modal: true }, '接受新密钥并继续连接'
   );
   return changedKeyDecision(choice);
 }
@@ -229,7 +228,7 @@ const defaultPrompts: HostKeyPrompts = {
 export { defaultPrompts };
 
 /**
- * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用，MobaXterm 风格）。
+ * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用）。
  * 信任记录 = 扩展 known_hosts 文件（文件里有 = 已确认）：
  * 1. 文件已有匹配指纹 → 直接放行；
  * 2. 文件为空（首次连接）→ 弹窗确认；
@@ -307,7 +306,7 @@ export function hostVerifierFor(
         callback(true);
         return;
       }
-      // prompt（MobaXterm 风格）：文件比对 + 弹窗确认，确认后写入文件。
+      // prompt：文件比对 + 弹窗确认，确认后写入文件。
       const allowed = await verifyHostKeyWithPrompt(host, [fingerprint], log);
       if (allowed) {
         try {

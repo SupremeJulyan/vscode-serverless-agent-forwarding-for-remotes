@@ -274,14 +274,14 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 - When the built-in terminal is rejected at the pty/shell level (e.g. NSG
   gateway appliances), the extension automatically retries with the system
   `ssh` CLI.
-- Some NSG/gateways whitelist SSH clients by identification string (MobaXterm
-  works because it uses a PuTTY banner; `ssh2js` gets rejected). The
+- Some NSG/gateways whitelist SSH clients by identification string (PuTTY
+  works; `ssh2js` gets rejected). The
   extension now presents itself as `OpenSSH_9.6` by default on SFTP/built-in
   terminal connections; set `safs.sshClientIdent` to e.g. `PuTTY_Release_0.78`
   if the default is still rejected.
 - When the server has no SFTP subsystem (e.g. old-OpenSSH NSG gateways
   without sftp-server), remote folders automatically fall back to an
-  exec/SCP transport — the same mechanism MobaXterm's file browser uses — so
+  exec/SCP transport — reusing the authenticated ssh2 connection — so
   the file tree, read/write/search and Agent MCP tools keep working.
   Directory listing / path resolution prefer GNU commands
   (`find -printf`/`readlink -f`) and fall back to `ls`/`pwd` parsing on
