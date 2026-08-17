@@ -40,6 +40,7 @@ usage() {
 用法:
   ssh-bridge -h | --help
   ssh-bridge [-t | --tty] name [远程命令...]
+  ssh-bridge probe name                探测目标主机当前密钥并输出 PROBE_OK <base64>
 
 环境变量:
   WSL_VPN_SSH_CONNECTION_REUSE 是否启用 SSH 连接复用 (1/0, 默认 1)
@@ -48,9 +49,14 @@ EOF
 }
 
 force_tty=false
+probe_mode=false
 case "${1:-}" in
   -t|--tty)
     force_tty=true
+    shift
+    ;;
+  probe)
+    probe_mode=true
     shift
     ;;
 esac
@@ -150,13 +156,7 @@ target_port="${VPN_TARGET_PORT:-$target_port}"
   && ((target_port >= 1 && target_port <= 65535)) \
   || die "SSH 端口必须是 1-65535 的整数"
 
-# ── SSH options ──────────────────────────────────────────────────────────────
-# OpenSSH 8.8+ rejects ssh-rsa/ssh-dss host keys by default; some servers only
-# offer those legacy algorithms (e.g. 10.68.0.1), so re-enable them. The exact
-# flags depend on the installed client: PubkeyAcceptedAlgorithms exists only
-# since OpenSSH 8.5 (older clients abort with "Bad configuration option"),
-# and OpenSSH 10.0 removed DSA entirely, where listing ssh-dss is a syntax
-# error.
+# OpenSSH 客户端版本探测（SSH options 与 probe 模式共用）。
 ssh_version_line="$(ssh -V 2>&1 || true)"
 ssh_major=""
 ssh_minor=""
@@ -164,6 +164,46 @@ if [[ "$ssh_version_line" =~ OpenSSH_([0-9]+)\.([0-9]+) ]]; then
   ssh_major="${BASH_REMATCH[1]}"
   ssh_minor="${BASH_REMATCH[2]}"
 fi
+
+# ── Probe mode（扩展连接前主机密钥校验）────────────────────────────────────
+# 输出格式：每行 "PROBE_OK <base64 密钥 blob>"；失败输出 PROBE_FAIL 到 stderr 并退出非零。
+if [[ "$probe_mode" == true ]]; then
+  probe_types=(ssh-ed25519 ecdsa-sha2-nistp256 ecdsa-sha2-nistp384 ecdsa-sha2-nistp521 ssh-rsa)
+  if [[ -z "$ssh_major" ]] || (( 10#$ssh_major < 10 )); then
+    probe_types+=(ssh-dss)
+  fi
+  probe_types_joined="$(IFS=,; printf '%s' "${probe_types[*]}")"
+  probe_host="$target_host"
+  probe_port="$target_port"
+  if [[ "$use_vpn" == true ]]; then
+    probe_holder="probe-$$"
+    read -r probe_relay_pid probe_local_port probe_status < <(
+      vpn_relay_acquire "$target_host" "$target_port" "$probe_holder"
+    ) || die "Windows TCP 中继启动失败"
+    trap 'vpn_relay_release "$target_host" "$target_port" "$probe_holder" || true' EXIT INT TERM
+    probe_host=127.0.0.1
+    probe_port="$probe_local_port"
+  fi
+  keys="$(ssh-keyscan -T 6 -p "$probe_port" -t "$probe_types_joined" -- "$probe_host" 2>/dev/null || true)"
+  if [[ -z "$keys" ]]; then
+    printf 'PROBE_FAIL ssh-keyscan 未返回任何主机密钥\n' >&2
+    exit 1
+  fi
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    set -- $line
+    [[ -n "${3:-}" ]] && printf 'PROBE_OK %s\n' "$3"
+  done <<<"$keys"
+  exit 0
+fi
+
+# ── SSH options ──────────────────────────────────────────────────────────────
+# OpenSSH 8.8+ rejects ssh-rsa/ssh-dss host keys by default; some servers only
+# offer those legacy algorithms (e.g. 10.68.0.1), so re-enable them. The exact
+# flags depend on the installed client: PubkeyAcceptedAlgorithms exists only
+# since OpenSSH 8.5 (older clients abort with "Bad configuration option"),
+# and OpenSSH 10.0 removed DSA entirely, where listing ssh-dss is a syntax
+# error.
 legacy_host_keys=(ssh-rsa ssh-dss)
 if [[ -n "$ssh_major" ]] && (( 10#$ssh_major >= 10 )); then
   legacy_host_keys=(ssh-rsa)

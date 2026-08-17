@@ -55,6 +55,7 @@ import {
 } from './sftp/uri';
 import { ensureWslBridgeExecutable, setWslBundlePath } from './wsl-bridge';
 import { hostVerifierFor } from './host-key';
+import { verifySystemSshHostKey } from './system-ssh-host-key';
 import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
@@ -1145,18 +1146,36 @@ async function openTerminal(
     // plan match what this client understands (macOS/Linux ship a wide range
     // of OpenSSH versions, and old or new clients reject the fixed flags).
     await warmCapabilities;
-    const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
-      reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
-      bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
-      bridgeConfigPath: configPath(),
-      hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'accept')
-    });
-    const terminalCommand = await resolveExecutable(plan.command, plan.env);
-    const terminalStartedAt = performance.now();
     const useBuiltinSsh = !forceSystemSsh
       && platformAdapter.kind === 'windows'
       && Boolean(resolved.hostConfig.password)
       && !resolved.hostConfig.private_key_path;
+    // MobaXterm 式主机密钥校验：系统 ssh 路径无法弹 VS Code 对话框，由扩展在
+    // 连接前 ssh-keyscan 探测当前后端密钥并与信任台账比对（仅 prompt 模式；
+    // accept 走 known_hosts 空设备静默接受，reject 走系统 ssh 严格校验）。
+    const hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
+      'hostKeyChangedAction', 'prompt'
+    );
+    if (!useBuiltinSsh && hostKeyPolicy === 'prompt') {
+      const verification = await verifySystemSshHostKey(
+        context.globalState, hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
+        (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
+        undefined, undefined,
+        { WSL_VPN_SSH_CONFIG: configPath() }
+      );
+      if (!verification.ok) {
+        void vscode.window.showErrorMessage(verification.reason!);
+        return undefined;
+      }
+    }
+    const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
+      reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
+      bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
+      bridgeConfigPath: configPath(),
+      hostKeyPolicy
+    });
+    const terminalCommand = await resolveExecutable(plan.command, plan.env);
+    const terminalStartedAt = performance.now();
     let builtinPty: import('./ssh2-terminal').Ssh2Terminal | undefined;
     const terminal = useBuiltinSsh
       ? (() => {
@@ -1589,10 +1608,24 @@ async function executeRemoteCommand(
         }
       } else {
         await warmSshCliCapabilities();
+        const hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
+          'hostKeyChangedAction', 'prompt'
+        );
+        if (hostKeyPolicy === 'prompt') {
+          const verification = await verifySystemSshHostKey(
+            context.globalState, hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
+            (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
+            undefined, undefined,
+            { WSL_VPN_SSH_CONFIG: configPath() }
+          );
+          if (!verification.ok) {
+            throw new Error(verification.reason);
+          }
+        }
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
           bridgeConfigPath: configPath(),
-          hostKeyPolicy: settings().get<'accept' | 'prompt' | 'reject'>('hostKeyChangedAction', 'accept')
+          hostKeyPolicy
         });
         plan.env = {
           ...plan.env,

@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -426,8 +426,8 @@
             "reject",
             "accept"
           ],
-          "default": "accept",
-          "markdownDescription": "SSH 主机密钥发生变化时的处理方式（例如负载均衡 VIP 每次连接到不同后端、各后端密钥不同的场景）：`accept`（默认）静默接受并更新已存密钥（MobaXterm 风格）；`prompt` 弹窗提示新旧密钥并允许接受新密钥后继续连接；`reject` 直接拒绝连接（旧行为）。该设置作用于所有传输路径：内置 ssh2 通道（Windows 终端、SFTP 文件系统与命令执行）的 TOFU 校验，以及系统 ssh 路径的 StrictHostKeyChecking（accept→no、prompt→accept-new、reject→yes）。"
+          "default": "prompt",
+          "markdownDescription": "SSH 主机密钥发生变化时的处理方式（例如负载均衡 VIP 每次连接到不同后端、各后端密钥不同的场景）：`prompt`（默认）首次连接与密钥变化时弹窗提示（MobaXterm 风格，变化时可选择接受新密钥 / 拒绝连接 / 保存为附加密钥以保留多个后端密钥）；`accept` 静默接受并记录新密钥；`reject` 直接拒绝连接。该设置作用于所有传输路径：内置 ssh2 通道（Windows 终端、SFTP 文件系统与命令执行）的 TOFU 校验，以及系统 ssh 路径（WSL/Linux/macOS 终端与命令执行，accept→静默、prompt→连接前探测指纹并弹窗、reject→StrictHostKeyChecking=yes 严格校验）。"
         },
         "safs.sftp.cacheTtl": {
           "type": "number",
