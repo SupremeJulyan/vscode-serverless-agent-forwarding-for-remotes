@@ -427,7 +427,7 @@
             "accept"
           ],
           "default": "prompt",
-          "markdownDescription": "SSH 主机密钥发生变化时的处理方式（例如负载均衡 VIP 每次连接到不同后端、各后端密钥不同的场景）：`prompt`（默认）首次连接与密钥变化时弹窗提示（MobaXterm 风格，变化时可选择接受新密钥 / 拒绝连接 / 保存为附加密钥以保留多个后端密钥）；`accept` 静默接受并记录新密钥；`reject` 直接拒绝连接。该设置作用于所有传输路径：内置 ssh2 通道（Windows 终端、SFTP 文件系统与命令执行）的 TOFU 校验，以及系统 ssh 路径（WSL/Linux/macOS 终端与命令执行，accept→静默、prompt→连接前探测指纹并弹窗、reject→StrictHostKeyChecking=yes 严格校验）。"
+          "markdownDescription": "SSH 主机密钥的处理方式（负载均衡 VIP 每次可能连接到不同后端、各后端密钥不同）：`prompt`（默认，TOFU）每主机首次连接弹窗确认一次，之后该主机的任何密钥变化（后端轮换/重装）静默记录到台账，不再弹窗；`accept` 完全静默接受并记录新密钥；`reject` 密钥变化直接拒绝连接。该设置作用于所有传输路径：内置 ssh2 通道（Windows 终端、SFTP 文件系统与命令执行）的 TOFU 校验，以及系统 ssh 路径（WSL/Linux/macOS 终端与命令执行，accept→静默、prompt→连接前探测指纹并首次确认、reject→StrictHostKeyChecking=yes 严格校验）。"
         },
         "safs.sftp.cacheTtl": {
           "type": "number",

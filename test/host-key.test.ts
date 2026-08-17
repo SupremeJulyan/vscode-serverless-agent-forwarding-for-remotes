@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { HostConfig } from '../src/config';
 import {
-  addTrustedHostKey, applyHostKeyDecision, replaceTrustedHostKeys,
-  sha256Fingerprint, TrustStore, trustedHostKeyList, verifyHostKeyWithPrompt
+  addTrustedHostKey, appendTrustedHostKeys, sha256Fingerprint,
+  TrustStore, trustedHostKeyList, verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
   parseKeyscanOutput, verifySystemSshHostKey, HostKeyProbeResult
@@ -22,7 +22,7 @@ const host: HostConfig = {
   name: 'dev', ip: '10.0.0.2', user: 'alice', port: 2222
 };
 
-/** 每个走决策路径的测试使用独立端口，避免模块级会话状态（按 ip:port 隔离）串扰。 */
+/** 每个走决策路径的测试使用独立端口，避免模块级状态（按 ip:port 隔离）串扰。 */
 function hostAt(port: number): HostConfig {
   return { name: 'dev', ip: '10.0.0.2', user: 'alice', port };
 }
@@ -40,27 +40,14 @@ test('trust ledger migrates legacy single-fingerprint strings to a list', () => 
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:old']);
 });
 
-test('addTrustedHostKey appends without duplicates; replaceTrustedHostKeys overwrites', async () => {
+test('addTrustedHostKey appends without duplicates; appendTrustedHostKeys adds all', async () => {
   const store = memoryStore();
   await addTrustedHostKey(store, host, 'SHA256:a');
   await addTrustedHostKey(store, host, 'SHA256:b');
   await addTrustedHostKey(store, host, 'SHA256:a');
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:a', 'SHA256:b']);
-  await replaceTrustedHostKeys(store, host, ['SHA256:c']);
-  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:c']);
-});
-
-test('applyHostKeyDecision: refuse blocks, accept replaces, add keeps existing keys', async () => {
-  const store = memoryStore();
-  await addTrustedHostKey(store, host, 'SHA256:a');
-  assert.equal(await applyHostKeyDecision(store, host, 'refuse', ['SHA256:b']), false);
-  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:a']);
-
-  assert.equal(await applyHostKeyDecision(store, host, 'add', ['SHA256:b', 'SHA256:c']), true);
+  await appendTrustedHostKeys(store, host, ['SHA256:c', 'SHA256:a']);
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:a', 'SHA256:b', 'SHA256:c']);
-
-  assert.equal(await applyHostKeyDecision(store, host, 'accept', ['SHA256:d']), true);
-  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:d']);
 });
 
 test('parseKeyscanOutput extracts unique fingerprints from keyscan lines', () => {
@@ -122,8 +109,7 @@ test('verifySystemSshHostKey first connection: trust stores the key and allows',
   const host = hostAt(3001);
   const store = memoryStore();
   const prompts = {
-    firstConnection: async () => 'accept' as const,
-    changed: async () => { throw new Error('should not prompt changed on first connect'); }
+    firstConnection: async () => 'accept' as const
   };
   const probe = async (): Promise<HostKeyProbeResult> => ({
     probed: true, fingerprints: ['SHA256:new']
@@ -135,48 +121,26 @@ test('verifySystemSshHostKey first connection: trust stores the key and allows',
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:new']);
 });
 
-test('verifyHostKeyWithPrompt changed key: refuse blocks the connection', async () => {
+test('verifyHostKeyWithPrompt first connection: refuse blocks', async () => {
   const host = hostAt(3002);
   const store = memoryStore();
-  await addTrustedHostKey(store, host, 'SHA256:old');
-  const prompts = {
-    firstConnection: async () => { throw new Error('should not prompt first connect'); },
-    changed: async (_h: HostConfig, oldKeys: string[], newKeys: string[]) => {
-      assert.deepEqual(oldKeys, ['SHA256:old']);
-      assert.deepEqual(newKeys, ['SHA256:new']);
-      return 'refuse' as const;
-    }
-  };
-  const allowed = await verifyHostKeyWithPrompt(store, host, ['SHA256:new'], undefined, prompts);
+  const prompts = { firstConnection: async () => 'refuse' as const };
+  const allowed = await verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
   assert.equal(allowed, false);
-  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:old']);
-});
-
-test('verifyHostKeyWithPrompt changed key: add keeps the old key for load-balanced backends', async () => {
-  const host = hostAt(3003);
-  const store = memoryStore();
-  await addTrustedHostKey(store, host, 'SHA256:old');
-  const prompts = {
-    firstConnection: async () => { throw new Error('should not prompt first connect'); },
-    changed: async () => 'add' as const
-  };
-  const allowed = await verifyHostKeyWithPrompt(store, host, ['SHA256:new'], undefined, prompts);
-  assert.equal(allowed, true);
-  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:old', 'SHA256:new']);
+  assert.deepEqual(trustedHostKeyList(store, host), []);
 });
 
 test('concurrent verifications for the same host share one dialog', async () => {
-  const host = hostAt(3004);
+  const host = hostAt(3003);
   const store = memoryStore();
   let promptCount = 0;
-  let releaseFirst!: (choice: 'accept' | 'refuse' | 'add') => void;
-  const gate = new Promise<'accept' | 'refuse' | 'add'>((resolve) => { releaseFirst = resolve; });
+  let releaseFirst!: (choice: 'accept' | 'refuse') => void;
+  const gate = new Promise<'accept' | 'refuse'>((resolve) => { releaseFirst = resolve; });
   const prompts = {
     firstConnection: async () => {
       promptCount += 1;
       return gate; // 模拟 modal 弹窗挂起等待用户
-    },
-    changed: async () => { throw new Error('should not prompt changed on first connect'); }
+    }
   };
   const first = verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
   const second = verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
@@ -187,24 +151,60 @@ test('concurrent verifications for the same host share one dialog', async () => 
   assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:key']);
 });
 
-test('after an explicit decision the same session stops re-prompting for key rotation', async () => {
-  const host = hostAt(3005);
+test('TOFU: after the first trust, key rotation is silently recorded without prompting', async () => {
+  const host = hostAt(3004);
   const store = memoryStore();
   let promptCount = 0;
   const prompts = {
     firstConnection: async () => {
       promptCount += 1;
       return 'accept' as const;
-    },
-    changed: async () => { throw new Error('会话内不应再弹变化窗'); }
+    }
   };
   // 首次连接：弹一次窗，用户信任。
-  assert.equal(await verifyHostKeyWithPrompt(store, host, ['SHA256:backendA'], undefined, prompts), true);
-  // 负载均衡轮换到新后端（新指纹）：本会话内静默记录，不再弹窗。
-  assert.equal(await verifyHostKeyWithPrompt(store, host, ['SHA256:backendB'], undefined, prompts), true);
+  assert.equal(
+    await verifyHostKeyWithPrompt(store, host, ['SHA256:backendA'], undefined, prompts),
+    true
+  );
+  // 负载均衡轮换：新后端密钥静默记录，不再弹窗。
+  assert.equal(
+    await verifyHostKeyWithPrompt(store, host, ['SHA256:backendB'], undefined, prompts),
+    true
+  );
   assert.equal(promptCount, 1);
-  assert.deepEqual(trustedHostKeyList(store, host), ['SHA256:backendA', 'SHA256:backendB']);
-  // 台账内指纹直接命中：仍放行。
-  assert.equal(await verifyHostKeyWithPrompt(store, host, ['SHA256:backendB'], undefined, prompts), true);
+  assert.deepEqual(
+    trustedHostKeyList(store, host), ['SHA256:backendA', 'SHA256:backendB']
+  );
+  // 旧后端再次出现：台账命中，放行。
+  assert.equal(
+    await verifyHostKeyWithPrompt(store, host, ['SHA256:backendA'], undefined, prompts),
+    true
+  );
   assert.equal(promptCount, 1);
+});
+
+test('TOFU: a host with a non-empty ledger never prompts again', async () => {
+  const host = hostAt(3005);
+  const store = memoryStore();
+  await addTrustedHostKey(store, host, 'SHA256:old');
+  let promptCount = 0;
+  const prompts = {
+    firstConnection: async () => {
+      promptCount += 1;
+      return 'accept' as const;
+    }
+  };
+  // 台账已有历史密钥（旧版本 accept 模式记录）→ 视为已确认，任何变化都静默。
+  assert.equal(
+    await verifyHostKeyWithPrompt(store, host, ['SHA256:new1'], undefined, prompts),
+    true
+  );
+  assert.equal(
+    await verifyHostKeyWithPrompt(store, host, ['SHA256:new2'], undefined, prompts),
+    true
+  );
+  assert.equal(promptCount, 0);
+  assert.deepEqual(
+    trustedHostKeyList(store, host), ['SHA256:old', 'SHA256:new1', 'SHA256:new2']
+  );
 });
