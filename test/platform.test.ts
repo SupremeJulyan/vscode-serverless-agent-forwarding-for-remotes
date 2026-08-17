@@ -138,3 +138,35 @@ test('host key policy maps to StrictHostKeyChecking for native and WSL paths', (
     'no'
   );
 });
+
+test('accept/prompt point known_hosts at the null device so rotating VIP keys never fail', () => {
+  // accept/prompt: StrictHostKeyChecking=no 遇到“已知主机密钥变化”会禁用密码认证，
+  // 因此 known_hosts 必须指向空设备，让每次连接都视为新主机（密钥轮换不触发变化分支）；
+  // LogLevel=ERROR 压掉 “Permanently added …” 噪音（真实错误仍显示）。
+  const accept = createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd', {
+    hostKeyPolicy: 'accept'
+  });
+  const prompt = createPlatformAdapter('macos').terminal(host, '/srv/project', {
+    hostKeyPolicy: 'prompt'
+  });
+  const windows = createPlatformAdapter('windows').terminal(host, '/srv/project');
+  for (const plan of [accept, prompt]) {
+    assert.ok(plan.args.includes('UserKnownHostsFile=/dev/null'));
+    assert.ok(plan.args.includes('GlobalKnownHostsFile=/dev/null'));
+    assert.ok(plan.args.includes('LogLevel=ERROR'));
+  }
+  assert.ok(windows.args.includes('UserKnownHostsFile=NUL'));
+  assert.ok(windows.args.includes('GlobalKnownHostsFile=NUL'));
+  assert.ok(windows.args.includes('LogLevel=ERROR'));
+  // reject: 严格校验，保留用户真实的 known_hosts 与默认日志。
+  const reject = createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd', {
+    hostKeyPolicy: 'reject'
+  });
+  assert.equal(
+    reject.args.some((argument) => argument.startsWith('UserKnownHostsFile=')), false
+  );
+  assert.equal(
+    reject.args.some((argument) => argument.startsWith('GlobalKnownHostsFile=')), false
+  );
+  assert.equal(reject.args.includes('LogLevel=ERROR'), false);
+});

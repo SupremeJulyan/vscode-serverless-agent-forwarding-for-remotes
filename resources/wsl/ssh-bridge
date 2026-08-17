@@ -177,6 +177,19 @@ ssh_options=(
   -o "StrictHostKeyChecking=${strict_host_key}"
   -o "HostKeyAlgorithms=+${legacy_host_keys_joined}"
 )
+# accept/prompt（no）时把 known_hosts 指向 /dev/null：OpenSSH 对“已知主机密钥
+# 变化”即使放行也会禁用密码/键盘交互认证（continue_unsafe），密码登录的第二次
+# 连接会 Permission denied；指向空设备后每次连接都视为新主机，密钥轮换永不触发
+# 变化分支，同时不动用户真实的 ~/.ssh/known_hosts。LogLevel=ERROR 压掉每次连接
+# 都会出现的 “Permanently added …” 提示（真实错误仍正常显示）。reject（yes）
+# 保留真实文件与默认日志。
+if [[ "$strict_host_key" != "yes" ]]; then
+  ssh_options+=(
+    -o UserKnownHostsFile=/dev/null
+    -o GlobalKnownHostsFile=/dev/null
+    -o LogLevel=ERROR
+  )
+fi
 if [[ -z "$ssh_major" ]] \
   || (( 10#$ssh_major > 8 || (10#$ssh_major == 8 && 10#$ssh_minor >= 5) )); then
   ssh_options+=(-o "PubkeyAcceptedAlgorithms=+${legacy_host_keys_joined}")
