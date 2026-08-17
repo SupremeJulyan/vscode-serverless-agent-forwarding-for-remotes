@@ -125,7 +125,7 @@ test('host key policy maps to StrictHostKeyChecking for native and WSL paths', (
   );
   assert.ok(
     createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd').args
-      .includes('StrictHostKeyChecking=accept-new')
+      .includes('StrictHostKeyChecking=no')
   );
   assert.equal(
     createPlatformAdapter('wsl').terminal(host, '/srv/project', {
@@ -135,6 +135,6 @@ test('host key policy maps to StrictHostKeyChecking for native and WSL paths', (
   );
   assert.equal(
     createPlatformAdapter('wsl').terminal(host, '/srv/project').env?.WSL_VPN_STRICT_HOST_KEY,
-    'accept-new'
+    'no'
   );
 });

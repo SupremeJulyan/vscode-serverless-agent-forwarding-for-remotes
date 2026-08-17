@@ -169,9 +169,10 @@ if [[ -n "$ssh_major" ]] && (( 10#$ssh_major >= 10 )); then
   legacy_host_keys=(ssh-rsa)
 fi
 legacy_host_keys_joined="$(IFS=,; printf '%s' "${legacy_host_keys[*]}")"
-# 主机密钥策略由扩展按 safs.hostKeyChangedAction 设置注入（accept→no /
-# prompt→accept-new / reject→yes），不再无条件 StrictHostKeyChecking=no。
-strict_host_key="${WSL_VPN_STRICT_HOST_KEY:-accept-new}"
+# 主机密钥策略由扩展按 safs.hostKeyChangedAction 设置注入（accept/prompt→no /
+# reject→yes）。prompt 映射为 no 而非 accept-new，因为系统 ssh 无法弹 VS Code
+# 对话框，且 accept-new 在负载均衡 VIP 后端切换时会拒绝已知主机的密钥变化。
+strict_host_key="${WSL_VPN_STRICT_HOST_KEY:-no}"
 ssh_options=(
   -o "StrictHostKeyChecking=${strict_host_key}"
   -o "HostKeyAlgorithms=+${legacy_host_keys_joined}"

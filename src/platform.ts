@@ -21,21 +21,20 @@ export interface ConnectionOptions {
   reuseSshConnection?: boolean;
   bridgeMasterPassword?: string;
   bridgeConfigPath?: string;
-  /** safs.hostKeyChangedAction 设置值：accept→no、prompt→accept-new、reject→yes */
+  /** safs.hostKeyChangedAction 设置值：accept/prompt→no、reject→yes */
   hostKeyPolicy?: 'accept' | 'prompt' | 'reject';
 }
 
 /**
  * 系统 ssh 路径的 StrictHostKeyChecking 映射（与 hostKeyChangedAction 设置一致）：
- * accept → no（MobaXterm 风格静默接受变化）；prompt → accept-new（首次接受、
- * 变化拒绝；系统 ssh 无法弹 VS Code 对话框，accept-new 是最接近的等价物）；
- * reject → yes（严格校验）。缺省按 prompt 处理。
+ * accept → no（MobaXterm 风格静默接受变化）；prompt → no（系统 ssh 无法弹 VS Code
+ * 对话框，accept-new 在负载均衡/VIP 后端切换时会拒绝已知主机的密钥变化，因此退化为
+ * no 与 accept 一致）；reject → yes（严格校验）。
  */
 function strictHostKeyCheckingOption(policy?: string): string {
   switch (policy) {
     case 'reject': return 'yes';
-    case 'accept': return 'no';
-    default: return 'accept-new';
+    default: return 'no';
   }
 }
 
@@ -62,8 +61,8 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
 }
 
 function sshArgs(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): string[] {
-  // 主机密钥策略由 safs.hostKeyChangedAction 设置驱动（accept→no / prompt→
-  // accept-new / reject→yes），不再无条件 StrictHostKeyChecking=no。
+  // 主机密钥策略由 safs.hostKeyChangedAction 设置驱动（accept/prompt→no /
+  // reject→yes），不再无条件 StrictHostKeyChecking=no。
   const args = [
     '-p', String(host.port ?? 22),
     '-o', `StrictHostKeyChecking=${strictHostKeyCheckingOption(options?.hostKeyPolicy)}`
