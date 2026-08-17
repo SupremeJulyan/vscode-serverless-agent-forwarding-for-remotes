@@ -165,10 +165,16 @@ export function firstConnectionPromptMessage(
 export async function promptFirstConnection(
   host: HostConfig, fingerprint: string
 ): Promise<HostKeyDecision> {
+  // 只保留一个确认按钮：modal 弹窗自带的 X / Esc 即隐式取消（返回 undefined → 拒绝）。
   const choice = await vscode.window.showWarningMessage(
     firstConnectionPromptMessage(host, fingerprint),
-    { modal: true }, '信任并连接', '取消'
+    { modal: true }, '信任并连接'
   );
+  return firstConnectionDecision(choice);
+}
+
+/** 弹窗选项 → 决策：X / Esc 关闭（undefined）视为拒绝，绝不默认接受。 */
+export function firstConnectionDecision(choice: string | undefined): HostKeyDecision {
   return choice === '信任并连接' ? 'accept' : 'refuse';
 }
 
@@ -198,7 +204,12 @@ export async function promptHostKeyChanged(
     changedKeyPromptMessage(host, oldFingerprints, newFingerprints),
     { modal: true }, '接受新密钥并继续连接', '拒绝新密钥并中止连接'
   );
-  return choice === '拒绝新密钥并中止连接' ? 'refuse' : 'accept';
+  return changedKeyDecision(choice);
+}
+
+/** 弹窗选项 → 决策：X / Esc 关闭（undefined）视为拒绝，绝不默认接受。 */
+export function changedKeyDecision(choice: string | undefined): HostKeyDecision {
+  return choice === '接受新密钥并继续连接' ? 'accept' : 'refuse';
 }
 
 /** 弹窗实现（可注入以便测试）。 */

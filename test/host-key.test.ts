@@ -6,7 +6,8 @@ import * as path from 'node:path';
 import test from 'node:test';
 import { HostConfig } from '../src/config';
 import {
-  appendKnownHostsFile, changedKeyPromptMessage, firstConnectionPromptMessage,
+  appendKnownHostsFile, changedKeyDecision, changedKeyPromptMessage,
+  firstConnectionDecision, firstConnectionPromptMessage,
   hostEntryName, hostEntryNames, keyTypeFromBlob, readTrustedFingerprints,
   setKnownHostsFilePath, sha256Fingerprint, verifyHostKeyWithPrompt
 } from '../src/host-key';
@@ -57,6 +58,15 @@ test('changed-key prompt collapses long trusted key lists', () => {
   const manyOld = ['SHA256:1', 'SHA256:2', 'SHA256:3', 'SHA256:4', 'SHA256:5'];
   const message = changedKeyPromptMessage(hostAt(2222), manyOld, ['SHA256:new']);
   assert.ok(message.includes('…（共 5 个）'));
+});
+
+test('dialog decisions: closing with X/Esc (undefined) refuses, never accepts', () => {
+  assert.equal(firstConnectionDecision('信任并连接'), 'accept');
+  assert.equal(firstConnectionDecision(undefined), 'refuse');
+  assert.equal(changedKeyDecision('接受新密钥并继续连接'), 'accept');
+  assert.equal(changedKeyDecision('拒绝新密钥并中止连接'), 'refuse');
+  // 安全回归：X / Esc 关闭弹窗绝不能默认接受新密钥。
+  assert.equal(changedKeyDecision(undefined), 'refuse');
 });
 
 test('host entry names follow OpenSSH conventions for port 22 and custom ports', () => {
