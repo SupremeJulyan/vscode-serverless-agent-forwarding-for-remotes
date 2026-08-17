@@ -165,6 +165,14 @@ function configPath(): string {
   return expandHome(defaultConfigPath);
 }
 
+/**
+ * 扩展独立的 known_hosts 文件（与配置文件同目录）。
+ * prompt 模式下系统 ssh 用它做 OpenSSH 原生校验兜底（见 system-ssh-host-key.ts）。
+ */
+function knownHostsFilePath(): string {
+  return path.join(path.dirname(configPath()), 'known_hosts');
+}
+
 async function readConfig(): Promise<BridgeConfig> {
   try {
     return await loadConfig(configPath());
@@ -1161,7 +1169,8 @@ async function openTerminal(
         context.globalState, hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
         (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
         undefined, undefined,
-        { WSL_VPN_SSH_CONFIG: configPath() }
+        { WSL_VPN_SSH_CONFIG: configPath() },
+        knownHostsFilePath()
       );
       if (!verification.ok) {
         void vscode.window.showErrorMessage(verification.reason!);
@@ -1172,7 +1181,8 @@ async function openTerminal(
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
       bridgeMasterPassword: bridgePasswordEnv.WSL_VPN_MASTER_PASSWORD,
       bridgeConfigPath: configPath(),
-      hostKeyPolicy
+      hostKeyPolicy,
+      ...(hostKeyPolicy === 'prompt' ? { userKnownHostsFile: knownHostsFilePath() } : {})
     });
     const terminalCommand = await resolveExecutable(plan.command, plan.env);
     const terminalStartedAt = performance.now();
@@ -1616,7 +1626,8 @@ async function executeRemoteCommand(
             context.globalState, hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
             (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
             undefined, undefined,
-            { WSL_VPN_SSH_CONFIG: configPath() }
+            { WSL_VPN_SSH_CONFIG: configPath() },
+            knownHostsFilePath()
           );
           if (!verification.ok) {
             throw new Error(verification.reason);
@@ -1625,7 +1636,8 @@ async function executeRemoteCommand(
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
           bridgeConfigPath: configPath(),
-          hostKeyPolicy
+          hostKeyPolicy,
+          ...(hostKeyPolicy === 'prompt' ? { userKnownHostsFile: knownHostsFilePath() } : {})
         });
         plan.env = {
           ...plan.env,

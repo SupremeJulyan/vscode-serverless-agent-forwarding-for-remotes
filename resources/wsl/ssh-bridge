@@ -166,7 +166,9 @@ if [[ "$ssh_version_line" =~ OpenSSH_([0-9]+)\.([0-9]+) ]]; then
 fi
 
 # ── Probe mode（扩展连接前主机密钥校验）────────────────────────────────────
-# 输出格式：每行 "PROBE_OK <base64 密钥 blob>"；失败输出 PROBE_FAIL 到 stderr 并退出非零。
+# 输出格式：每行 "PROBE_OK <host> <type> <base64 密钥 blob>"，host 与连接时
+# HostKeyAlias 一致（VPN 中继场景为目标主机，端口非 22 时为 [host]:port）；
+# 失败输出 PROBE_FAIL 到 stderr 并退出非零。
 if [[ "$probe_mode" == true ]]; then
   probe_types=(ssh-ed25519 ecdsa-sha2-nistp256 ecdsa-sha2-nistp384 ecdsa-sha2-nistp521 ssh-rsa)
   if [[ -z "$ssh_major" ]] || (( 10#$ssh_major < 10 )); then
@@ -184,6 +186,10 @@ if [[ "$probe_mode" == true ]]; then
     probe_host=127.0.0.1
     probe_port="$probe_local_port"
   fi
+  probe_key_alias="$target_host"
+  if [[ "$target_port" != 22 ]]; then
+    probe_key_alias="[$target_host]:$target_port"
+  fi
   keys="$(ssh-keyscan -T 6 -p "$probe_port" -t "$probe_types_joined" -- "$probe_host" 2>/dev/null || true)"
   if [[ -z "$keys" ]]; then
     printf 'PROBE_FAIL ssh-keyscan 未返回任何主机密钥\n' >&2
@@ -192,7 +198,7 @@ if [[ "$probe_mode" == true ]]; then
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     set -- $line
-    [[ -n "${3:-}" ]] && printf 'PROBE_OK %s\n' "$3"
+    [[ -n "${3:-}" ]] && printf 'PROBE_OK %s %s %s\n' "$probe_key_alias" "$2" "$3"
   done <<<"$keys"
   exit 0
 fi
@@ -209,21 +215,24 @@ if [[ -n "$ssh_major" ]] && (( 10#$ssh_major >= 10 )); then
   legacy_host_keys=(ssh-rsa)
 fi
 legacy_host_keys_joined="$(IFS=,; printf '%s' "${legacy_host_keys[*]}")"
-# 主机密钥策略由扩展按 safs.hostKeyChangedAction 设置注入（accept/prompt→no /
-# reject→yes）。prompt 映射为 no 而非 accept-new，因为系统 ssh 无法弹 VS Code
-# 对话框，且 accept-new 在负载均衡 VIP 后端切换时会拒绝已知主机的密钥变化。
+# 主机密钥策略由扩展按 safs.hostKeyChangedAction 设置注入：
+# accept → no + /dev/null（完全静默）；prompt → yes + 扩展独立 known_hosts
+# 文件（OpenSSH 原生校验兜底）；reject → yes + 用户真实 known_hosts。
 strict_host_key="${WSL_VPN_STRICT_HOST_KEY:-no}"
+known_hosts_file="${WSL_VPN_KNOWN_HOSTS_FILE:-}"
 ssh_options=(
   -o "StrictHostKeyChecking=${strict_host_key}"
   -o "HostKeyAlgorithms=+${legacy_host_keys_joined}"
 )
-# accept/prompt（no）时把 known_hosts 指向 /dev/null：OpenSSH 对“已知主机密钥
-# 变化”即使放行也会禁用密码/键盘交互认证（continue_unsafe），密码登录的第二次
-# 连接会 Permission denied；指向空设备后每次连接都视为新主机，密钥轮换永不触发
-# 变化分支，同时不动用户真实的 ~/.ssh/known_hosts。LogLevel=ERROR 压掉每次连接
-# 都会出现的 “Permanently added …” 提示（真实错误仍正常显示）。reject（yes）
-# 保留真实文件与默认日志。
-if [[ "$strict_host_key" != "yes" ]]; then
+if [[ -n "$known_hosts_file" ]]; then
+  # prompt：扩展已确认并写入密钥记录，OpenSSH 用该文件做最后一道校验。
+  ssh_options+=(
+    -o "UserKnownHostsFile=$known_hosts_file"
+    -o GlobalKnownHostsFile=/dev/null
+  )
+elif [[ "$strict_host_key" != "yes" ]]; then
+  # accept：完全静默——known_hosts 指向 /dev/null，每次连接都视为新主机；
+  # LogLevel=ERROR 压掉 "Permanently added …" 提示（真实错误仍正常显示）。
   ssh_options+=(
     -o UserKnownHostsFile=/dev/null
     -o GlobalKnownHostsFile=/dev/null

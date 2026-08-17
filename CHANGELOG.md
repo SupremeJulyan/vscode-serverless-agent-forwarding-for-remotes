@@ -11,6 +11,10 @@
   - 系统 ssh 路径（WSL/Linux/macOS/Windows 非内置通道）新增**连接前密钥校验**：
     扩展先用 ssh-keyscan（WSL 走 ssh-bridge probe，含 VPN 中继路径）探测当前
     后端密钥，与台账比对后决定放行 / 确认 / 拒绝，不再是无校验裸奔；
+  - **OpenSSH 原生校验兜底**：确认过的密钥写入扩展独立的 known_hosts 文件
+    （`~/.safs/known_hosts`，不碰用户真实文件），系统 ssh 以
+    `StrictHostKeyChecking=yes` + 该文件连接——即使扩展校验逻辑失效，
+    文件里没有的密钥也会被 OpenSSH 拒绝（本地实测：删除文件后连接被拒）；
   - 内置 ssh2 通道（Windows 终端、SFTP）沿用同一台账与决策逻辑；
   - 目录与终端按 VS Code 自然顺序**串行**打开（先目录后终端）：同一时刻
     不会有两个校验并发触发，无需并发去重，同一主机一个确认弹窗；

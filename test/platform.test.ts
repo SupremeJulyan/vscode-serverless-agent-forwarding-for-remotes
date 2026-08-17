@@ -124,8 +124,9 @@ test('host key policy maps to StrictHostKeyChecking for native and WSL paths', (
     }).args.includes('StrictHostKeyChecking=no')
   );
   assert.ok(
-    createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd').args
-      .includes('StrictHostKeyChecking=no')
+    createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd', {
+      hostKeyPolicy: 'prompt'
+    }).args.includes('StrictHostKeyChecking=yes')
   );
   assert.equal(
     createPlatformAdapter('wsl').terminal(host, '/srv/project', {
@@ -134,30 +135,52 @@ test('host key policy maps to StrictHostKeyChecking for native and WSL paths', (
     'yes'
   );
   assert.equal(
-    createPlatformAdapter('wsl').terminal(host, '/srv/project').env?.WSL_VPN_STRICT_HOST_KEY,
+    createPlatformAdapter('wsl').terminal(host, '/srv/project', {
+      hostKeyPolicy: 'accept'
+    }).env?.WSL_VPN_STRICT_HOST_KEY,
     'no'
+  );
+  assert.equal(
+    createPlatformAdapter('wsl').terminal(host, '/srv/project', {
+      hostKeyPolicy: 'prompt'
+    }).env?.WSL_VPN_STRICT_HOST_KEY,
+    'yes'
   );
 });
 
-test('accept/prompt point known_hosts at the null device so rotating VIP keys never fail', () => {
-  // accept/prompt: StrictHostKeyChecking=no 遇到“已知主机密钥变化”会禁用密码认证，
-  // 因此 known_hosts 必须指向空设备，让每次连接都视为新主机（密钥轮换不触发变化分支）；
+test('accept points known_hosts at the null device; prompt uses the extension file with strict checking', () => {
+  // accept: 完全静默——no + 空设备，每次连接都视为新主机（不触发密钥变化分支），
   // LogLevel=ERROR 压掉 “Permanently added …” 噪音（真实错误仍显示）。
   const accept = createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd', {
     hostKeyPolicy: 'accept'
   });
-  const prompt = createPlatformAdapter('macos').terminal(host, '/srv/project', {
-    hostKeyPolicy: 'prompt'
+  const windows = createPlatformAdapter('windows').terminal(host, '/srv/project', {
+    hostKeyPolicy: 'accept'
   });
-  const windows = createPlatformAdapter('windows').terminal(host, '/srv/project');
-  for (const plan of [accept, prompt]) {
-    assert.ok(plan.args.includes('UserKnownHostsFile=/dev/null'));
-    assert.ok(plan.args.includes('GlobalKnownHostsFile=/dev/null'));
-    assert.ok(plan.args.includes('LogLevel=ERROR'));
-  }
+  assert.ok(accept.args.includes('StrictHostKeyChecking=no'));
+  assert.ok(accept.args.includes('UserKnownHostsFile=/dev/null'));
+  assert.ok(accept.args.includes('GlobalKnownHostsFile=/dev/null'));
+  assert.ok(accept.args.includes('LogLevel=ERROR'));
   assert.ok(windows.args.includes('UserKnownHostsFile=NUL'));
   assert.ok(windows.args.includes('GlobalKnownHostsFile=NUL'));
-  assert.ok(windows.args.includes('LogLevel=ERROR'));
+
+  // prompt: 扩展独立 known_hosts 文件 + OpenSSH 原生校验兜底。
+  const knownHosts = '/home/alice/.safs/known_hosts';
+  const prompt = createPlatformAdapter('macos').terminal(host, '/srv/project', {
+    hostKeyPolicy: 'prompt',
+    userKnownHostsFile: knownHosts
+  });
+  assert.ok(prompt.args.includes('StrictHostKeyChecking=yes'));
+  assert.ok(prompt.args.includes(`UserKnownHostsFile=${knownHosts}`));
+  assert.ok(prompt.args.includes('GlobalKnownHostsFile=/dev/null'));
+  assert.equal(prompt.args.includes('LogLevel=ERROR'), false);
+  // WSL：通过环境变量传递独立文件。
+  const wsl = createPlatformAdapter('wsl').terminal(host, '/srv/project', {
+    hostKeyPolicy: 'prompt',
+    userKnownHostsFile: knownHosts
+  });
+  assert.equal(wsl.env?.WSL_VPN_KNOWN_HOSTS_FILE, knownHosts);
+
   // reject: 严格校验，保留用户真实的 known_hosts 与默认日志。
   const reject = createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd', {
     hostKeyPolicy: 'reject'

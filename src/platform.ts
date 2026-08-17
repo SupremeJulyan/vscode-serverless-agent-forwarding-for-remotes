@@ -21,44 +21,58 @@ export interface ConnectionOptions {
   reuseSshConnection?: boolean;
   bridgeMasterPassword?: string;
   bridgeConfigPath?: string;
-  /** safs.hostKeyChangedAction 设置值：accept/prompt→no、reject→yes */
+  /** safs.hostKeyChangedAction 设置值：accept→no、prompt/reject→yes */
   hostKeyPolicy?: 'accept' | 'prompt' | 'reject';
+  /**
+   * 扩展独立的 known_hosts 文件路径（prompt 模式注入）：
+   * 扩展已确认的密钥写入该文件，系统 ssh 以 StrictHostKeyChecking=yes
+   * 对该文件做 OpenSSH 原生校验兜底（见 system-ssh-host-key.ts）。
+   */
+  userKnownHostsFile?: string;
 }
 
 /**
- * 系统 ssh 路径的 StrictHostKeyChecking 映射（与 hostKeyChangedAction 设置一致）：
- * accept/prompt → no（MobaXterm 风格静默接受变化；系统 ssh 无法弹 VS Code 对话框，
- * accept-new 在负载均衡/VIP 后端切换时会拒绝已知主机的密钥变化，因此退化为 no）；
- * reject → yes（严格校验）。
+ * 系统 ssh 路径的主机密钥参数（与 safs.hostKeyChangedAction 设置一致）：
+ * - accept → StrictHostKeyChecking=no + known_hosts 指向空设备（完全静默，
+ *   每次连接都视为新主机，永不进入密钥变化分支）；
+ * - prompt → StrictHostKeyChecking=yes + 扩展独立 known_hosts 文件
+ *   （校验由扩展弹窗完成，OpenSSH 原生校验兜底）；
+ * - reject → StrictHostKeyChecking=yes + 用户真实 known_hosts（严格校验）。
  *
- * 注意：仅 StrictHostKeyChecking=no 不够 —— OpenSSH 对“已知主机密钥变化”即使放行
- * （continue_unsafe 分支）也会禁用密码/键盘交互认证，密码登录的第二次连接会报
- * Permission denied。因此 accept/prompt 还必须把 known_hosts 指向空设备
- * （/dev/null，Windows 为 NUL），让每次连接都视为“新主机”，永不进入密钥变化分支。
+ * 说明：仅 StrictHostKeyChecking=no 不够 —— OpenSSH 对“已知主机密钥变化”
+ * 即使放行（continue_unsafe 分支）也会禁用密码/键盘交互认证，密码登录的
+ * 第二次连接会报 Permission denied；accept 模式因此把 known_hosts 指向
+ * 空设备（/dev/null，Windows 为 NUL）并 LogLevel=ERROR 消除
+ * “Permanently added …” 噪音（真实错误仍正常显示）。
  */
-function strictHostKeyCheckingOption(policy?: string): string {
-  switch (policy) {
-    case 'reject': return 'yes';
-    default: return 'no';
-  }
+/** WSL 桥的 WSL_VPN_STRICT_HOST_KEY 值：prompt/reject → yes（原生校验），accept → no。 */
+function hostKeyStrictValue(policy?: string): string {
+  return policy === 'accept' ? 'no' : 'yes';
 }
 
-/**
- * accept/prompt 时把 known_hosts 指向空设备（/dev/null、Windows 为 NUL）：既不动
- * 用户真实的 ~/.ssh/known_hosts，又避免“密钥变化”检查（负载均衡 VIP 每次连接落到
- * 不同后端、密钥各不相同，OpenSSH 对已知密钥变化即使放行也会禁用密码认证）。
- * 同时 LogLevel=ERROR 压掉每次连接都会出现的 “Permanently added …” 提示噪音，
- * 真实错误（Permission denied、连接失败等）仍正常显示。reject 保留真实
- * known_hosts 与默认日志做严格校验。
- */
-function hostKeyAcceptanceArgs(kind: PlatformKind, policy?: string): string[] {
-  if (strictHostKeyCheckingOption(policy) === 'yes') return [];
-  const device = kind === 'windows' ? 'NUL' : '/dev/null';
-  return [
-    '-o', `UserKnownHostsFile=${device}`,
-    '-o', `GlobalKnownHostsFile=${device}`,
-    '-o', 'LogLevel=ERROR'
-  ];
+function hostKeyArgs(kind: PlatformKind, options?: ConnectionOptions): string[] {
+  const policy = options?.hostKeyPolicy;
+  if (policy === 'accept') {
+    const device = kind === 'windows' ? 'NUL' : '/dev/null';
+    return [
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', `UserKnownHostsFile=${device}`,
+      '-o', `GlobalKnownHostsFile=${device}`,
+      '-o', 'LogLevel=ERROR'
+    ];
+  }
+  // prompt / reject：StrictHostKeyChecking=yes 原生校验。
+  const args = ['-o', 'StrictHostKeyChecking=yes'];
+  if (policy === 'prompt' && options?.userKnownHostsFile) {
+    // 扩展独立 known_hosts（不影响用户真实文件）；GlobalKnownHostsFile
+    // 指向空设备，避免系统级 /etc/ssh/ssh_known_hosts 干扰。
+    const nullDevice = kind === 'windows' ? 'NUL' : '/dev/null';
+    args.push(
+      '-o', `UserKnownHostsFile=${options.userKnownHostsFile}`,
+      '-o', `GlobalKnownHostsFile=${nullDevice}`
+    );
+  }
+  return args;
 }
 
 export interface PlatformAdapter {
@@ -86,14 +100,13 @@ function connectionReuseArgs(options?: ConnectionOptions): string[] {
 function sshArgs(
   kind: PlatformKind, host: HostConfig, remoteCwd?: string, options?: ConnectionOptions
 ): string[] {
-  // 主机密钥策略由 safs.hostKeyChangedAction 设置驱动（accept/prompt→no +
-  // known_hosts 指向空设备 + LogLevel=ERROR / reject→yes），不再无条件
+  // 主机密钥策略由 safs.hostKeyChangedAction 设置驱动（accept→no+空设备、
+  // prompt→yes+扩展 known_hosts、reject→yes+真实文件），不再无条件
   // StrictHostKeyChecking=no。
   const args = [
     '-p', String(host.port ?? 22),
-    '-o', `StrictHostKeyChecking=${strictHostKeyCheckingOption(options?.hostKeyPolicy)}`
+    ...hostKeyArgs(kind, options)
   ];
-  args.push(...hostKeyAcceptanceArgs(kind, options?.hostKeyPolicy));
   // Some servers only offer legacy host keys (ssh-rsa/ssh-dss); OpenSSH 8.8+
   // rejects them by default, so re-enable them explicitly. The exact flags
   // are adapted to the installed client (see ssh-algorithms.ts), because old
@@ -150,7 +163,10 @@ class WslAdapter implements PlatformAdapter {
       args,
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
-        WSL_VPN_STRICT_HOST_KEY: strictHostKeyCheckingOption(options?.hostKeyPolicy),
+        WSL_VPN_STRICT_HOST_KEY: hostKeyStrictValue(options?.hostKeyPolicy),
+        ...(options?.hostKeyPolicy === 'prompt' && options?.userKnownHostsFile
+          ? { WSL_VPN_KNOWN_HOSTS_FILE: options.userKnownHostsFile }
+          : {}),
         ...(options?.bridgeConfigPath
           ? { WSL_VPN_SSH_CONFIG: options.bridgeConfigPath }
           : {}),
@@ -167,7 +183,10 @@ class WslAdapter implements PlatformAdapter {
       args: [host.name, remoteExecCommand(remoteCwd, command)],
       env: {
         WSL_VPN_SSH_CONNECTION_REUSE: options?.reuseSshConnection === false ? '0' : '1',
-        WSL_VPN_STRICT_HOST_KEY: strictHostKeyCheckingOption(options?.hostKeyPolicy),
+        WSL_VPN_STRICT_HOST_KEY: hostKeyStrictValue(options?.hostKeyPolicy),
+        ...(options?.hostKeyPolicy === 'prompt' && options?.userKnownHostsFile
+          ? { WSL_VPN_KNOWN_HOSTS_FILE: options.userKnownHostsFile }
+          : {}),
         ...(options?.bridgeConfigPath
           ? { WSL_VPN_SSH_CONFIG: options.bridgeConfigPath }
           : {}),

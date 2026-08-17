@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import test from 'node:test';
 import { HostConfig } from '../src/config';
 import {
@@ -7,7 +11,8 @@ import {
   trustedHostKeyList, verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
-  parseKeyscanOutput, verifySystemSshHostKey, HostKeyProbeResult
+  appendKnownHostsFile, parseKeyscanLines, parseKeyscanOutput,
+  verifySystemSshHostKey, HostKeyProbeResult
 } from '../src/system-ssh-host-key';
 
 function memoryStore(initial: Record<string, unknown> = {}): TrustStore & { data: Record<string, unknown> } {
@@ -242,4 +247,76 @@ test('MobaXterm style: a new key on a host with an existing ledger prompts chang
   assert.deepEqual(
     trustedHostKeyList(store, host), ['SHA256:old', 'SHA256:new1']
   );
+});
+
+test('appendKnownHostsFile writes standard known_hosts lines idempotently with 0600', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'safs-kh-'));
+  const file = path.join(dir, 'known_hosts');
+  const keys = [
+    { host: '[10.0.0.2]:2222', type: 'ssh-ed25519', blob: 'QUFBQQ==' },
+    { host: '[10.0.0.2]:2222', type: 'ssh-rsa', blob: 'QUFBQg==' }
+  ];
+  await appendKnownHostsFile(file, keys);
+  await appendKnownHostsFile(file, keys); // 幂等
+  const content = await readFile(file, 'utf8');
+  assert.equal(
+    content.split(/\r?\n/).filter((line) => line.trim()).length, 2
+  );
+  assert.ok(content.includes('[10.0.0.2]:2222 ssh-ed25519 QUFBQQ=='));
+  assert.ok(content.includes('[10.0.0.2]:2222 ssh-rsa QUFBQg=='));
+  assert.equal((statSync(file).mode & 0o777), 0o600);
+});
+
+test('verifySystemSshHostKey writes accepted keys into the extension known_hosts file', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'safs-kh-'));
+  const file = path.join(dir, 'known_hosts');
+  const host = hostAt(3006);
+  const store = memoryStore();
+  const prompts = {
+    firstConnection: async () => 'accept' as const,
+    changed: async () => 'accept' as const
+  };
+  const probe = async (): Promise<HostKeyProbeResult> => ({
+    probed: true,
+    fingerprints: ['SHA256:new'],
+    keys: [{ host: '10.0.0.2', type: 'ssh-ed25519', blob: 'QUFBQw==' }]
+  });
+  const result = await verifySystemSshHostKey(
+    store, 'prompt', host, 'linux', undefined, probe, prompts, undefined, file
+  );
+  assert.deepEqual(result, { ok: true });
+  const content = await readFile(file, 'utf8');
+  assert.ok(content.includes('10.0.0.2 ssh-ed25519 QUFBQw=='));
+});
+
+test('verifySystemSshHostKey does not write the file when the key is refused', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'safs-kh-'));
+  const file = path.join(dir, 'known_hosts');
+  const host = hostAt(3007);
+  const store = memoryStore();
+  const prompts = {
+    firstConnection: async () => 'refuse' as const,
+    changed: async () => 'refuse' as const
+  };
+  const probe = async (): Promise<HostKeyProbeResult> => ({
+    probed: true,
+    fingerprints: ['SHA256:new'],
+    keys: [{ host: '10.0.0.2', type: 'ssh-ed25519', blob: 'QUFBQw==' }]
+  });
+  const result = await verifySystemSshHostKey(
+    store, 'prompt', host, 'linux', undefined, probe, prompts, undefined, file
+  );
+  assert.equal(result.ok, false);
+  await assert.rejects(readFile(file, 'utf8'));
+});
+
+test('parseKeyscanLines keeps host/type/blob for known_hosts entries', () => {
+  const blobA = Buffer.from('AAAAC3NzaC1lZDI1NTE5AAAAIFakeA').toString('base64');
+  const lines = parseKeyscanLines(
+    `# 10.0.0.2:2222 SSH-2.0-OpenSSH_9.6\n[10.0.0.2]:2222 ssh-ed25519 ${blobA}\n`
+  );
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].host, '[10.0.0.2]:2222');
+  assert.equal(lines[0].type, 'ssh-ed25519');
+  assert.equal(lines[0].blob, blobA);
 });
