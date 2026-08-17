@@ -4,18 +4,18 @@ import type { HostVerifier } from 'ssh2';
 import { HostConfig } from './config';
 
 /**
- * SSH 主机密钥信任（TOFU）的共享实现，供三条传输路径统一使用：
+ * SSH 主机密钥信任（MobaXterm 风格）的共享实现，供三条传输路径统一使用：
  * 内置 ssh2 终端（ssh2-terminal.ts）、内置 ssh2 SFTP（sftp/client.ts，
  * 经 extension.ts 注入）、以及系统 ssh（platform.ts 通过
  * StrictHostKeyChecking 设置项映射 + extension.ts 连接前探测校验）。
  *
  * 信任台账（globalState，key 为 ip:port）保存的是该主机的受信任密钥指纹
- * 集合（负载均衡 VIP / 多台服务器共用同一 IP 时，集合中保留所有见过的
+ * 集合（负载均衡 VIP / 多台服务器共用同一 IP 时，集合中保留所有确认过的
  * 后端密钥）。
  *
- * prompt（默认）模式为 TOFU：每主机首次连接确认一次，之后该主机的任何
- * 密钥变化（后端轮换、重装等）静默记录到台账，不再弹窗。首次确认是
- * 唯一一道闸——拦住"一开始就连错机器/被劫持"的情况。
+ * prompt（默认）模式为 MobaXterm 风格：首次连接与每次遇到不在台账中的
+ * 新密钥（后端轮换、重装等）都弹窗确认，接受后记录到台账；已确认过的
+ * 密钥直接放行，不重复打扰。
  */
 
 export type HostKeyChangedAction = 'prompt' | 'reject' | 'accept';
@@ -91,11 +91,10 @@ export function firstConnectionPromptMessage(
   return `首次连接主机"${host.name}"。\n\n` +
     `⚠️ 请确认目标主机：${host.ip}:${port} ${login}\n` +
     `SSH 主机密钥指纹：${fingerprint}\n\n` +
-    `信任后，该主机后续的密钥变化将自动记录，不再重复询问。\n` +
     `是否信任此密钥并继续连接？`;
 }
 
-/** 首次连接弹窗（TOFU：每主机仅此一次确认）。 */
+/** 首次连接弹窗（MobaXterm 风格：每主机首次确认）。 */
 export async function promptFirstConnection(
   host: HostConfig, fingerprint: string
 ): Promise<HostKeyDecision> {
@@ -106,25 +105,59 @@ export async function promptFirstConnection(
   return choice === '信任并连接' ? 'accept' : 'refuse';
 }
 
+/** 密钥变化弹窗文案（MobaXterm 风格：每次遇到新密钥都确认，两按钮）。 */
+export function changedKeyPromptMessage(
+  host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
+): string {
+  const port = host.port ?? 22;
+  const login = host.user ? `（登录用户 ${host.user}）` : '';
+  // 台账累积后旧指纹可能很多，最多展示 3 个。
+  const shownOld = oldFingerprints.length > 3
+    ? [...oldFingerprints.slice(0, 3), `…（共 ${oldFingerprints.length} 个）`]
+    : oldFingerprints;
+  return `主机"${host.name}"的 SSH 主机密钥已改变。\n\n` +
+    `⚠️ 目标主机：${host.ip}:${port} ${login}\n` +
+    `服务器身份自上次连接后已改变：这可能是服务器主机密钥已更换（重新安装或升级），` +
+    `或者你实际上连接到了一台伪装成该服务器的计算机。\n\n` +
+    `旧密钥：${shownOld.join('\n')}\n新密钥：${newFingerprints.join('\n')}\n\n` +
+    `是否接受新密钥并继续连接？`;
+}
+
+/** 密钥变化弹窗（MobaXterm 风格：接受 / 拒绝，无附加密钥选项）。 */
+export async function promptHostKeyChanged(
+  host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
+): Promise<HostKeyDecision> {
+  const choice = await vscode.window.showWarningMessage(
+    changedKeyPromptMessage(host, oldFingerprints, newFingerprints),
+    { modal: true }, '接受新密钥并继续连接', '拒绝新密钥并中止连接'
+  );
+  return choice === '拒绝新密钥并中止连接' ? 'refuse' : 'accept';
+}
+
 /** 弹窗实现（可注入以便测试）。 */
 export interface HostKeyPrompts {
   firstConnection(host: HostConfig, fingerprint: string): Promise<HostKeyDecision>;
+  changed(
+    host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
+  ): Promise<HostKeyDecision>;
 }
 
 const defaultPrompts: HostKeyPrompts = {
-  firstConnection: promptFirstConnection
+  firstConnection: promptFirstConnection,
+  changed: promptHostKeyChanged
 };
 
 /** 默认弹窗实现（verifySystemSshHostKey 等可注入覆盖以便测试）。 */
 export { defaultPrompts };
 
 /**
- * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用，TOFU 语义）。
+ * 主机密钥决策的统一入口（内置 ssh2 通道与系统 ssh 路径共用，MobaXterm 风格）。
  * 目录/终端的打开顺序为串行（先目录后终端，见 extension.ts），同一时刻
  * 不会有两个校验并发触发，因此这里不做并发去重：
  * 1. 台账已有匹配指纹 → 直接放行；
- * 2. 台账非空（该主机已确认信任过）→ 密钥变化静默记录并放行；
- * 3. 台账为空（首次连接）→ 弹窗确认一次，信任后记录并放行。
+ * 2. 台账为空（首次连接）→ 弹窗确认；
+ * 3. 台账非空但出现新密钥（后端轮换/重装）→ 弹窗确认，接受后记入台账
+ *    （保留旧密钥，负载均衡多后端各确认一次后不再打扰）。
  *
  * @returns 是否放行连接。
  */
@@ -136,20 +169,16 @@ export async function verifyHostKeyWithPrompt(
   if (fingerprints.some((fingerprint) => trusted.includes(fingerprint))) {
     return true;
   }
-  if (trusted.length > 0) {
-    // TOFU：该主机已确认信任过，密钥轮换（负载均衡多后端/重装）静默记录。
-    await appendTrustedHostKeys(store, host, fingerprints);
-    log?.(`主机"${host.name}"已信任，静默记录新密钥：${fingerprints.join(', ')}`);
-    return true;
-  }
-  const decision = prompts.firstConnection(host, fingerprints[0]);
+  const decision = trusted.length === 0
+    ? prompts.firstConnection(host, fingerprints[0])
+    : prompts.changed(host, trusted, fingerprints);
   const choice = await decision;
   if (choice === 'refuse') {
-    log?.(`用户拒绝信任主机"${host.name}"，已中止连接`);
+    log?.(`用户拒绝信任主机"${host.name}"的新密钥，已中止连接`);
     return false;
   }
   await appendTrustedHostKeys(store, host, fingerprints);
-  log?.(`首次信任主机"${host.name}"：${fingerprints.join(', ')}`);
+  log?.(`已信任主机"${host.name}"的密钥：${fingerprints.join(', ')}`);
   return true;
 }
 
@@ -194,8 +223,8 @@ export function hostVerifierFor(
         .then(() => callback(true));
       return;
     }
-    // prompt（TOFU）：统一入口（与系统 ssh 路径共用）——首次确认一次，
-    // 之后该主机的密钥变化静默记录。
+    // prompt（MobaXterm 风格）：统一入口（与系统 ssh 路径共用）——
+    // 首次连接与每次新密钥都弹窗确认。
     void verifyHostKeyWithPrompt(store, host, [fingerprint], log)
       .then((ok) => callback(ok))
       .catch((error) => {

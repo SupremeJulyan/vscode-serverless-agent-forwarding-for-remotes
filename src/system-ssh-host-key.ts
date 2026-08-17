@@ -149,7 +149,7 @@ export interface HostKeyVerification {
  * 沿用 platform.ts 的 known_hosts 映射，不做预检）。
  *
  * 决策统一走 host-key.ts 的 verifyHostKeyWithPrompt（与内置 ssh2 通道共用），
- * TOFU 语义：首次连接确认一次，之后密钥变化静默记录。
+ * MobaXterm 风格：首次连接与每次新密钥（后端轮换/重装）都弹窗确认。
  *
  * @param probe   可注入的探测实现（测试用）
  * @param prompts 可注入的弹窗实现（测试用，默认走 host-key 的首次连接弹窗）

@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { HostConfig } from '../src/config';
 import {
-  addTrustedHostKey, appendTrustedHostKeys, firstConnectionPromptMessage,
-  sha256Fingerprint, TrustStore, trustedHostKeyList, verifyHostKeyWithPrompt
+  addTrustedHostKey, appendTrustedHostKeys, changedKeyPromptMessage,
+  firstConnectionPromptMessage, sha256Fingerprint, TrustStore,
+  trustedHostKeyList, verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
   parseKeyscanOutput, verifySystemSshHostKey, HostKeyProbeResult
@@ -32,7 +33,24 @@ test('first-connection prompt highlights the target host IP, port and user', () 
   assert.ok(message.includes('⚠️ 请确认目标主机：10.0.0.2:2222'));
   assert.ok(message.includes('登录用户 alice'));
   assert.ok(message.includes('SHA256:abc'));
-  assert.ok(message.includes('不再重复询问'));
+  assert.ok(message.includes('是否信任此密钥并继续连接？'));
+});
+
+test('changed-key prompt shows old/new fingerprints and the highlighted host IP', () => {
+  const message = changedKeyPromptMessage(
+    hostAt(2222), ['SHA256:old1', 'SHA256:old2'], ['SHA256:new1']
+  );
+  assert.ok(message.includes('⚠️ 目标主机：10.0.0.2:2222'));
+  assert.ok(message.includes('旧密钥：SHA256:old1'));
+  assert.ok(message.includes('SHA256:old2'));
+  assert.ok(message.includes('新密钥：SHA256:new1'));
+  assert.ok(message.includes('是否接受新密钥并继续连接？'));
+});
+
+test('changed-key prompt collapses long trusted key lists', () => {
+  const manyOld = ['SHA256:1', 'SHA256:2', 'SHA256:3', 'SHA256:4', 'SHA256:5'];
+  const message = changedKeyPromptMessage(hostAt(2222), manyOld, ['SHA256:new']);
+  assert.ok(message.includes('…（共 5 个）'));
 });
 
 test('sha256Fingerprint matches OpenSSH SHA256 fingerprint format', () => {
@@ -117,7 +135,8 @@ test('verifySystemSshHostKey first connection: trust stores the key and allows',
   const host = hostAt(3001);
   const store = memoryStore();
   const prompts = {
-    firstConnection: async () => 'accept' as const
+    firstConnection: async () => 'accept' as const,
+    changed: async () => { throw new Error('first connection must not prompt changed'); }
   };
   const probe = async (): Promise<HostKeyProbeResult> => ({
     probed: true, fingerprints: ['SHA256:new']
@@ -132,66 +151,95 @@ test('verifySystemSshHostKey first connection: trust stores the key and allows',
 test('verifyHostKeyWithPrompt first connection: refuse blocks', async () => {
   const host = hostAt(3002);
   const store = memoryStore();
-  const prompts = { firstConnection: async () => 'refuse' as const };
+  const prompts = {
+    firstConnection: async () => 'refuse' as const,
+    changed: async () => { throw new Error('first connection must not prompt changed'); }
+  };
   const allowed = await verifyHostKeyWithPrompt(store, host, ['SHA256:key'], undefined, prompts);
   assert.equal(allowed, false);
   assert.deepEqual(trustedHostKeyList(store, host), []);
 });
 
-test('TOFU: after the first trust, key rotation is silently recorded without prompting', async () => {
+test('MobaXterm style: every new backend key prompts once and is then remembered', async () => {
   const host = hostAt(3004);
   const store = memoryStore();
-  let promptCount = 0;
+  let firstPrompts = 0;
+  let changedPrompts = 0;
   const prompts = {
     firstConnection: async () => {
-      promptCount += 1;
+      firstPrompts += 1;
+      return 'accept' as const;
+    },
+    changed: async () => {
+      changedPrompts += 1;
       return 'accept' as const;
     }
   };
-  // 首次连接：弹一次窗，用户信任。
+  // 首次连接：首次弹窗。
   assert.equal(
     await verifyHostKeyWithPrompt(store, host, ['SHA256:backendA'], undefined, prompts),
     true
   );
-  // 负载均衡轮换：新后端密钥静默记录，不再弹窗。
+  // 新后端：变化弹窗（每次新密钥都确认）。
   assert.equal(
     await verifyHostKeyWithPrompt(store, host, ['SHA256:backendB'], undefined, prompts),
     true
   );
-  assert.equal(promptCount, 1);
+  assert.equal(firstPrompts, 1);
+  assert.equal(changedPrompts, 1);
   assert.deepEqual(
     trustedHostKeyList(store, host), ['SHA256:backendA', 'SHA256:backendB']
   );
-  // 旧后端再次出现：台账命中，放行。
+  // 已确认过的后端再次出现：台账命中，不弹窗。
   assert.equal(
     await verifyHostKeyWithPrompt(store, host, ['SHA256:backendA'], undefined, prompts),
     true
   );
-  assert.equal(promptCount, 1);
+  assert.equal(changedPrompts, 1);
+  // 另一个新后端：再次弹窗。
+  assert.equal(
+    await verifyHostKeyWithPrompt(store, host, ['SHA256:backendC'], undefined, prompts),
+    true
+  );
+  assert.equal(changedPrompts, 2);
 });
 
-test('TOFU: a host with a non-empty ledger never prompts again', async () => {
+test('MobaXterm style: a new key on a host with an existing ledger prompts changed', async () => {
   const host = hostAt(3005);
   const store = memoryStore();
   await addTrustedHostKey(store, host, 'SHA256:old');
-  let promptCount = 0;
+  let changedPrompts = 0;
   const prompts = {
-    firstConnection: async () => {
-      promptCount += 1;
+    firstConnection: async () => { throw new Error('ledger non-empty must not prompt first'); },
+    changed: async () => {
+      changedPrompts += 1;
       return 'accept' as const;
     }
   };
-  // 台账已有历史密钥（旧版本 accept 模式记录）→ 视为已确认，任何变化都静默。
+  // 台账已有历史密钥，但新密钥不在其中 → 变化弹窗确认。
   assert.equal(
     await verifyHostKeyWithPrompt(store, host, ['SHA256:new1'], undefined, prompts),
     true
   );
-  assert.equal(
-    await verifyHostKeyWithPrompt(store, host, ['SHA256:new2'], undefined, prompts),
-    true
-  );
-  assert.equal(promptCount, 0);
+  assert.equal(changedPrompts, 1);
   assert.deepEqual(
-    trustedHostKeyList(store, host), ['SHA256:old', 'SHA256:new1', 'SHA256:new2']
+    trustedHostKeyList(store, host), ['SHA256:old', 'SHA256:new1']
+  );
+  // 拒绝变化 → 中止且不记录。
+  changedPrompts = 0;
+  const promptsRefuse = {
+    ...prompts,
+    changed: async () => {
+      changedPrompts += 1;
+      return 'refuse' as const;
+    }
+  };
+  assert.equal(
+    await verifyHostKeyWithPrompt(store, host, ['SHA256:new2'], undefined, promptsRefuse),
+    false
+  );
+  assert.equal(changedPrompts, 1);
+  assert.deepEqual(
+    trustedHostKeyList(store, host), ['SHA256:old', 'SHA256:new1']
   );
 });
