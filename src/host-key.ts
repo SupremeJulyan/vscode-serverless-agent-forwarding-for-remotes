@@ -82,13 +82,25 @@ export async function appendTrustedHostKeys(
   }
 }
 
+/** 首次连接弹窗文案（目标主机 IP 单独成行突出，便于用户确认连的是否正确的机器）。 */
+export function firstConnectionPromptMessage(
+  host: HostConfig, fingerprint: string
+): string {
+  const port = host.port ?? 22;
+  const login = host.user ? `（登录用户 ${host.user}）` : '';
+  return `首次连接主机"${host.name}"。\n\n` +
+    `⚠️ 请确认目标主机：${host.ip}:${port} ${login}\n` +
+    `SSH 主机密钥指纹：${fingerprint}\n\n` +
+    `信任后，该主机后续的密钥变化将自动记录，不再重复询问。\n` +
+    `是否信任此密钥并继续连接？`;
+}
+
 /** 首次连接弹窗（TOFU：每主机仅此一次确认）。 */
 export async function promptFirstConnection(
   host: HostConfig, fingerprint: string
 ): Promise<HostKeyDecision> {
   const choice = await vscode.window.showWarningMessage(
-    `首次连接主机"${host.name}"。\nSSH 主机密钥指纹：${fingerprint}\n是否信任此密钥并继续连接？\n` +
-    `（信任后，该主机后续的密钥变化将自动记录，不再重复询问。）`,
+    firstConnectionPromptMessage(host, fingerprint),
     { modal: true }, '信任并连接', '取消'
   );
   return choice === '信任并连接' ? 'accept' : 'refuse';

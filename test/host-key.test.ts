@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { HostConfig } from '../src/config';
 import {
-  addTrustedHostKey, appendTrustedHostKeys, sha256Fingerprint,
-  TrustStore, trustedHostKeyList, verifyHostKeyWithPrompt
+  addTrustedHostKey, appendTrustedHostKeys, firstConnectionPromptMessage,
+  sha256Fingerprint, TrustStore, trustedHostKeyList, verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
   parseKeyscanOutput, verifySystemSshHostKey, HostKeyProbeResult
@@ -26,6 +26,14 @@ const host: HostConfig = {
 function hostAt(port: number): HostConfig {
   return { name: 'dev', ip: '10.0.0.2', user: 'alice', port };
 }
+
+test('first-connection prompt highlights the target host IP, port and user', () => {
+  const message = firstConnectionPromptMessage(hostAt(2222), 'SHA256:abc');
+  assert.ok(message.includes('⚠️ 请确认目标主机：10.0.0.2:2222'));
+  assert.ok(message.includes('登录用户 alice'));
+  assert.ok(message.includes('SHA256:abc'));
+  assert.ok(message.includes('不再重复询问'));
+});
 
 test('sha256Fingerprint matches OpenSSH SHA256 fingerprint format', () => {
   const blob = Buffer.from('AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyBlob', 'base64');
