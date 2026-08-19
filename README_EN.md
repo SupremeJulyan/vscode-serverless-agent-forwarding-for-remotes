@@ -19,10 +19,14 @@ intranet hosts and remote servers that forbid port forwarding.
 - Opens SSH terminals in the directory selected in the remote workspace.
 - Remembers the last switched directory per remote configuration and restores its workspace and terminal there.
 - The SAFS view (Remote Folders) shows each configuration with its connection
-  state and whether Agent forwarding is enabled; inline buttons open the remote
+  state; inline buttons open the remote
   folder, open a terminal, toggle Agent forwarding, or delete the config. A
   config expands to show **recently opened remote directories** (up to 10 per
   config); each history entry can be reopened, opened in a terminal, or removed.
+- In the SAFS view, `👁` marks the config bound to the **currently focused
+  window** (the default MCP routing target). The complete Agent-forwarding and
+  MCP-binding state (off / enabled-not-forwarding / forwarding) is shown in the
+  **hover tooltip**.
 - Direct remote list/read/write/search tools for VS Code agents and MCP clients.
 - Runs builds, tests, Git, and system commands remotely over SSH.
 - **SAFS: Visual Download** on remote files/folders: streaming download with
@@ -90,8 +94,8 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+Alt+R` | Open Remote Directory |
-| `Ctrl+Alt+T` | Open Remote Terminal |
+| `Ctrl+Alt+R` / `Cmd+Alt+R` | Open Remote Directory |
+| `Ctrl+Alt+T` / `Cmd+Alt+T` | Open Remote Terminal |
 
 ### Visual download / upload / sync
 

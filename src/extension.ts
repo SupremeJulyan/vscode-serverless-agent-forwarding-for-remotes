@@ -24,7 +24,7 @@ import {
   passwordValueOffset
 } from './authentication';
 import { AgentMcpServer } from './agent-mcp';import { AgentHttpRouter } from './agent-http-router';
-import { AgentWorkspacePublisher } from './agent-discovery';
+import { AgentWorkspacePublisher, discoverAgentWorkspaces } from './agent-discovery';
 import {
   AgentDefinition, AgentMcpCliRunner, agentSupportsMcpFor,
   defaultForwardingAgents, resolveAgentDefinitions, resolveUnloadAgentNames,
@@ -105,6 +105,8 @@ let provider: SftpFileSystemProvider;
 const agentWorkspacePublisher = new AgentWorkspacePublisher(randomBytes(12).toString('hex'));
 let agentWorkspaceHeartbeat: NodeJS.Timeout | undefined;
 let lastAgentDiscoveryState = '';
+let lastForwardingSignature = '';
+let refreshTree: () => void = () => undefined;
 const openingTerminalIds = new Set<string>();
 let lastReadConfig: BridgeConfig | undefined;
 const managedRemoteTerminals = new Map<vscode.Terminal, {
@@ -1807,13 +1809,18 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<TreeElement> {
     const connected = registry.get(mount.name) !== undefined && connectionState === 'connected';
     const aiForwarded = this.context.globalState
       .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
+    const workspaces = discoverAgentWorkspaces();
+    const forwarding = aiForwarded
+      && workspaces.some((workspace) => workspace.mountName === mount.name);
+    const focused = aiForwarded
+      && workspaces.some((workspace) => workspace.mountName === mount.name && workspace.focused);
     const item = new vscode.TreeItem(mount.name);
     const connectionLabel = connected
       ? '已连接'
       : connectionState === 'connecting' || connectionState === 'reconnecting'
         ? '连接中'
         : connectionState === 'error' ? '连接错误' : '未连接';
-    item.description = aiForwarded ? '⚡ Agent' : undefined;
+    item.description = focused ? '👁' : undefined;
     item.contextValue = [
       'safs.connection',
       connected ? 'connected' : 'disconnected',
@@ -1827,7 +1834,16 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<TreeElement> {
       `Remote: \`${mount.remote_path}\``,
       '',
       `SFTP：${connectionLabel}`,
-      aiForwarded ? 'Agent 转发：已开启' : 'Agent 转发：已关闭',
+      forwarding
+        ? 'Agent 转发：转发中'
+        : aiForwarded
+          ? 'Agent 转发：已启用（未转发）'
+          : 'Agent 转发：已关闭',
+      focused
+        ? 'MCP 绑定：聚焦窗口（默认路由目标）'
+        : forwarding
+          ? 'MCP 绑定：其他窗口'
+          : 'MCP 绑定：无',
       '',
       '展开可查看历史远程目录。'
     ].join('\n'));
@@ -2181,9 +2197,33 @@ function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
   });
   refresh();
   agentWorkspaceHeartbeat = setInterval(refresh, 10_000);
+  // 转发状态与聚焦窗口变化（本窗口或其他窗口启用/关闭/发布/聚焦切换）时刷新
+  // 树视图，让“转发中/已启用”状态与“👁 聚焦窗口”指示符保持最新。
+  const forwardingRefresh = () => {
+    const workspaces = discoverAgentWorkspaces();
+    const active = new Set(workspaces.map((workspace) => workspace.mountName));
+    const focusedMount = workspaces.find((workspace) => workspace.focused)?.mountName ?? '';
+    const signature = `${focusedMount}|${[...active].sort().join(',')}`;
+    if (signature !== lastForwardingSignature) {
+      lastForwardingSignature = signature;
+      refreshTree();
+    }
+  };
+  forwardingRefresh();
+  const forwardingTimer = setInterval(forwardingRefresh, 10_000);
   context.subscriptions.push(
-    vscode.window.onDidChangeWindowState(refresh),
+    vscode.window.onDidChangeWindowState((state) => {
+      refresh();
+      if (state.focused) forwardingRefresh();
+    }),
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
+    {
+      dispose: () => {
+        if (agentWorkspaceHeartbeat) clearInterval(agentWorkspaceHeartbeat);
+        agentWorkspaceHeartbeat = undefined;
+        clearInterval(forwardingTimer);
+      }
+    },
     {
       dispose: () => {
         if (agentWorkspaceHeartbeat) clearInterval(agentWorkspaceHeartbeat);
@@ -2684,7 +2724,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   void ensureSystemDependencies();
 
   registry = new RemoteFolderRegistry();
-  let refreshTree: () => void = () => undefined;
+  refreshTree = () => undefined;
   pool = new SftpConnectionPool(
     async (hostName, signal) => {
       const host = await resolvedHost(context, hostName);
