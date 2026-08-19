@@ -3,7 +3,7 @@
   "title": "SAFS Configuration",
   "description": "SSH hosts and remote folders used by SAFS.",
   "type": "object",
-  "required": ["hosts", "mounts"],
+  "required": ["hosts"],
   "properties": {
     "encrypt_passwords": {
       "type": "boolean",
@@ -30,19 +30,9 @@
     },
     "mounts": {
       "type": "array",
-      "description": "由 Add SSH Config 自动生成的 SFTP 远程目录。",
-      "items": { "$ref": "#/definitions/mount" },
-      "defaultSnippets": [
-        {
-          "label": "添加远程目录",
-          "body": [{
-            "name": "${1:project}",
-            "host": "${2:dev}",
-            "remote_path": ".",
-            "remote_terminal": "open"
-          }]
-        }
-      ]
+      "deprecated": true,
+      "description": "已废弃：由 Add SSH Config 自动生成，无需手动维护。新配置文件中无需包含此字段。",
+      "items": { "$ref": "#/definitions/mount" }
     }
   },
   "additionalProperties": false,

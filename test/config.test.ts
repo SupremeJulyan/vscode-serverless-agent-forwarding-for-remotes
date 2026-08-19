@@ -29,7 +29,14 @@ test('saves a configuration that can be loaded as JSON', async () => {
   };
 
   await saveConfig(configPath, config);
-  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), config);
+  const saved = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.deepEqual(saved, { encrypt_passwords: true, hosts: config.hosts });
+  assert.equal(saved.mounts, undefined);
+  const reloaded = parseConfig(saved);
+  assert.equal(reloaded.mounts.length, 1);
+  assert.equal(reloaded.mounts[0].name, 'dev');
+  assert.equal(reloaded.mounts[0].host, 'dev');
+  assert.equal(reloaded.mounts[0].remote_path, '.');
 });
 
 test('ignores legacy local mount paths when parsing SFTP folders', () => {
@@ -116,10 +123,11 @@ test('creates a minimal config template without overwriting an existing config',
   assert.equal(await ensureConfigFile(configPath), configPath);
   const created = JSON.parse(await readFile(configPath, 'utf8'));
   assert.deepEqual(created.hosts, []);
-  assert.deepEqual(created.mounts, []);
   assert.equal(created.encrypt_passwords, true);
-  assert.deepEqual(Object.keys(created).sort(), ['encrypt_passwords', 'hosts', 'mounts']);
-  assert.deepEqual(parseConfig(created), { encrypt_passwords: true, hosts: [], mounts: [] });
+  assert.deepEqual(Object.keys(created).sort(), ['encrypt_passwords', 'hosts']);
+  const parsed = parseConfig(created);
+  assert.deepEqual(parsed.hosts, []);
+  assert.deepEqual(parsed.mounts, []);
 
   await writeFile(configPath, '{"hosts":["keep-me"]}\n');
   await ensureConfigFile(configPath);

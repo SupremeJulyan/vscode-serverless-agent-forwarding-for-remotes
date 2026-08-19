@@ -25,6 +25,15 @@ export interface BridgeConfig {
   mounts: MountConfig[];
 }
 
+export function deriveMounts(hosts: HostConfig[]): MountConfig[] {
+  return hosts.map((host) => ({
+    name: host.name,
+    host: host.name,
+    remote_path: '.',
+    remote_terminal: 'open' as const
+  }));
+}
+
 export function removeMountConfig(config: BridgeConfig, mountName: string): MountConfig {
   const index = config.mounts.findIndex((candidate) => candidate.name === mountName);
   if (index < 0) throw new Error(`Mount '${mountName}' no longer exists`);
@@ -46,8 +55,7 @@ export interface SshLogin {
 
 const configTemplate = {
   encrypt_passwords: true,
-  hosts: [],
-  mounts: []
+  hosts: []
 };
 
 const emptyConfig = `${JSON.stringify(configTemplate, null, 2)}\n`;
@@ -83,8 +91,8 @@ export function parseConfig(value: unknown): BridgeConfig {
     throw new Error('Config root must be an object');
   }
   const object = value as Record<string, unknown>;
-  if (!Array.isArray(object.hosts) || !Array.isArray(object.mounts)) {
-    throw new Error('Config must contain hosts and mounts arrays');
+  if (!Array.isArray(object.hosts)) {
+    throw new Error('Config must contain a hosts array');
   }
 
   const hosts = object.hosts.map((item, index) => {
@@ -106,18 +114,21 @@ export function parseConfig(value: unknown): BridgeConfig {
     hostNames.add(host.name);
   }
 
-  const mounts = object.mounts.map((item, index) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      throw new Error(`mounts[${index}] must be an object`);
-    }
-    const mount = item as Record<string, unknown>;
-    return {
-      name: requireString(mount.name, `mounts[${index}].name`),
-      host: requireString(mount.host, `mounts[${index}].host`),
-      remote_path: requireString(mount.remote_path, `mounts[${index}].remote_path`),
-      remote_terminal: 'open'
-    } as MountConfig;
-  });
+  // 旧配置兼容：如果 mounts 数组存在则使用，否则从 hosts 派生
+  const mounts: MountConfig[] = Array.isArray(object.mounts)
+    ? object.mounts.map((item, index) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          throw new Error(`mounts[${index}] must be an object`);
+        }
+        const mount = item as Record<string, unknown>;
+        return {
+          name: requireString(mount.name, `mounts[${index}].name`),
+          host: requireString(mount.host, `mounts[${index}].host`),
+          remote_path: requireString(mount.remote_path, `mounts[${index}].remote_path`),
+          remote_terminal: 'open'
+        } as MountConfig;
+      })
+    : deriveMounts(hosts);
 
   const names = new Set(hosts.map((host) => host.name));
   for (const mount of mounts) {
@@ -125,8 +136,6 @@ export function parseConfig(value: unknown): BridgeConfig {
       throw new Error(`Mount '${mount.name}' references missing host '${mount.host}'`);
     }
   }
-  // encrypt_passwords 缺省按 true 处理（与模板默认一致）：旧配置缺该字段时，
-  // 密码写入仍走加密路径（isEncryptedPassword 逐密码判断），此标记仅作记账。
   return {
     encrypt_passwords: object.encrypt_passwords === false ? false : true,
     hosts,
@@ -161,7 +170,8 @@ export async function saveConfig(configPath: string, config: BridgeConfig): Prom
     `.config-${process.pid}-${Date.now()}.json`
   );
   try {
-    await fs.writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const { mounts: _omitted, ...saved } = config;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(saved, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     await fs.rename(temporaryPath, resolvedPath);
   } finally {
     await fs.rm(temporaryPath, { force: true });

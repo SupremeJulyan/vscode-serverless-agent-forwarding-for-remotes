@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs';
 import { access } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
-  BridgeConfig, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
+  BridgeConfig, deriveMounts, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
   parseSshLogin, removeMountConfig, resolveMount, saveConfig
 } from './config';
 import { decryptPassword, encryptPassword, isEncryptedPassword } from './password';
@@ -413,26 +413,22 @@ async function cachedRemoteDirectory(folder: RemoteFolder): Promise<string> {
   }
 }
 
-async function openRemoteFolder(requested?: MountConfig): Promise<void> {
-  const mount = requested ?? await selectMount('选择要切换的远程目录');
-  if (!mount) return;
+async function openDirectoryItem(requested: MountConfig): Promise<void> {
   const forwarding = vscodeContext.globalState
-    .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
-  agentTrace('Open', `准备打开 ${mount.name}，Agent 转发=${forwarding ? '启用' : '关闭'}`);
+    .get<string[]>(aiForwardMountsKey, []).includes(requested.name);
+  agentTrace('Open', `准备打开 ${requested.name}，Agent 转发=${forwarding ? '启用' : '关闭'}`);
   if (forwarding) {
-    // Start the stable HTTP endpoint in window A before window B is created,
-    // so Agents in B never need to spawn a stdio router from a virtual cwd.
     startAgentHttpRouterLeadership(vscodeContext);
     await ensureAgentHttpRouter(vscodeContext);
     await configureDetectedAgents(vscodeContext, true);
   }
   await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
-    title: `正在连接 ${mount.name}…`,
+    title: `正在连接 ${requested.name}…`,
     cancellable: false
   }, async (progress) => {
     progress.report({ message: '正在验证远程目录…' });
-    const folder = await ensureFolder(mount);
+    const folder = await ensureFolder(requested);
     const remoteDirectory = await cachedRemoteDirectory(folder);
     agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
     progress.report({ message: '正在打开工作区…' });
@@ -442,6 +438,50 @@ async function openRemoteFolder(requested?: MountConfig): Promise<void> {
       true
     );
   });
+}
+
+async function openRemoteDirectory(): Promise<void> {
+  const location = currentRemoteLocation();
+  if (!location) {
+    throw new Error('当前窗口不是 SAFS 远程工作区');
+  }
+  const config = await readConfig();
+  const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+    if (!mount) throw new Error(`远程目录配置不存在：${location.mountName}`);
+  const folder = await ensureFolder(mount);
+  const session = await pool.get(folder.hostName);
+  const requested = await promptRemoteDirectory(
+    session, folder.remoteRoot, location.remotePath, mount.name
+  );
+  if (requested === undefined) return;
+  const candidate = requested.trim().startsWith('/')
+    ? path.posix.normalize(requested.trim())
+    : path.posix.resolve(location.remotePath, requested.trim());
+  if (!isRemotePathInsideRoot(folder.remoteRoot, candidate)) {
+    throw new Error(`远程目录必须位于挂载根目录 ${folder.remoteRoot} 内`);
+  }
+  const resolved = await session.realpath(candidate);
+  if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) {
+    throw new Error(`远程目录必须位于挂载根目录 ${folder.remoteRoot} 内`);
+  }
+  if ((await session.stat(resolved)).type !== 'directory') {
+    throw new Error(`远程路径不是目录：${resolved}`);
+  }
+  const forwarding = vscodeContext.globalState
+    .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
+  agentTrace('Open', `准备在新窗口打开 ${mount.name}:${resolved}，Agent 转发=${forwarding ? '启用' : '关闭'}`);
+  if (forwarding) {
+    startAgentHttpRouterLeadership(vscodeContext);
+    await ensureAgentHttpRouter(vscodeContext);
+    await configureDetectedAgents(vscodeContext, true);
+  }
+  const localRoot = localRootForFolder(folder);
+  await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
+  await writeLastRemoteDirectory(localRoot, folder.remoteRoot, resolved);
+  agentTrace('Open', `创建新窗口打开远程目录：${resolved}`);
+  await vscode.commands.executeCommand(
+    'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), true
+  );
 }
 
 async function switchRemoteDirectory(): Promise<void> {
@@ -1366,8 +1406,7 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
   const config = await loadConfig(configPath());
   const normalizedName = name.trim();
   const existingIndex = config.hosts.findIndex((host) => host.name === normalizedName);
-  const existingMountIndex = config.mounts.findIndex((item) => item.name === normalizedName);
-  if ((existingIndex >= 0 || existingMountIndex >= 0)
+  if (existingIndex >= 0
     && await vscode.window.showWarningMessage(
       `配置"${normalizedName}"已存在，是否覆盖？`, { modal: true }, '覆盖'
     ) !== '覆盖') return;
@@ -1384,15 +1423,7 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
   if (existingIndex >= 0) config.hosts[existingIndex] = host;
   else config.hosts.push(host);
 
-  const mount: MountConfig = {
-    name: normalizedName,
-    host: normalizedName,
-    remote_path: '.',
-    remote_terminal: 'open'
-  };
-  if (existingMountIndex >= 0) config.mounts[existingMountIndex] = mount;
-  else config.mounts.push(mount);
-
+  config.mounts = deriveMounts(config.hosts);
   config.encrypt_passwords = true;
   await saveConfig(configPath(), config);
   void vscode.window.showInformationMessage(`已保存 SFTP 配置"${normalizedName}"`);
@@ -2647,11 +2678,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ));
   };
   command('openFolder', async () => {
-    await openRemoteFolder();
+    await openRemoteDirectory();
     tree.refresh();
   });
   command('openFolderItem', async (mount) => {
-    await openRemoteFolder(mount);
+    await openDirectoryItem(mount);
     tree.refresh();
   });
   command('switchRemoteDirectory', switchRemoteDirectory);
