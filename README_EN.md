@@ -18,6 +18,11 @@ intranet hosts and remote servers that forbid port forwarding.
 - Pooled SFTP connections, metadata caching, reconnect support, and file polling.
 - Opens SSH terminals in the directory selected in the remote workspace.
 - Remembers the last switched directory per remote configuration and restores its workspace and terminal there.
+- The SAFS view (Remote Folders) shows each configuration with its connection
+  state and whether Agent forwarding is enabled; inline buttons open the remote
+  folder, open a terminal, toggle Agent forwarding, or delete the config. A
+  config expands to show **recently opened remote directories** (up to 10 per
+  config); each history entry can be reopened, opened in a terminal, or removed.
 - Direct remote list/read/write/search tools for VS Code agents and MCP clients.
 - Runs builds, tests, Git, and system commands remotely over SSH.
 - **SAFS: Visual Download** on remote files/folders: streaming download with
@@ -45,8 +50,9 @@ code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
    SAFS view (Remote Folders) in the Activity Bar.
 4. The remote directory opens as a `safs://` virtual workspace; edit remote
    files directly in the Explorer.
-5. Run `SAFS: Disconnect` when finished (or use the "Disconnect" button on
-   the connection item).
+5. Run `SAFS: Disconnect` when finished; the "Delete Config" button on the
+   connection item disconnects an active SFTP connection first, then removes
+   the config.
 
 ### Open a remote terminal
 
@@ -70,8 +76,15 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
   directories inside the mount root are accepted); the current window stays
   open, and each window's Agent-forwarding/MCP stays bound to its own
   directory.
+- Run `SAFS: Switch Remote Directory` to switch to the target directory in the
+  **current window** (workspace and terminal switch together).
 - Each remote config remembers the last opened directory; reopening the
   remote folder restores both the workspace and the terminal there.
+- A config entry in the SAFS view (Remote Folders) can be expanded to show the
+  **recently opened remote directory history** (up to 10 entries, newest
+  first). Each history entry has three buttons: open the history directory,
+  open a terminal there, or delete the record. Reopening or switching to a
+  directory moves its record to the top.
 
 ### Keyboard Shortcuts
 
@@ -102,7 +115,7 @@ loopback-only (`127.0.0.1`) and cannot be reached across machines or
 platforms.
 
 1. First click the "Enable Agent Forwarding" button on the connection item in
-   the SAFS view (or pick the same command from its context menu). The
+   the SAFS view (the first inline button on the config row). The
    extension installs or updates the fixed `safs` HTTP MCP for the detected
    Agent CLIs (default `codex`, `claude`, `pi`, and `dsh`; extend with
    `safs.agentForwardingAgents`).
@@ -111,7 +124,8 @@ platforms.
    successfully. If the Agent is a VS Code extension, just confirm it in the
    Agent session of the new window.
 3. Then run `SAFS: Open Remote Folder` to enter the remote directory (or click
-   the "Open Remote Folder" button on the connection item). Before creating
+   the "Open Remote Folder" button on the connection item — the second inline
+   button on the config row). Before creating
    the new window, the extension starts the fixed HTTP router and registers
    the Agent. The new window starts its dynamic-port service, and the Agent
    conversation binds to the remote window automatically via
@@ -160,7 +174,10 @@ platforms.
 
 ## Configuration
 
-All platforms use `~/.safs/config.json`.
+All platforms use `~/.safs/config.json`. The `mounts` array may be omitted: it
+is then derived from `hosts` (each host becomes a mount with the same name,
+`remote_path` `.`, and `remote_terminal` `open`). An explicit `mounts` array
+overrides the derived result.
 
 ```json
 {
@@ -182,7 +199,9 @@ All platforms use `~/.safs/config.json`.
 ```
 
 The top-level `mounts` array defines SFTP remote folders. Remote directories are
-not mounted into the local filesystem.
+not mounted into the local filesystem. When you delete a config whose SFTP
+connection is still active, the extension asks to confirm "disconnect and
+delete" first, then disconnects before removing the config.
 
 ## Agent access
 
@@ -275,6 +294,14 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 - When a server only offers legacy host keys (`ssh-rsa`/`ssh-dss`, disabled by
   default since OpenSSH 8.8), the extension automatically re-enables them on
   every connection path (system `ssh`, WSL bridge, built-in SFTP/terminal).
+- Host-key verification uses an extension-owned `~/.safs/known_hosts` (TOFU);
+  first connect and key changes are handled per `safs.hostKeyChangedAction`
+  (see Settings). System-`ssh` paths probe the host key before connecting and
+  write newly discovered keys to that file; in rare cases where the probe
+  fails (e.g. VPN relay probe timeout), the system-`ssh` path temporarily
+  degrades to not checking the host key (`StrictHostKeyChecking=no`) so the
+  terminal stays usable, while the built-in ssh2 channels keep full
+  verification.
 - When a server only accepts `keyboard-interactive` auth (e.g. NSG/company
   gateways), both the SFTP and terminal paths answer the interactive prompts
   with the configured password automatically.
@@ -299,8 +326,26 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 
 ## Settings
 
-- `safs.agentMcpPort`: dynamic per-window backend port; keep the default `0`.
-- `safs.agentHttpRouterPort`: stable Agent-facing HTTP router port; defaults to `9848`.
+- `safs.configPath`
+- `safs.reuseSshConnection`
+- `safs.sshClientIdent`: SSH client identification string, masquerading as
+  `OpenSSH_9.6` by default; switch to e.g. `PuTTY_Release_0.78` when a
+  NSG/gateway whitelist rejects the default.
+- `safs.hostKeyChangedAction`: how host keys are handled (`prompt` default /
+  `reject` / `accept`). Default `prompt`: on first connect and on every new
+  host key (load-balanced VIPs rotating backends, server reinstalls) a dialog
+  shows the target IP:port and the new key fingerprint; accepting records it
+  to the extension-owned `~/.safs/known_hosts`, and confirmed keys are no
+  longer asked about. `accept` silently accepts and records new keys; `reject`
+  refuses the connection on key change. Applies to every transport: built-in
+  ssh2 (Windows terminal, SFTP, command execution) and system ssh (WSL /
+  Linux / macOS terminal and command execution).
+- `safs.sftp.cacheTtl`
+- `safs.sftp.watchInterval`
+- `safs.agentMcpPort`
+- `safs.agentHttpRouterPort`
+- `safs.agentMcpMaxOutputBytes`: stdout+stderr cap for `run_remote_command`
+  (default `65536`; returns `truncated: true` when exceeded).
 - `safs.agentForwardingAgents`: selects Agents enabled for MCP forwarding;
   defaults to `codex`, `claude`, `pi`, and `dsh`. Values are the Agent CLI
   command names directly (e.g. `codex`, `claude`, `pi`, `dsh`); any CLI is
@@ -327,4 +372,19 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   execution in milliseconds (default `120000`; `0` disables it).
 - `safs.sftp.idleConnectionTtl`: seconds before an idle SFTP connection is
   recycled by the pool (default `600`; `0` disables recycling).
+- `safs.terminalFollowsActiveFile`: when a remote file is switched/opened,
+  the terminal `cd`s to that file's directory in real time (default `false`);
+  opening a remote terminal and reopening a remote window always follow the
+  active file's directory regardless of this setting.
+- `safs.highRiskCommandPatterns`: regex rules for dangerous remote commands
+  requested by Agents through MCP (defaults include recursive delete,
+  disk/partition/filesystem operations, shutdown/reboot, piping remote
+  scripts, and privilege-escalation like `sudo`/`su`/`doas`/`pkexec`/`runas`,
+  setuid/setgid, account management, `visudo`/`sudoers`). Matches are handled
+  per `safs.highRiskCommandAction`; set to `[]` to disable interception.
+  Matches inside quotes are ignored to avoid false positives when searching
+  for keywords like `sudo`.
+- `safs.highRiskCommandAction`: `deny` (default) rejects the risky command
+  outright and logs it; `confirm` prompts the user for confirmation before
+  every such execution.
 

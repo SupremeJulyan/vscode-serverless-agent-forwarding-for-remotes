@@ -17,7 +17,10 @@
 - SFTP 连接池、断线重试、元数据缓存和远程文件轮询。
 - 从当前远程文件或工作区打开相同目录下的 SSH 终端。
 - 每个远程配置记住最后切换的目录，重新打开时恢复工作区和终端目录。
-- 远程目录侧栏显示连接状态，可打开、断开或删除配置。
+- 远程目录侧栏按配置显示：连接状态、已开启的 Agent 转发，行内按钮可
+  **打开远程目录 / 打开终端 / 启用（关闭）Agent 转发 / 删除配置**；
+  配置可展开查看**最近打开的远程目录历史**（每个配置最多 10 条），
+  每条历史可直接重新打开、打开终端或删除记录。
 - GitHub Copilot Language Model Tools 和本机 MCP 服务可直接列出、读取、写入、
   搜索远程文件，并通过 SSH 执行远程命令。
 - 右键远程文件/目录 **SAFS：可视化下载**：大文件**流式下载**（进度条、可取消），
@@ -42,7 +45,8 @@ code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
 3. 运行 `SAFS: 打开远程目录`，选择刚添加的配置；也可以在左侧活动栏的
    SAFS 视图（远程目录）中点击连接项上的“打开远程目录”按钮。
 4. 远程目录以 `safs://` 虚拟工作区打开，直接在资源管理器中编辑远程文件。
-5. 使用 `SAFS: 断开 SFTP 连接` 关闭连接（或点击连接项上的“断开连接”按钮）。
+5. 使用 `SAFS: 断开 SFTP 连接` 关闭连接；点击连接项上的“删除配置”按钮会先断开
+   已连接的 SFTP 再删除配置。
 
 ### 打开远程终端
 
@@ -60,8 +64,13 @@ code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
 - 输入挂载根目录内的路径，或从补全列表选择候选目录后回车，会在**新窗口**中打开
   该目录（只能打开挂载根目录内真实存在的目录）；**当前窗口保持不变**，两个窗口
   各自的 Agent 转发/MCP 独立绑定各自目录。
+- 运行 `SAFS: 切换远程目录` 则在**当前窗口**内切换到目标目录（工作区与
+  终端一起切换）。
 - 每个远程配置会记住最后切换的目录；重新打开远程目录时，工作区和终端
   都会恢复到该目录。
+- SAFS 视图（远程目录）中的配置项可展开，显示该配置**最近打开的远程目录
+  历史**（最多 10 条，最新在前）：每条历史有“打开历史目录 / 从历史打开终端 /
+  删除历史记录”三个按钮；再次打开或切换目录会把该记录移到最前。
 
 ### 快捷键
 
@@ -88,15 +97,16 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 操作系统平台：MCP 地址是仅回环可访问的 `127.0.0.1`，跨机器或跨系统无法
 连接。
 
-1. 先在 SAFS 视图的远程目录连接项上点击“启用 Agent 转发”按钮（或右键菜单
-   中选择同一命令）。扩展会为检测到的 Agent CLI（默认 `codex`、`claude`、
+1. 先在 SAFS 视图的远程目录连接项上点击“启用 Agent 转发”按钮（配置行内
+   第一个按钮）。扩展会为检测到的 Agent CLI（默认 `codex`、`claude`、
    `pi` 和 `dsh`，可用 `safs.agentForwardingAgents` 扩展）安装或更新名为
    `safs` 的固定 HTTP MCP。
 2. 验证注册：打开 Agent 并输入 `/mcp`（或打开其 MCP 管理界面），看到
    `safs` 条目即表示 MCP 注册成功。Agent 若是 VS Code 扩展，直接在新窗口的
    Agent 会话中确认即可。
 3. 再运行 `SAFS: 打开远程目录` 进入远程目录（或点击连接项上的“打开远程
-   文件夹”按钮）。打开前扩展会先启动固定 HTTP 路由并注册 Agent；新窗口会
+   文件夹”按钮，即配置行内第二个按钮）。打开前扩展会先启动固定 HTTP 路由
+   并注册 Agent；新窗口会
    启动该窗口的动态端口服务，Agent 会话通过 `resolve_workspace_execution`
    自动绑定当前远程窗口，之后工具调用无需指定 `mountName`。
 4. 重启 Agent 并新建对话（首次安装、更新或移除 MCP 后都需要）。
@@ -137,7 +147,9 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 
 ## 配置
 
-所有平台统一使用 `~/.safs/config.json`。
+所有平台统一使用 `~/.safs/config.json`。`mounts` 数组可以省略：省略时由
+`hosts` 自动派生（每个 host 生成一个同名 mount，`remote_path` 为 `.`，
+`remote_terminal` 为 `open`），也可保留显式 `mounts` 覆盖派生结果。
 
 ```json
 {
@@ -163,6 +175,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 ```
 
 顶层 `mounts` 数组定义 SFTP 远程目录；远程目录不会挂载到本地文件系统。
+删除配置时，若该挂载的 SFTP 连接仍处于连接状态，会先弹窗确认“断开并删除”，
+确认后自动断开连接再删除配置。
 
 ## Agent 工具
 
@@ -246,6 +260,11 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - SFTP 没有原生文件变更通知，扩展使用定时轮询检测外部修改。
 - 目标服务器只提供旧式主机密钥（`ssh-rsa`/`ssh-dss`，OpenSSH 8.8+ 默认禁用）时，
   扩展会在所有连接路径（系统 `ssh`、WSL bridge、内置 SFTP/终端）自动重新启用这些算法。
+- 主机密钥校验：扩展维护独立的 `~/.safs/known_hosts`（TOFU），首次连接或密钥
+  变化按 `safs.hostKeyChangedAction` 处理（见「设置」）。系统 ssh 路径连接前会
+  先探测主机密钥并把新密钥写入该文件；极端情况下（VPN 中继探测超时等）探测
+  失败会临时降级为不校验主机密钥（`StrictHostKeyChecking=no`）以保证终端可用，
+  内置 ssh2 通道仍保留完整校验。
 - 服务器只接受 `keyboard-interactive` 认证（如 NSG/公司网关）时，SFTP 与终端路径
   都会用配置的密码自动应答交互式提示。
 - 内置终端被服务器拒绝 pty/shell（如 NSG 网关设备）时，会自动改用系统 `ssh` 重连。
@@ -265,10 +284,20 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - `safs.terminalFollowsActiveFile`：切换/打开远程文件时实时把终端 `cd` 到文件所在目录（默认 `false`）；打开远程终端和重开远程窗口始终跟随活动文件目录，与此设置无关）
 - `safs.configPath`
 - `safs.reuseSshConnection`
+- `safs.sshClientIdent`：SSH 客户端标识字符串，默认伪装为 `OpenSSH_9.6`；
+  被 NSG/网关白名单拒绝时可改为 `PuTTY_Release_0.78` 等。
+- `safs.hostKeyChangedAction`：主机密钥处理方式（`prompt` 默认 / `reject` /
+  `accept`）。默认 `prompt`：首次连接与每次遇到新密钥（负载均衡 VIP 轮换后端、
+  服务器重装）都弹窗确认目标 IP:端口与新密钥指纹，接受后记录到扩展独立的
+  `~/.safs/known_hosts`，已确认密钥不再询问；`accept` 静默接受并记录；`reject`
+  直接拒绝密钥变化的连接。作用于所有路径：内置 ssh2（Windows 终端、SFTP、
+  命令执行）与系统 ssh（WSL/Linux/macOS 终端与命令执行）。
 - `safs.sftp.cacheTtl`
 - `safs.sftp.watchInterval`
 - `safs.agentMcpPort`
 - `safs.agentHttpRouterPort`
+- `safs.agentMcpMaxOutputBytes`：`run_remote_command` 的 stdout+stderr 上限
+  （默认 65536，超限返回 `truncated: true`）。
 - `safs.agentForwardingAgents`：选择启用 MCP 转发的 Agent，默认
   `codex`、`claude`、`pi` 和 `dsh`。配置值直接使用 Agent 的 CLI 命令名（如 `codex`、
   `claude`、`pi`、`dsh`），支持任意 CLI。扩展优先从 `PATH` 查找支持 `mcp` 指令的 CLI，
