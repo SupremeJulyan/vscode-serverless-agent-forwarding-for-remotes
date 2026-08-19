@@ -17,7 +17,7 @@
 - SFTP 连接池、断线重试、元数据缓存和远程文件轮询。
 - 从当前远程文件或工作区打开相同目录下的 SSH 终端。
 - 每个远程配置记住最后切换的目录，重新打开时恢复工作区和终端目录。
-- 远程文件夹侧栏显示连接状态，可打开、断开或删除配置。
+- 远程目录侧栏显示连接状态，可打开、断开或删除配置。
 - GitHub Copilot Language Model Tools 和本机 MCP 服务可直接列出、读取、写入、
   搜索远程文件，并通过 SSH 执行远程命令。
 - 右键远程文件/目录 **SAFS：可视化下载**：大文件**流式下载**（进度条、可取消），
@@ -35,12 +35,12 @@
 code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
 ```
 
-### 添加 SSH 配置并打开远程文件夹
+### 添加 SSH 配置并打开远程目录
 
 1. 运行 `SAFS: 添加 SSH 配置`。
 2. 输入配置名称、`user@host`，并选择密码或私钥认证。
-3. 运行 `SAFS: 打开远程文件夹`，选择刚添加的配置；也可以在左侧活动栏的
-   SAFS 视图（远程文件夹）中点击连接项上的“打开远程文件夹”按钮。
+3. 运行 `SAFS: 打开远程目录`，选择刚添加的配置；也可以在左侧活动栏的
+   SAFS 视图（远程目录）中点击连接项上的“打开远程目录”按钮。
 4. 远程目录以 `safs://` 虚拟工作区打开，直接在资源管理器中编辑远程文件。
 5. 使用 `SAFS: 断开 SFTP 连接` 关闭连接（或点击连接项上的“断开连接”按钮）。
 
@@ -49,10 +49,10 @@ code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
 远程终端通过 SSH 建立，不需要在服务器安装 VS Code Server。
 
 - 在命令面板运行 `SAFS: 打开远程终端`。
-- 或在 SAFS 视图的远程文件夹连接项上点击“打开远程终端”按钮。
+- 或在 SAFS 视图的远程目录连接项上点击“打开远程终端”按钮。
 - 终端会在当前远程目录打开：有打开的远程文件时使用其所在目录，否则使用
   挂载根目录（或上次记住的目录）。终端名称形如 `SSH: <配置名> — <相对路径>`。
-- 配置 `remote_terminal: "open"` 时，打开远程文件夹后会自动连接终端。
+- 配置 `remote_terminal: "open"` 时，打开远程目录后会自动连接终端。
 
 ### 打开远程目录
 
@@ -60,8 +60,15 @@ code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
 - 输入挂载根目录内的路径，或从补全列表选择候选目录后回车，会在**新窗口**中打开
   该目录（只能打开挂载根目录内真实存在的目录）；**当前窗口保持不变**，两个窗口
   各自的 Agent 转发/MCP 独立绑定各自目录。
-- 每个远程配置会记住最后切换的目录；重新打开远程文件夹时，工作区和终端
+- 每个远程配置会记住最后切换的目录；重新打开远程目录时，工作区和终端
   都会恢复到该目录。
+
+### 快捷键
+
+| 快捷键 | 功能 |
+|---|---|
+| `Ctrl+Alt+R` | 打开远程目录 |
+| `Ctrl+Alt+T` | 打开远程终端 |
 
 ### 可视化下载 / 上传 / 同步
 
@@ -81,14 +88,14 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 操作系统平台：MCP 地址是仅回环可访问的 `127.0.0.1`，跨机器或跨系统无法
 连接。
 
-1. 先在 SAFS 视图的远程文件夹连接项上点击“启用 Agent 转发”按钮（或右键菜单
+1. 先在 SAFS 视图的远程目录连接项上点击“启用 Agent 转发”按钮（或右键菜单
    中选择同一命令）。扩展会为检测到的 Agent CLI（默认 `codex`、`claude`、
    `pi` 和 `dsh`，可用 `safs.agentForwardingAgents` 扩展）安装或更新名为
    `safs` 的固定 HTTP MCP。
 2. 验证注册：打开 Agent 并输入 `/mcp`（或打开其 MCP 管理界面），看到
    `safs` 条目即表示 MCP 注册成功。Agent 若是 VS Code 扩展，直接在新窗口的
    Agent 会话中确认即可。
-3. 再运行 `SAFS: 打开远程文件夹` 进入远程目录（或点击连接项上的“打开远程
+3. 再运行 `SAFS: 打开远程目录` 进入远程目录（或点击连接项上的“打开远程
    文件夹”按钮）。打开前扩展会先启动固定 HTTP 路由并注册 Agent；新窗口会
    启动该窗口的动态端口服务，Agent 会话通过 `resolve_workspace_execution`
    自动绑定当前远程窗口，之后工具调用无需指定 `mountName`。
@@ -155,7 +162,7 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 }
 ```
 
-顶层 `mounts` 数组定义 SFTP 远程文件夹；远程目录不会挂载到本地文件系统。
+顶层 `mounts` 数组定义 SFTP 远程目录；远程目录不会挂载到本地文件系统。
 
 ## Agent 工具
 
@@ -220,7 +227,7 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 ```
 
 如果未安装 Agent CLI，可在 VS Code 命令面板执行
-**SAFS: 复制桌面版 Agent MCP 地址**，然后在桌面版
+**SAFS: 复制 Streamable HTTP URL**，然后在桌面版
 **Settings > MCP servers** 中添加名为 `safs` 的
 **Streamable HTTP** 服务器并粘贴该地址。地址包含鉴权令牌，不要共享或
 提交到仓库。
@@ -246,7 +253,7 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   插件默认把 SFTP/内置终端的客户端标识伪装为 `OpenSSH_9.6`，可用设置
   `safs.sshClientIdent` 改为 `PuTTY_Release_0.78` 等。
 - 服务器没有 SFTP 子系统（如老版本 OpenSSH 未装 sftp-server 的 NSG 网关）时，
-  远程文件夹会自动降级到 SCP/exec 传输，
+  远程目录会自动降级到 SCP/exec 传输，
   文件树、读写、搜索与 Agent MCP 工具均可继续使用。列目录/路径解析优先使用
   GNU 命令（`find -printf`/`readlink -f`），BSD/macOS/Solaris 等非 GNU 服务器
   会自动回退到 `ls`/`pwd` 解析。

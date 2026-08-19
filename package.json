@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -47,18 +47,18 @@
     "onCommand:safs.status",
     "onCommand:safs.openConfig",
     "onCommand:safs.addSshConfig",
-    "onCommand:safs.copyDesktopAgentMcpUrl"
+    "onCommand:safs.copyStreamableHttpUrl"
   ],
   "contributes": {
     "commands": [
       {
         "command": "safs.openFolder",
-        "title": "SAFS: 打开远程文件夹",
+        "title": "SAFS: 打开远程目录",
         "icon": "$(remote-explorer)"
       },
       {
         "command": "safs.switchRemoteDirectory",
-        "title": "SAFS: 打开远程目录",
+        "title": "SAFS: 切换远程目录",
         "icon": "$(folder-opened)"
       },
       {
@@ -84,17 +84,17 @@
         "icon": "$(add)"
       },
       {
-        "command": "safs.copyDesktopAgentMcpUrl",
-        "title": "SAFS: 复制桌面版 Agent MCP 地址"
+        "command": "safs.copyStreamableHttpUrl",
+        "title": "SAFS: 复制 Streamable HTTP URL"
       },
       {
         "command": "safs.refreshExplorer",
-        "title": "刷新远程文件夹",
+        "title": "刷新远程目录",
         "icon": "$(refresh)"
       },
       {
         "command": "safs.openFolderItem",
-        "title": "打开远程文件夹",
+        "title": "打开远程目录",
         "icon": "$(folder-opened)"
       },
       {
@@ -151,14 +151,14 @@
       "safs": [
         {
           "id": "safs.mounts",
-          "name": "远程文件夹"
+          "name": "远程目录"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "safs.mounts",
-        "contents": "尚未配置远程文件夹。\n[添加 SSH 配置](command:safs.addSshConfig)\n[打开配置](command:safs.openConfig)",
+        "contents": "尚未配置远程目录。\n[添加 SSH 配置](command:safs.addSshConfig)\n[打开配置](command:safs.openConfig)",
         "when": "safs.hasNoMounts"
       }
     ],
@@ -195,6 +195,10 @@
         },
         {
           "command": "safs.visualUpload"
+        },
+        {
+          "command": "safs.mounts.focus",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -554,6 +558,14 @@
         "key": "tab",
         "command": "safs.completeRemoteDirectory",
         "when": "safs.directoryPickerVisible"
+      },
+      {
+        "key": "ctrl+alt+r",
+        "command": "safs.openFolder"
+      },
+      {
+        "key": "ctrl+alt+t",
+        "command": "safs.openTerminal"
       }
     ]
   },

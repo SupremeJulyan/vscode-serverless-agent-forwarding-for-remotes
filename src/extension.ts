@@ -414,7 +414,7 @@ async function cachedRemoteDirectory(folder: RemoteFolder): Promise<string> {
 }
 
 async function openRemoteFolder(requested?: MountConfig): Promise<void> {
-  const mount = requested ?? await selectMount('选择要打开的 SFTP 远程文件夹');
+  const mount = requested ?? await selectMount('选择要切换的远程目录');
   if (!mount) return;
   const forwarding = vscodeContext.globalState
     .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
@@ -451,7 +451,7 @@ async function switchRemoteDirectory(): Promise<void> {
   }
   const config = await readConfig();
   const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
-  if (!mount) throw new Error(`远程文件夹配置不存在：${location.mountName}`);
+    if (!mount) throw new Error(`远程目录配置不存在：${location.mountName}`);
   const folder = await ensureFolder(mount);
   const session = await pool.get(folder.hostName);
   const requested = await promptRemoteDirectory(
@@ -474,11 +474,9 @@ async function switchRemoteDirectory(): Promise<void> {
   const localRoot = localRootForFolder(folder);
   await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
   await writeLastRemoteDirectory(localRoot, folder.remoteRoot, resolved);
-  agentTrace('Open', `打开新窗口远程目录：${location.remotePath} -> ${resolved}`);
-  // Open the chosen directory in a NEW window and keep the current one open
-  // (the current window keeps its own directory and MCP binding).
+  agentTrace('Open', `切换远程目录：${location.remotePath} -> ${resolved}`);
   await vscode.commands.executeCommand(
-    'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), true
+    'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved))
   );
 }
 
@@ -1412,7 +1410,7 @@ async function mountAndFolder(mountName: string): Promise<{
 }> {
   const config = await readConfig();
   const mount = config.mounts.find((candidate) => candidate.name === mountName);
-  if (!mount) throw new Error(`远程文件夹不存在：${mountName}`);
+      if (!mount) throw new Error(`远程目录不存在：${mountName}`);
   return { mount, folder: await ensureFolder(mount) };
 }
 
@@ -1731,7 +1729,7 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
       `SFTP：${connectionLabel}`,
       aiForwarded ? 'Agent 转发：已开启' : 'Agent 转发：已关闭',
       '',
-      '右键可打开远程文件夹 / 终端 / 断开。'
+      '右键可打开远程目录 / 终端 / 断开。'
     ].join('\n'));
     return item;
   }
@@ -2678,12 +2676,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await addSshConfig(context);
     tree.refresh();
   });
-  command('copyDesktopAgentMcpUrl', async () => {
+  command('copyStreamableHttpUrl', async () => {
     startAgentHttpRouterLeadership(context);
     const router = await ensureAgentHttpRouter(context);
     await vscode.env.clipboard.writeText(router.url);
     void vscode.window.showInformationMessage(
-      '已复制桌面版 Agent MCP 地址。在桌面版的 Settings > MCP servers 中添加 Streamable HTTP 服务器“safs”，粘贴该地址后重启 Agent。'
+      '已复制 Streamable HTTP URL。在桌面版的 Settings > MCP servers 中添加 Streamable HTTP 服务器“safs”，粘贴该地址后重启 Agent。'
     );
   });
   command('refreshExplorer', async () => tree.refresh());
@@ -2797,7 +2795,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.name = 'SAFS';
   statusBar.text = '$(remote) SAFS SFTP';
-  statusBar.tooltip = '打开 SFTP 远程文件夹';
+  statusBar.tooltip = '打开 SFTP 远程目录';
   statusBar.command = `${commandPrefix}.openFolder`;
   statusBar.show();
   context.subscriptions.push(statusBar);

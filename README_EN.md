@@ -73,6 +73,13 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
 - Each remote config remembers the last opened directory; reopening the
   remote folder restores both the workspace and the terminal there.
 
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Alt+R` | Open Remote Directory |
+| `Ctrl+Alt+T` | Open Remote Terminal |
+
 ### Visual download / upload / sync
 
 - **SAFS: Visual Download**: right-click a remote file/folder — **streaming
@@ -247,7 +254,7 @@ codex mcp add safs --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?token=<generated-token>'
 ```
 
-If no Agent CLI is installed, run **SAFS: Copy Desktop Agent MCP
+If no Agent CLI is installed, run **SAFS: Copy Streamable HTTP
 URL** from the VS Code Command Palette. In the desktop app, open **Settings > MCP
 servers**, add a **Streamable HTTP** server named `safs`, and paste the
 copied URL. The URL contains an authentication token; do not share it or commit it

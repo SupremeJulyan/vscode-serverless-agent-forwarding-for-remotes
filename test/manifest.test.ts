@@ -22,7 +22,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.5.1');
+  assert.equal(manifest.version, '1.5.2');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -45,7 +45,7 @@ test('shows separate Agent forwarding actions for enabled and disabled mounts', 
   assert.ok(commands.some((item) => item.command === 'safs.enableAiForwardItem'));
   assert.ok(commands.some((item) => item.command === 'safs.disableAiForwardItem'));
   assert.ok(commands.some(
-    (item) => item.command === 'safs.copyDesktopAgentMcpUrl'
+    (item) => item.command === 'safs.copyStreamableHttpUrl'
   ));
   assert.equal(commands.some((item) => item.command === 'safs.toggleAiForwardItem'), false);
   const menu = manifest.contributes?.menus?.['view/item/context'] ?? [];
