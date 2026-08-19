@@ -24,9 +24,11 @@ intranet hosts and remote servers that forbid port forwarding.
   config expands to show **recently opened remote directories** (up to 10 per
   config); each history entry can be reopened, opened in a terminal, or removed.
 - In the SAFS view, `👁` marks the config bound to the **currently focused
-  window** (the default MCP routing target). The complete Agent-forwarding and
-  MCP-binding state (off / enabled-not-forwarding / forwarding) is shown in the
-  **hover tooltip**.
+  window** (the default MCP routing target). A `Agent State: ` prefix shows one
+  symbol next to the config name, in priority order: `👁` (focused window) >
+  `⚡` (forwarding) > `○` (enabled-not-forwarding). The complete Agent-forwarding
+  and MCP-binding state (off / enabled-not-forwarding / forwarding) is shown in
+  the **hover tooltip**.
 - Direct remote list/read/write/search tools for VS Code agents and MCP clients.
 - Runs builds, tests, Git, and system commands remotely over SSH.
 - **SAFS: Visual Download** on remote files/folders: streaming download with

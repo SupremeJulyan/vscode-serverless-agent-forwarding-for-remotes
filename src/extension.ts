@@ -1820,7 +1820,8 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<TreeElement> {
       : connectionState === 'connecting' || connectionState === 'reconnecting'
         ? '连接中'
         : connectionState === 'error' ? '连接错误' : '未连接';
-    item.description = focused ? '👁' : undefined;
+    const symbol = focused ? '👁' : forwarding ? '⚡' : aiForwarded ? '○' : undefined;
+    item.description = symbol ? `Agent State: ${symbol}` : undefined;
     item.contextValue = [
       'safs.connection',
       connected ? 'connected' : 'disconnected',
