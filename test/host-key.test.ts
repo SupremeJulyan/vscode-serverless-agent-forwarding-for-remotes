@@ -238,7 +238,7 @@ test('verifySystemSshHostKey falls back to proceed when probing fails', async ()
     probed: false, fingerprints: [], error: 'ENOENT'
   });
   const result = await verifySystemSshHostKey('prompt', hostAt(3006), 'linux', undefined, probe);
-  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(result, { ok: true, degraded: true });
 });
 
 test('verifySystemSshHostKey passes when a probed fingerprint is already in the file', async () => {

@@ -1206,7 +1206,7 @@ async function openTerminal(
     // 主机密钥校验：系统 ssh 路径无法弹 VS Code 对话框，由扩展在
     // 连接前 ssh-keyscan 探测当前后端密钥并与扩展 known_hosts 文件比对（仅 prompt 模式；
     // accept 走 known_hosts 空设备静默接受，reject 走系统 ssh 严格校验）。
-    const hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
+    let hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
       'hostKeyChangedAction', 'prompt'
     );
     if (!useBuiltinSsh && hostKeyPolicy === 'prompt') {
@@ -1220,6 +1220,9 @@ async function openTerminal(
         void vscode.window.showErrorMessage(verification.reason!);
         return undefined;
       }
+      // 探测失败时降级为 accept：系统 ssh 用 StrictHostKeyChecking=yes 会对
+      // 已换密钥的已知主机直接拒绝（"主机密钥已变更"），导致终端无法打开。
+      if (verification.degraded) hostKeyPolicy = 'accept';
     }
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
@@ -1653,7 +1656,7 @@ async function executeRemoteCommand(
         }
       } else {
         await warmSshCliCapabilities();
-        const hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
+        let hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
           'hostKeyChangedAction', 'prompt'
         );
         if (hostKeyPolicy === 'prompt') {
@@ -1666,6 +1669,8 @@ async function executeRemoteCommand(
           if (!verification.ok) {
             throw new Error(verification.reason);
           }
+          // 探测失败时降级为 accept，避免系统 ssh 对密钥变化的已知主机硬失败。
+          if (verification.degraded) hostKeyPolicy = 'accept';
         }
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
@@ -1962,10 +1967,15 @@ async function showStatus(): Promise<void> {
 // ---- Delete Config ----
 
 async function deleteConfig(mount: MountConfig): Promise<void> {
-  if (registry.get(mount.name)) throw new Error('请先断开该 SFTP 连接');
+  const connected = registry.get(mount.name) !== undefined;
+  const confirmMessage = connected
+    ? `"${mount.name}" 的 SFTP 连接已连接，删除配置需先断开连接。是否断开并删除该配置？`
+    : `确定删除"${mount.name}"配置吗？`;
+  const confirmButton = connected ? '断开并删除' : '删除';
   if (await vscode.window.showWarningMessage(
-    `确定删除"${mount.name}"配置吗？`, { modal: true }, '删除'
-  ) !== '删除') return;
+    confirmMessage, { modal: true }, confirmButton
+  ) !== confirmButton) return;
+  if (connected) await disconnect(mount);
   const config = await readConfig();
   removeMountConfig(config, mount.name);
   await saveConfig(configPath(), config);

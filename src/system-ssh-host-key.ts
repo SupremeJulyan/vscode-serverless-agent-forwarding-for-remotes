@@ -92,9 +92,9 @@ async function probeNative(
   const caps = await ensureSshCapabilities(await resolveExecutable('ssh'));
   try {
     const { stdout } = await execFileAsync(keyscanPath, [
-      '-T', '6', '-p', String(host.port ?? 22),
+      '-T', '15', '-p', String(host.port ?? 22),
       '-t', keyscanKeyTypes(caps).join(','), host.ip
-    ], { timeout: 10_000, windowsHide: true });
+    ], { timeout: 25_000, windowsHide: true });
     const keys = parseKeyscanLines(stdout);
     if (keys.length === 0) {
       return { probed: false, fingerprints: [], error: 'ssh-keyscan 未返回任何主机密钥' };
@@ -119,7 +119,7 @@ async function probeViaBridge(
 ): Promise<HostKeyProbeResult> {
   try {
     const { stdout } = await execFileAsync(sshBridgePath(), ['probe', host.name], {
-      timeout: 20_000, windowsHide: true,
+      timeout: 30_000, windowsHide: true,
       env: { ...process.env, ...env }
     });
     // 行格式：PROBE_OK <host> <type> <blob>（host 与连接时 HostKeyAlias 一致）。
@@ -153,7 +153,9 @@ async function probeViaBridge(
 const probeCache = new Map<string, { at: number; result: HostKeyProbeResult }>();
 const probeCacheTtlMs = 30_000;
 
-/** 探测主机当前密钥（带 30s 内存缓存，避免终端+命令执行连续探测）。 */
+/** 探测主机当前密钥（带 30s 内存缓存，避免终端+命令执行连续探测）。
+ * 瞬时失败（VPN 中继首次启动、PowerShell 启动延迟、慢链路）自动重试一次，
+ * 尽量让新密钥写进扩展 known_hosts，避免系统 ssh 降级为不校验。 */
 export async function probeHostKey(
   host: HostConfig, platformKind: PlatformKind,
   log?: (message: string) => void, env?: NodeJS.ProcessEnv
@@ -164,14 +166,30 @@ export async function probeHostKey(
     return cached.result;
   }
   const probe = platformKind === 'wsl' ? probeViaBridge : probeNative;
-  const result = await probe(host, platformKind, log, env);
-  probeCache.set(cacheKey, { at: Date.now(), result });
+  let result = await probe(host, platformKind, log, env);
+  if (!result.probed) {
+    log?.(`主机密钥首次探测失败，将重试：${result.error ?? '未知错误'}`);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    result = await probe(host, platformKind, log, env);
+  }
+  // 失败结果不缓存：防止 30s 内后续探测直接命中失败缓存而一直降级。
+  if (result.probed) {
+    probeCache.set(cacheKey, { at: Date.now(), result });
+  }
   return result;
 }
 
 export interface HostKeyVerification {
   ok: boolean;
   reason?: string;
+  /**
+   * 探测失败时的降级标记：密钥探测（ssh-keyscan/中继）失败意味着新密钥无法
+   * 写入 known_hosts，若继续用 StrictHostKeyChecking=yes 会让 OpenSSH 对
+   * 密钥变化直接硬失败（"主机密钥已变更"）。调用方应据此改用 accept 策略
+   * （no + 空 known_hosts）保证终端/命令仍能连接，主机密钥校验由内置 ssh2
+   * 通道的 TOFU（hostVerifierFor）继续兜底。
+   */
+  degraded?: boolean;
 }
 
 /**
@@ -202,8 +220,11 @@ export async function verifySystemSshHostKey(
   if (!result.probed) {
     // 探测失败：跳过扩展校验继续连接，由系统 ssh 用扩展 known_hosts 文件
     // （StrictHostKeyChecking=yes）兜底——文件里没有的密钥会被 OpenSSH 拒绝。
-    log?.(`主机密钥探测失败（${host.name}）：${result.error ?? '未知错误'} — 跳过校验，由 OpenSSH 按已知记录兜底`);
-    return { ok: true };
+    // 同时标记 degraded：让调用方把连接降级为 accept（no + 空 known_hosts），
+    // 否则 OpenSSH 对已换密钥的已知主机会直接拒绝（"主机密钥已变更"），
+    // 终端/命令将完全无法连接（密钥校验由内置 ssh2 通道 TOFU 继续兜底）。
+    log?.(`主机密钥探测失败（${host.name}）：${result.error ?? '未知错误'} — 降级为静默接受，由内置 ssh2 通道 TOFU 校验兜底`);
+    return { ok: true, degraded: true };
   }
   const allowed = await verifyHostKeyWithPrompt(host, result.fingerprints, log, prompts);
   if (!allowed) {

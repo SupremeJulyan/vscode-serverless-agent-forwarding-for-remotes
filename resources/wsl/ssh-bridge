@@ -190,7 +190,7 @@ if [[ "$probe_mode" == true ]]; then
   if [[ "$target_port" != 22 ]]; then
     probe_key_alias="[$target_host]:$target_port"
   fi
-  keys="$(ssh-keyscan -T 6 -p "$probe_port" -t "$probe_types_joined" -- "$probe_host" 2>/dev/null || true)"
+  keys="$(ssh-keyscan -T 15 -p "$probe_port" -t "$probe_types_joined" -- "$probe_host" 2>/dev/null || true)"
   if [[ -z "$keys" ]]; then
     printf 'PROBE_FAIL ssh-keyscan 未返回任何主机密钥\n' >&2
     exit 1
