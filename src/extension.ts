@@ -75,6 +75,7 @@ const masterPasswordSecret = 'safs.masterPassword';
 const agentMcpTokenSecret = platformStateKey('agentMcpToken');
 const agentSetupCompletedKey = platformStateKey('agentSetupCompleted');
 const aiForwardMountsKey = platformStateKey('aiForwardMounts');
+const directoryHistoryKey = platformStateKey('directoryHistory');
 const defaultConfigPath = '~/.safs/config.json';
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
@@ -105,6 +106,7 @@ const agentWorkspacePublisher = new AgentWorkspacePublisher(randomBytes(12).toSt
 let agentWorkspaceHeartbeat: NodeJS.Timeout | undefined;
 let lastAgentDiscoveryState = '';
 const openingTerminalIds = new Set<string>();
+let lastReadConfig: BridgeConfig | undefined;
 const managedRemoteTerminals = new Map<vscode.Terminal, {
   mount: MountConfig;
   remoteCwd: string;
@@ -175,7 +177,9 @@ function knownHostsFilePath(): string {
 
 async function readConfig(): Promise<BridgeConfig> {
   try {
-    return await loadConfig(configPath());
+    const config = await loadConfig(configPath());
+    lastReadConfig = config;
+    return config;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new ConfigActionRequiredError(
@@ -430,6 +434,7 @@ async function openDirectoryItem(requested: MountConfig): Promise<void> {
     progress.report({ message: '正在验证远程目录…' });
     const folder = await ensureFolder(requested);
     const remoteDirectory = await cachedRemoteDirectory(folder);
+    await recordDirectoryHistory(vscodeContext, requested.name, remoteDirectory);
     agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
     progress.report({ message: '正在打开工作区…' });
     await vscode.commands.executeCommand(
@@ -478,6 +483,7 @@ async function openRemoteDirectory(): Promise<void> {
   const localRoot = localRootForFolder(folder);
   await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
   await writeLastRemoteDirectory(localRoot, folder.remoteRoot, resolved);
+  await recordDirectoryHistory(vscodeContext, mount.name, resolved);
   agentTrace('Open', `创建新窗口打开远程目录：${resolved}`);
   await vscode.commands.executeCommand(
     'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved)), true
@@ -514,6 +520,7 @@ async function switchRemoteDirectory(): Promise<void> {
   const localRoot = localRootForFolder(folder);
   await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
   await writeLastRemoteDirectory(localRoot, folder.remoteRoot, resolved);
+  await recordDirectoryHistory(vscodeContext, mount.name, resolved);
   agentTrace('Open', `切换远程目录：${location.remotePath} -> ${resolved}`);
   await vscode.commands.executeCommand(
     'vscode.openFolder', vscode.Uri.parse(folderUri(folder, resolved))
@@ -1721,7 +1728,59 @@ async function remoteSearch(input: {
 
 // ---- Tree View ----
 
-class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
+interface HistoryItem {
+  type: 'history';
+  mountName: string;
+  path: string;
+}
+
+type TreeElement = MountConfig | HistoryItem;
+
+const MAX_HISTORY_ENTRIES = 10;
+
+async function getDirectoryHistory(
+  context: vscode.ExtensionContext
+): Promise<Record<string, string[]>> {
+  return context.globalState.get<Record<string, string[]>>(
+    directoryHistoryKey, {}
+  );
+}
+
+async function recordDirectoryHistory(
+  context: vscode.ExtensionContext,
+  mountName: string,
+  remotePath: string
+): Promise<void> {
+  const history = await getDirectoryHistory(context);
+  const entries = history[mountName] ?? [];
+  const idx = entries.indexOf(remotePath);
+  if (idx >= 0) {
+    entries.splice(idx, 1);
+  }
+  entries.unshift(remotePath);
+  if (entries.length > MAX_HISTORY_ENTRIES) {
+    entries.length = MAX_HISTORY_ENTRIES;
+  }
+  history[mountName] = entries;
+  await context.globalState.update(directoryHistoryKey, history);
+}
+
+async function removeHistoryEntry(
+  context: vscode.ExtensionContext,
+  mountName: string,
+  remotePath: string
+): Promise<void> {
+  const history = await getDirectoryHistory(context);
+  const entries = history[mountName] ?? [];
+  const idx = entries.indexOf(remotePath);
+  if (idx >= 0) {
+    entries.splice(idx, 1);
+    history[mountName] = entries;
+    await context.globalState.update(directoryHistoryKey, history);
+  }
+}
+
+class RemoteFoldersProvider implements vscode.TreeDataProvider<TreeElement> {
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.emitter.event;
 
@@ -1731,7 +1790,14 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
     this.emitter.fire();
   }
 
-  getTreeItem(mount: MountConfig): vscode.TreeItem {
+  getTreeItem(element: TreeElement): vscode.TreeItem {
+    if ('type' in element && element.type === 'history') {
+      return this.getHistoryTreeItem(element);
+    }
+    return this.getMountTreeItem(element as MountConfig);
+  }
+
+  private getMountTreeItem(mount: MountConfig): vscode.TreeItem {
     const connectionState = pool.state(mount.host);
     const connected = registry.get(mount.name) !== undefined && connectionState === 'connected';
     const aiForwarded = this.context.globalState
@@ -1742,9 +1808,7 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
       : connectionState === 'connecting' || connectionState === 'reconnecting'
         ? '连接中'
         : connectionState === 'error' ? '连接错误' : '未连接';
-    // 状态统一用 ✓/✗ 简洁显示（详细信息在 tooltip 中）；
-    // 不设 command，防止点击条目误连远程目录（通过右键菜单/命令面板打开）。
-    item.description = `SFTP：${connected ? '✓' : '✗'} · Agent：${aiForwarded ? '✓' : '✗'}`;
+    item.description = aiForwarded ? '⚡ Agent' : undefined;
     item.contextValue = [
       'safs.connection',
       connected ? 'connected' : 'disconnected',
@@ -1760,12 +1824,38 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
       `SFTP：${connectionLabel}`,
       aiForwarded ? 'Agent 转发：已开启' : 'Agent 转发：已关闭',
       '',
-      '右键可打开远程目录 / 终端 / 断开。'
+      '展开可查看历史远程目录。'
     ].join('\n'));
+    item.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
     return item;
   }
 
-  async getChildren(): Promise<MountConfig[]> {
+  private getHistoryTreeItem(item: HistoryItem): vscode.TreeItem {
+    const treeItem = new vscode.TreeItem(item.path);
+    treeItem.contextValue = 'safs.history';
+    treeItem.iconPath = new vscode.ThemeIcon('folder');
+    treeItem.tooltip = `${item.path}`;
+    treeItem.command = {
+      command: 'safs.openHistoryItem',
+      title: '打开历史目录',
+      arguments: [item]
+    };
+    return treeItem;
+  }
+
+  async getChildren(element?: TreeElement): Promise<TreeElement[]> {
+    if (element && 'type' in element && element.type === 'history') {
+      return [];
+    }
+    if (element && !('type' in element)) {
+      const history = await getDirectoryHistory(this.context);
+      const entries = history[element.name] ?? [];
+      return entries.map((path) => ({
+        type: 'history' as const,
+        mountName: element.name,
+        path
+      }));
+    }
     try {
       const config = await readConfig();
       await vscode.commands.executeCommand(
@@ -1775,6 +1865,15 @@ class RemoteFoldersProvider implements vscode.TreeDataProvider<MountConfig> {
     } catch {
       return [];
     }
+  }
+
+  getParent(element: TreeElement): TreeElement | undefined {
+    if ('type' in element && element.type === 'history') {
+      if (!lastReadConfig) return undefined;
+      const mount = lastReadConfig.mounts.find((m) => m.name === element.mountName);
+      return mount ?? undefined;
+    }
+    return undefined;
   }
 }
 
@@ -2718,6 +2817,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   command('refreshExplorer', async () => tree.refresh());
   command('deleteConfigItem', async (mount) => {
     await deleteConfig(mount);
+    tree.refresh();
+  });
+  command('openHistoryItem', async (item: HistoryItem) => {
+    const config = await readConfig();
+    const mount = config.mounts.find((m) => m.name === item.mountName);
+    if (!mount) throw new Error(`远程目录配置不存在：${item.mountName}`);
+    const folder = await ensureFolder(mount);
+    const remoteRoot = folder.remoteRoot;
+    if (!isRemotePathInsideRoot(remoteRoot, item.path)) {
+      throw new Error(`远程目录路径无效：${item.path}`);
+    }
+    const forwarding = vscodeContext.globalState
+      .get<string[]>(aiForwardMountsKey, []).includes(mount.name);
+    if (forwarding) {
+      startAgentHttpRouterLeadership(vscodeContext);
+      await ensureAgentHttpRouter(vscodeContext);
+      await configureDetectedAgents(vscodeContext, true);
+    }
+    const localRoot = localRootForFolder(folder);
+    await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, item.path);
+    await writeLastRemoteDirectory(localRoot, folder.remoteRoot, item.path);
+    await recordDirectoryHistory(vscodeContext, item.mountName, item.path);
+    await vscode.commands.executeCommand(
+      'vscode.openFolder',
+      vscode.Uri.parse(folderUri(folder, item.path)),
+      true
+    );
+  });
+  command('openTerminalFromHistory', async (item: HistoryItem) => {
+    const config = await readConfig();
+    const mount = config.mounts.find((m) => m.name === item.mountName);
+    if (!mount) throw new Error(`远程目录配置不存在：${item.mountName}`);
+    await recordDirectoryHistory(vscodeContext, item.mountName, item.path);
+    await openTerminal(vscodeContext, mount, item.path, undefined, true);
+  });
+  command('deleteHistoryItem', async (item: HistoryItem) => {
+    await removeHistoryEntry(vscodeContext, item.mountName, item.path);
     tree.refresh();
   });
   command('enableAiForwardItem', async (mount) => {

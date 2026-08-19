@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -47,7 +47,10 @@
     "onCommand:safs.status",
     "onCommand:safs.openConfig",
     "onCommand:safs.addSshConfig",
-    "onCommand:safs.copyStreamableHttpUrl"
+    "onCommand:safs.copyStreamableHttpUrl",
+    "onCommand:safs.openHistoryItem",
+    "onCommand:safs.openTerminalFromHistory",
+    "onCommand:safs.deleteHistoryItem"
   ],
   "contributes": {
     "commands": [
@@ -136,6 +139,21 @@
         "command": "safs.visualUpload",
         "title": "SAFS：可视化上传",
         "icon": "$(arrow-up)"
+      },
+      {
+        "command": "safs.openHistoryItem",
+        "title": "打开历史目录",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "safs.openTerminalFromHistory",
+        "title": "从历史打开终端",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "safs.deleteHistoryItem",
+        "title": "删除历史记录",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -245,39 +263,24 @@
           "group": "inline@3"
         },
         {
-          "command": "safs.closeItem",
-          "when": "view == safs.mounts && viewItem =~ /safs\\.connection\\.connected/",
+          "command": "safs.deleteConfigItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
           "group": "inline@4"
         },
         {
-          "command": "safs.enableAiForwardItem",
-          "when": "view == safs.mounts && viewItem =~ /safs\\.connection.*aiDisabled/",
-          "group": "safs@1"
+          "command": "safs.openHistoryItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.history/",
+          "group": "inline@1"
         },
         {
-          "command": "safs.disableAiForwardItem",
-          "when": "view == safs.mounts && viewItem =~ /safs\\.connection.*aiEnabled/",
-          "group": "safs@1"
+          "command": "safs.openTerminalFromHistory",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.history/",
+          "group": "inline@2"
         },
         {
-          "command": "safs.openFolderItem",
-          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
-          "group": "safs@2"
-        },
-        {
-          "command": "safs.openTerminalItem",
-          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
-          "group": "safs@3"
-        },
-        {
-          "command": "safs.closeItem",
-          "when": "view == safs.mounts && viewItem =~ /safs\\.connection\\.connected/",
-          "group": "safs@4"
-        },
-        {
-          "command": "safs.deleteConfigItem",
-          "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
-          "group": "safs@5"
+          "command": "safs.deleteHistoryItem",
+          "when": "view == safs.mounts && viewItem =~ /safs\\.history/",
+          "group": "inline@3"
         }
       ],
       "explorer/context": [
