@@ -14,7 +14,10 @@ function callbacks(label: string) {
       name: 'A', workspaceUri: 'safs://a/srv/a', remoteRoot: '/srv/a', host: 'dev'
     }),
     currentFile: async (input: unknown) => ({ label, input }),
-    list: async (input: unknown) => ({ label, input }),
+    list: async (input: unknown) => {
+      if ((input as { path?: string }).path === 'forbidden') throw new Error('路径越界');
+      return { label, input };
+    },
     write: async (input: unknown) => ({ label, input }),
     search: async (input: unknown) => ({ label, input }),
     run: async (input: unknown) => ({ label, input })
@@ -79,6 +82,14 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
       name: 'remote_list', arguments: { path: 'README.md' }
     });
     assert.equal(JSON.parse((connected.content as any[])[0].text).label, 'first');
+
+    const rejected = await client.callTool({
+      name: 'remote_list', arguments: { path: 'forbidden' }
+    });
+    assert.equal(rejected.isError, true);
+    assert.deepEqual(JSON.parse((rejected.content as any[])[0].text), {
+      code: 'REMOTE_TOOL_ERROR', message: '路径越界'
+    });
 
     // current_remote_file is window-specific: the router forwards it to the
     // focused window's MCP server.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.5
+
+- MCP 工作区路由修正：`resolve_workspace_execution` 和
+  `list_remote_folders` 现在返回 VS Code 当前实际打开的远程子目录，
+  `remote_list`、`remote_search` 和 `run_remote_command` 的默认相对路径/
+  工作目录也与之一致；配置的挂载根仅保留为写入和命令的
+  安全边界，避免 Agent 从大型挂载根开始扫描。
+- 窗口 MCP 将路径越界、高危命令拦截等业务错误作为结构化
+  `REMOTE_TOOL_ERROR` 透传，不再被固定路由器误报为远程不可用。
+- `remote_search` 新增 `matchCount`，无匹配时明确返回 `0`。
+
 ## 1.5.1
 
 - **主机密钥校验对齐（默认 `safs.hostKeyChangedAction` 为 `prompt`）**：

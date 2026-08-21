@@ -162,6 +162,9 @@ platforms.
   `mountName` in the returned JSON (with `remoteRoot`, `host`, and `focused`)
   is the current binding. The MCP instructions require calling it
   first and reusing the returned `mountName` to keep the binding stable.
+- `remoteRoot` is the remote directory actually open in that VS Code window,
+  not the configured SFTP mount root. Relative `remote_list`/`remote_search`
+  paths and the default `run_remote_command` working directory start there.
 - `list_remote_folders` lists all active Agent-forwarded mounts (remote root,
   `mountName`, and other metadata come from `resolve_workspace_execution`).
 - **Currently open remote file**: call `current_remote_file` to get the remote
@@ -393,4 +396,3 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
 - `safs.highRiskCommandAction`: `deny` (default) rejects the risky command
   outright and logs it; `confirm` prompts the user for confirmation before
   every such execution.
-

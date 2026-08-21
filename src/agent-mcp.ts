@@ -73,6 +73,22 @@ export class AgentMcpServer {
     const result = (value: unknown) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(value) }]
     });
+    // 业务错误作为 MCP tool result 返回，使固定路由器能原样透传；
+    // 只有 HTTP/转发层故障才应被标记为 REMOTE_UNAVAILABLE。
+    const toolError = (error: unknown) => ({
+      isError: true,
+      content: [{ type: 'text' as const, text: JSON.stringify({
+        code: 'REMOTE_TOOL_ERROR',
+        message: error instanceof Error ? error.message : String(error)
+      }) }]
+    });
+    const invoke = async (callback: () => Promise<unknown>) => {
+      try {
+        return result(await callback());
+      } catch (error) {
+        return toolError(error);
+      }
+    };
     // 对外只暴露 Agent 需要的字段；name/workspaceUri 与 mountName/path 重复。
     const publicFolder = (info: RemoteFolderInfo) => ({
       mountName: info.name,
@@ -84,14 +100,14 @@ export class AgentMcpServer {
       {
         title: 'Resolve workspace execution route',
         description:
-          'MANDATORY first step. Detects the active SFTP workspace and returns its remote root, mountName, and tool routing.',
+          'MANDATORY first step. Detects the active SFTP workspace and returns its current workspace root, mountName, and tool routing.',
         _meta: { 'anthropic/alwaysLoad': true },
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },
-      async () => {
+      async () => invoke(async () => {
         const workspace = await this.callbacks.currentWorkspace();
-        return result(workspace ? {
+        return workspace ? {
           execution: 'remote',
           workspace: publicFolder(workspace),
           fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
@@ -101,8 +117,8 @@ export class AgentMcpServer {
         } : {
           execution: 'local',
           workspace: null
-        });
-      }
+        };
+      })
     );
     server.registerTool(
       'list_remote_folders',
@@ -112,7 +128,7 @@ export class AgentMcpServer {
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },
-      async () => result((await this.callbacks.listFolders()).map(publicFolder))
+      async () => invoke(async () => (await this.callbacks.listFolders()).map(publicFolder))
     );
     server.registerTool(
       'current_remote_file',
@@ -125,55 +141,57 @@ export class AgentMcpServer {
           mountName: z.string().min(1).optional()
         }
       },
-      async (input) => result(await this.callbacks.currentFile(input))
+      async (input) => invoke(() => this.callbacks.currentFile(input))
     );
     server.registerTool(
       'remote_list',
       {
         title: 'List a remote directory',
         description:
-          'Lists files directly over SFTP. Paths are relative to the remote root. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
+          'Lists files directly over SFTP. Relative paths start at the current VS Code workspace root. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {
           mountName: z.string().min(1).optional(),
           path: z.string().optional(),
           limit: z.number().int().min(1).max(10000).optional()
         }
       },
-      async (input) => result(await this.callbacks.list(input))
+      async (input) => invoke(() => this.callbacks.list(input))
     );
     server.registerTool(
       'remote_write',
       {
         title: 'Write a remote file',
         description: 'Creates or replaces a UTF-8 file directly over SFTP.',
-        annotations: { destructiveHint: true },
+        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         inputSchema: {
           mountName: z.string().min(1).optional(),
-          path: z.string(),
+          path: z.string().min(1),
           content: z.string()
         }
       },
-      async (input) => result(await this.callbacks.write(input))
+      async (input) => invoke(() => this.callbacks.write(input))
     );
     server.registerTool(
       'remote_search',
       {
         title: 'Search remote files',
         description:
-          'Searches file contents on the remote SSH host. Results are capped (200 matches, lines trimmed to 300 chars).',
+          'Searches file contents on the remote SSH host. Relative paths start at the current VS Code workspace root. Results are capped (200 matches, lines trimmed to 300 chars).',
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {
           mountName: z.string().min(1).optional(),
           query: z.string().min(1),
           path: z.string().optional()
         }
       },
-      async (input) => result(await this.callbacks.search(input))
+      async (input) => invoke(() => this.callbacks.search(input))
     );
     server.registerTool(
       'run_remote_command',
       {
         title: 'Run a remote SSH command',
-        description: 'Runs a shell command on the selected SSH host.',
+        description: 'Runs a shell command on the selected SSH host. The default working directory is the current VS Code workspace root.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           mountName: z.string().min(1).optional(),
@@ -181,7 +199,7 @@ export class AgentMcpServer {
           remoteCwd: z.string().optional()
         }
       },
-      async (input) => result(await this.callbacks.run(input))
+      async (input) => invoke(() => this.callbacks.run(input))
     );
     return server;
   }

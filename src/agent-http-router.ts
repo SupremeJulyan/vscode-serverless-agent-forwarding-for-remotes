@@ -237,7 +237,7 @@ export class AgentHttpRouter {
     );
     register(
       'remote_list', 'List a remote directory',
-      'Lists files directly over SFTP. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
+      'Lists files directly over SFTP. Relative paths start at the current VS Code workspace root. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
       {
         path: z.string().optional(), mountName: z.string().min(1).optional(),
         limit: z.number().int().min(1).max(10000).optional()
@@ -246,12 +246,12 @@ export class AgentHttpRouter {
     );
     register(
       'remote_write', 'Write a remote file', 'Creates or replaces a UTF-8 file over SFTP.',
-      { path: z.string(), content: z.string(), mountName: z.string().min(1).optional() },
+      { path: z.string().min(1), content: z.string(), mountName: z.string().min(1).optional() },
       { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
     );
     register(
       'remote_search', 'Search remote files',
-      'Searches file contents on the remote SSH host. Results are capped (200 matches, lines trimmed to 300 chars).',
+      'Searches file contents on the remote SSH host. Relative paths start at the current VS Code workspace root. Results are capped (200 matches, lines trimmed to 300 chars).',
       {
         query: z.string().min(1), path: z.string().optional(),
         mountName: z.string().min(1).optional()
@@ -260,7 +260,7 @@ export class AgentHttpRouter {
     );
     register(
       'run_remote_command', 'Run a remote SSH command',
-      'Runs a command on the bound SSH host.',
+      'Runs a command on the bound SSH host. The default working directory is the current VS Code workspace root.',
       {
         command: z.string().min(1), remoteCwd: z.string().optional(),
         mountName: z.string().min(1).optional()

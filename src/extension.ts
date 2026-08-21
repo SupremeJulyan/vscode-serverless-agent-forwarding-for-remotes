@@ -1511,13 +1511,14 @@ function currentWorkspacePath(folder: RemoteFolder): string {
 }
 
 /**
- * 解析远程路径（绝对路径直接规范化，相对路径基于挂载根目录），
- * 不限制在远程工作区内——只读工具（list/read/search）允许访问工作区外路径。
+ * 解析远程路径：相对路径基于当前 VS Code 工作区目录，而不是配置的挂载根。
+ * 绝对路径仍可访问挂载外的位置，用于只读工具（list/search）查看
+ * ~/.bashrc、/etc/hosts 等明确指定的路径。
  */
 function resolveRemotePath(folder: RemoteFolder, value = '.'): string {
   return value.startsWith('/')
     ? path.posix.normalize(value)
-    : path.posix.resolve(folder.remoteRoot, value);
+    : path.posix.resolve(currentWorkspacePath(folder), value);
 }
 
 async function remoteList(input: {
@@ -1723,14 +1724,21 @@ async function remoteSearch(input: {
     '.venv', 'venv', '__pycache__', '.next', '.cache', 'coverage',
     'vendor', '.tox', 'site-packages', 'bower_components', 'Pods', '.gradle'
   ].map((dir) => `--exclude-dir=${dir}`).join(' ');
-  return executeRemoteCommand(vscodeContext, {
+  const result = await executeRemoteCommand(vscodeContext, {
     mountName: input.mountName,
-    remoteCwd: folder.remoteRoot,
+    remoteCwd: currentWorkspacePath(folder),
     source: 'remote_search',
     command: `grep -rIn ${excludeDirs} -- ${shellQuote(input.query)} ${
       shellQuote(searchPath)
     } | cut -c 1-300 | head -n 200`
   });
+  const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+  return {
+    ...result,
+    // grep 无匹配时经 cut/head 管道的最终状态已是 0；显式返回
+    // matchCount 让 Agent 无需根据空 stdout 或进程退出码猜测语义。
+    matchCount: stdout ? stdout.replace(/\n$/, '').split('\n').length : 0
+  };
 }
 
 // ---- Tree View ----
@@ -2009,14 +2017,18 @@ async function deleteConfig(mount: MountConfig): Promise<void> {
 async function forwardedFolders(context: vscode.ExtensionContext): Promise<import('./agent-mcp').RemoteFolderInfo[]> {
   const config = await readConfig();
   const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
+  const current = currentRemoteLocation();
   return Promise.all(config.mounts
     .filter((mount) => enabled.has(mount.name))
     .map(async (mount) => {
       const folder = await ensureFolder(mount);
+      const workspacePath = current?.mountName === mount.name
+        ? currentWorkspacePath(folder)
+        : folder.remoteRoot;
       return {
         name: mount.name,
-        workspaceUri: folderUri(folder),
-        remoteRoot: folder.remoteRoot,
+        workspaceUri: folderUri(folder, workspacePath),
+        remoteRoot: workspacePath,
         host: mount.host
       };
     })
@@ -2172,16 +2184,17 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
     return;
   }
   const folder = await ensureFolder(mount);
+  const workspacePath = currentWorkspacePath(folder);
   await agentWorkspacePublisher.publish({
     focused: vscode.window.state.focused,
     execution: 'remote',
-    workspaceUri: folderUri(folder),
+    workspaceUri: folderUri(folder, workspacePath),
     mountName: mount.name,
-    remoteRoot: folder.remoteRoot,
+    remoteRoot: workspacePath,
     host: mount.host,
     mcpUrl: mcp.url
   });
-  const state = `published:${mount.name}:${mcp.url}:${vscode.window.state.focused}`;
+  const state = `published:${mount.name}:${workspacePath}:${mcp.url}:${vscode.window.state.focused}`;
   if (lastAgentDiscoveryState !== state) {
     lastAgentDiscoveryState = state;
     agentTrace(

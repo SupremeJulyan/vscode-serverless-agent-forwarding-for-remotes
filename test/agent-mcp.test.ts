@@ -20,7 +20,10 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       host: 'dev'
     }),
     currentFile: async (input) => ({ ...input, path: '/srv/project/README.md', dirty: false }),
-    list: async (input) => ({ ...input, entries: [] }),
+    list: async (input) => {
+      if (input.path === 'forbidden') throw new Error('路径越界');
+      return { ...input, entries: [] };
+    },
     write: async (input) => ({ ...input, bytes: input.content.length }),
     search: async (input) => ({ ...input, stdout: 'src/index.ts:1:hello' }),
     run: async (input) => ({ ...input, exitCode: 0, stdout: 'ok' })
@@ -67,6 +70,14 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     });
     const listedText = (listed.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
     assert.equal(JSON.parse(listedText).limit, 10);
+    const rejected = await client.callTool({
+      name: 'remote_list', arguments: { path: 'forbidden' }
+    });
+    assert.equal(rejected.isError, true);
+    const rejectedText = (rejected.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+    assert.deepEqual(JSON.parse(rejectedText), {
+      code: 'REMOTE_TOOL_ERROR', message: '路径越界'
+    });
   } finally {
     await client.close();
     await server.stop();

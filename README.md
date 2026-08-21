@@ -138,6 +138,9 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
   `mountName`（以及 `remoteRoot`、`host`、`focused` 等元数据）就是当前
   绑定。MCP 指令要求每个会话先调用它，并复用返回的 `mountName` 保持绑定
   稳定。
+- `remoteRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
+  SFTP 配置的挂载根。`remote_list`、`remote_search` 的相对路径以及
+  `run_remote_command` 的默认工作目录都以它为基准。
 - 也可调用 `list_remote_folders` 查看所有已开启转发的活动挂载（远程根、
   `mountName` 等元数据由 `resolve_workspace_execution` 返回）。
 - **当前打开的远程文件**：调用 `current_remote_file` 获取 VS Code 中当前
