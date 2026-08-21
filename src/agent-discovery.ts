@@ -14,7 +14,7 @@ export interface AgentWorkspaceRecord {
   execution: 'remote';
   workspaceUri: string;
   mountName: string;
-  remoteRoot: string;
+  workspaceRoot: string;
   host: string;
   mcpUrl: string;
   updatedAt: string;
@@ -58,10 +58,14 @@ export function readAgentWorkspaceRecord(
   filePath: string, now = Date.now()
 ): DiscoveredAgentWorkspace | undefined {
   try {
-    const value = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<AgentWorkspaceRecord>;
+    const value = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<AgentWorkspaceRecord> & {
+      /** 1.5.5 及更早发现记录的短期兼容字段。 */
+      remoteRoot?: string;
+    };
+    if (!value.workspaceRoot && value.remoteRoot) value.workspaceRoot = value.remoteRoot;
     const updatedAtMs = Date.parse(value.updatedAt ?? '');
     if (value.version !== 1 || value.execution !== 'remote' || !value.mcpUrl
-      || !value.instanceId || !value.mountName || !Number.isFinite(updatedAtMs)
+      || !value.instanceId || !value.mountName || !value.workspaceRoot || !Number.isFinite(updatedAtMs)
       || Math.abs(now - updatedAtMs) > maxRecordAgeMs) {
       return undefined;
     }

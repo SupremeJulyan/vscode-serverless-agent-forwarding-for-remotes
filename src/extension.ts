@@ -1543,7 +1543,26 @@ async function remoteWrite(input: {
   mountName: string; path: string; content: string;
 }): Promise<unknown> {
   const { folder } = await mountAndFolder(input.mountName);
-  const remotePath = toolPath(folder, input.path);
+  const workspaceRoot = currentWorkspacePath(folder);
+  const remotePath = input.path.startsWith('/')
+    ? path.posix.normalize(input.path)
+    : path.posix.resolve(workspaceRoot, input.path);
+  if (!isRemotePathInsideRoot(workspaceRoot, remotePath)) {
+    throw new Error(`写入路径超出当前工作区：${input.path}`);
+  }
+  const session = await pool.get(folder.hostName);
+  let securedPath: string;
+  try {
+    securedPath = await session.realpath(remotePath);
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code !== 2 && code !== 'ENOENT') throw error;
+    const parent = await session.realpath(path.posix.dirname(remotePath));
+    securedPath = path.posix.join(parent, path.posix.basename(remotePath));
+  }
+  if (!isRemotePathInsideRoot(workspaceRoot, securedPath)) {
+    throw new Error(`写入路径通过符号链接超出当前工作区：${input.path}`);
+  }
   const uri = vscode.Uri.parse(folderUri(folder, remotePath));
   const content = new TextEncoder().encode(input.content);
   await provider.writeFile(uri, content, { create: true, overwrite: true });
@@ -2028,7 +2047,7 @@ async function forwardedFolders(context: vscode.ExtensionContext): Promise<impor
       return {
         name: mount.name,
         workspaceUri: folderUri(folder, workspacePath),
-        remoteRoot: workspacePath,
+        workspaceRoot: workspacePath,
         host: mount.host
       };
     })
@@ -2132,7 +2151,7 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
           return {
             name: mount.name,
             workspaceUri: folderUri(folder, workspacePath),
-            remoteRoot: workspacePath,
+            workspaceRoot: workspacePath,
             host: mount.host
           };
         },
@@ -2190,7 +2209,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
     execution: 'remote',
     workspaceUri: folderUri(folder, workspacePath),
     mountName: mount.name,
-    remoteRoot: workspacePath,
+    workspaceRoot: workspacePath,
     host: mount.host,
     mcpUrl: mcp.url
   });

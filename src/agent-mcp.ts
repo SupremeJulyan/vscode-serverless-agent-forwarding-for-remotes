@@ -10,7 +10,7 @@ import { z } from 'zod';
 export interface RemoteFolderInfo {
   name: string;
   workspaceUri: string;
-  remoteRoot: string;
+  workspaceRoot: string;
   host: string;
 }
 
@@ -92,7 +92,7 @@ export class AgentMcpServer {
     // 对外只暴露 Agent 需要的字段；name/workspaceUri 与 mountName/path 重复。
     const publicFolder = (info: RemoteFolderInfo) => ({
       mountName: info.name,
-      remoteRoot: info.remoteRoot,
+      workspaceRoot: info.workspaceRoot,
       host: info.host
     });
     server.registerTool(

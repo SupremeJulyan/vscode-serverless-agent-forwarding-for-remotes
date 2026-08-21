@@ -135,12 +135,14 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 #### 确认 Agent 会话绑定哪个远程
 
 - 会话开始时先调用 `resolve_workspace_execution`：返回 JSON 中的
-  `mountName`（以及 `remoteRoot`、`host`、`focused` 等元数据）就是当前
+  `mountName`（以及 `workspaceRoot`、`host`、`focused` 等元数据）就是当前
   绑定。MCP 指令要求每个会话先调用它，并复用返回的 `mountName` 保持绑定
   稳定。
-- `remoteRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
+- `workspaceRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
   SFTP 配置的挂载根。`remote_list`、`remote_search` 的相对路径以及
   `run_remote_command` 的默认工作目录都以它为基准。
+- `remote_write` 只能在 `workspaceRoot` 及其子目录内创建或覆盖文件；
+  只读的 `remote_list`/`remote_search` 仍可用绝对路径查看其他位置。
 - 也可调用 `list_remote_folders` 查看所有已开启转发的活动挂载（远程根、
   `mountName` 等元数据由 `resolve_workspace_execution` 返回）。
 - **当前打开的远程文件**：调用 `current_remote_file` 获取 VS Code 中当前

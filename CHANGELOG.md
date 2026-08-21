@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- MCP 工作区元数据字段由 `remoteRoot` 更名为 `workspaceRoot`，
+  明确表示 VS Code 当前打开目录，而非读取权限边界。
+- `remote_write` 的写入边界收紧到 `workspaceRoot` 及其子目录，
+  并阻止通过符号链接越界；`remote_list`/`remote_search` 仍允许读取
+  明确指定的其他绝对路径。
+
 ## 1.5.5
 
 - MCP 工作区路由修正：`resolve_workspace_execution` 和

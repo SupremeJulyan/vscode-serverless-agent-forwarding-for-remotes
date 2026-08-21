@@ -10,13 +10,13 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     listFolders: async () => [{
       name: 'project',
       workspaceUri: 'safs://project/srv/project',
-      remoteRoot: '/srv/project',
+      workspaceRoot: '/srv/project',
       host: 'dev'
     }],
     currentWorkspace: async () => ({
       name: 'project',
       workspaceUri: 'safs://project/srv/project',
-      remoteRoot: '/srv/project',
+      workspaceRoot: '/srv/project',
       host: 'dev'
     }),
     currentFile: async (input) => ({ ...input, path: '/srv/project/README.md', dirty: false }),
@@ -57,7 +57,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       execution: 'remote',
       workspace: {
         mountName: 'project',
-        remoteRoot: '/srv/project',
+        workspaceRoot: '/srv/project',
         host: 'dev'
       },
       fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
@@ -90,7 +90,7 @@ test('allocates independent ports for concurrent window MCP servers', async () =
     currentWorkspace: async () => ({
       name,
       workspaceUri: `safs://${name}/srv/${name}`,
-      remoteRoot: `/srv/${name}`,
+      workspaceRoot: `/srv/${name}`,
       host: name
     }),
     currentFile: async () => null,

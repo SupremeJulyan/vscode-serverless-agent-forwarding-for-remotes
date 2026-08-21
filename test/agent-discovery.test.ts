@@ -16,7 +16,7 @@ test('publishes a private, versioned remote workspace record and removes it', as
     execution: 'remote',
     workspaceUri: 'safs://project/srv/project',
     mountName: 'project',
-    remoteRoot: '/srv/project',
+    workspaceRoot: '/srv/project',
     host: 'dev',
     mcpUrl: 'http://127.0.0.1:9848/mcp?token=secret'
   });
@@ -44,7 +44,7 @@ test('discovers focused fresh windows first and ignores stale records', async ()
     execution: 'remote',
     workspaceUri: `safs://${instanceId}/srv/${instanceId}`,
     mountName: instanceId,
-    remoteRoot: `/srv/${instanceId}`,
+    workspaceRoot: `/srv/${instanceId}`,
     host: 'dev',
     mcpUrl: 'http://127.0.0.1:3000/mcp?token=secret',
     updatedAt: new Date(updatedAtMs).toISOString()
@@ -77,7 +77,7 @@ test('ignores records whose updatedAt is in the future', async () => {
     execution: 'remote',
     workspaceUri: `safs://${instanceId}/srv/${instanceId}`,
     mountName: instanceId,
-    remoteRoot: `/srv/${instanceId}`,
+    workspaceRoot: `/srv/${instanceId}`,
     host: 'dev',
     mcpUrl: 'http://127.0.0.1:3000/mcp?token=secret',
     updatedAt: new Date(updatedAtMs).toISOString()

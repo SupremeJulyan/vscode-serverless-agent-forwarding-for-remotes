@@ -66,7 +66,7 @@ export class AgentHttpRouter {
     return {
       execution: workspace.execution,
       mountName: workspace.mountName,
-      remoteRoot: workspace.remoteRoot,
+      workspaceRoot: workspace.workspaceRoot,
       host: workspace.host,
       focused: workspace.focused
     };

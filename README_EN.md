@@ -159,12 +159,15 @@ platforms.
 #### Determine which remote the Agent session is bound to
 
 - Call `resolve_workspace_execution` at the start of the conversation: the
-  `mountName` in the returned JSON (with `remoteRoot`, `host`, and `focused`)
+  `mountName` in the returned JSON (with `workspaceRoot`, `host`, and `focused`)
   is the current binding. The MCP instructions require calling it
   first and reusing the returned `mountName` to keep the binding stable.
-- `remoteRoot` is the remote directory actually open in that VS Code window,
+- `workspaceRoot` is the remote directory actually open in that VS Code window,
   not the configured SFTP mount root. Relative `remote_list`/`remote_search`
   paths and the default `run_remote_command` working directory start there.
+- `remote_write` can create or replace files only inside `workspaceRoot` and
+  its descendants. Read-only `remote_list`/`remote_search` may still inspect
+  explicitly supplied absolute paths elsewhere.
 - `list_remote_folders` lists all active Agent-forwarded mounts (remote root,
   `mountName`, and other metadata come from `resolve_workspace_execution`).
 - **Currently open remote file**: call `current_remote_file` to get the remote
