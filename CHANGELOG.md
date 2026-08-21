@@ -1,7 +1,25 @@
 # Changelog
 
-## Unreleased
+## 1.5.6
 
+- Agent 焦点底栏改为两阶段文案：尚未收到 MCP 调用时提示
+  “当前窗口已作为Agent转发焦点，可以让它干活了 😏”；识别来源后显示
+  如“当前窗口已作为Agent转发焦点，codex（wsl）正在干活 💪”。
+- 修复 Agent 来源状态在 VS Code 失焦时被清除：Agent 在桌面版或终端
+  发起请求后，切回远程窗口会正确恢复 `codex（wsl）` 等具体来源；
+  只有转发停止或 MCP 不可用时才清除。
+- Agent 焦点底栏改为独立 ID 的高优先级状态项，避免长文案因底栏
+  空间不足被整项挤掉，并避免继承旧匿名 SAFS 项的隐藏偏好。
+- 固定 MCP URL 支持 `agent` 来源标签：自动注册为每个 Agent 写入
+  各自的带标签 URL，并附加 `platform=wsl|mac|linux|win`；
+  路由输出和远程命令日志记录 Agent 名与平台。
+- “SAFS：复制 Streamable HTTP URL”新增 Agent 名输入框，
+  以及 wsl/mac/linux/win 平台选择，可为自动配置列表之外的
+  Agent 生成带来源标签的 URL。
+- 当前远程窗口收到带来源标签的 Agent MCP 请求后，
+  VS Code 底部状态栏显示如“当前窗口已作为codex（wsl）转发焦点，
+  可以让它干活了 😏”；
+  窗口失去焦点或转发停止时恢复默认 SAFS 状态。
 - MCP 工作区元数据字段由 `remoteRoot` 更名为 `workspaceRoot`，
   明确表示 VS Code 当前打开目录，而非读取权限边界。
 - `remote_write` 的写入边界收紧到 `workspaceRoot` 及其子目录，

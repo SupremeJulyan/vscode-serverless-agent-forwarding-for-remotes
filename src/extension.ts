@@ -23,7 +23,9 @@ import { closeSsh2ExecSessions, executeSsh2Command, Ssh2Terminal } from './ssh2-
 import {
   passwordValueOffset
 } from './authentication';
-import { AgentMcpServer } from './agent-mcp';import { AgentHttpRouter } from './agent-http-router';
+import { AgentMcpServer } from './agent-mcp';import {
+  AgentHttpRouter, AgentPlatformLabel, agentTaggedMcpUrl
+} from './agent-http-router';
 import { AgentWorkspacePublisher, discoverAgentWorkspaces } from './agent-discovery';
 import {
   AgentDefinition, AgentMcpCliRunner, agentSupportsMcpFor,
@@ -106,6 +108,8 @@ const agentWorkspacePublisher = new AgentWorkspacePublisher(randomBytes(12).toSt
 let agentWorkspaceHeartbeat: NodeJS.Timeout | undefined;
 let lastAgentDiscoveryState = '';
 let lastForwardingSignature = '';
+let safsStatusBar: vscode.StatusBarItem | undefined;
+let focusedAgentSource: { name: string; platform: string } | undefined;
 let refreshTree: () => void = () => undefined;
 const openingTerminalIds = new Set<string>();
 let lastReadConfig: BridgeConfig | undefined;
@@ -116,6 +120,31 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   /** 内置 ssh2 终端实例：live-sync 用它安全补发 cd（shell 就绪前入队）。 */
   pty?: import('./ssh2-terminal').Ssh2Terminal;
 }>();
+
+function updateSafsStatusBar(
+  agentFocus = false, agentName?: string, agentPlatform?: string, clearSource = false
+): void {
+  if (!safsStatusBar) return;
+  if (clearSource) focusedAgentSource = undefined;
+  // Agent 通常在 VS Code 失焦时发起请求（用户正在操作桌面版/终端）。
+  // 当下可以不显示焦点提示，但必须记住来源，以便切回窗口时恢复。
+  if (agentName && agentPlatform) {
+    focusedAgentSource = { name: agentName, platform: agentPlatform };
+  }
+  const source = focusedAgentSource
+    ? `${focusedAgentSource.name}（${focusedAgentSource.platform}）`
+    : 'Agent';
+  safsStatusBar.text = agentFocus
+    ? focusedAgentSource
+      ? `$(sparkle) 当前窗口已作为Agent转发焦点，${source}正在干活 💪`
+      : '$(sparkle) 当前窗口已作为Agent转发焦点，可以让它干活了 😏'
+    : '$(remote) SAFS SFTP';
+  safsStatusBar.tooltip = agentFocus
+    ? focusedAgentSource
+      ? `${source} 正在通过 MCP 使用当前远程窗口`
+      : '当前窗口是 Agent MCP 的默认路由目标'
+    : '打开 SFTP 远程目录';
+}
 
 let syncManager: RemoteSyncManager | undefined;
 const syncTasksKey = 'safs.syncTasks';
@@ -1571,7 +1600,10 @@ async function remoteWrite(input: {
 
 async function executeRemoteCommand(
   context: vscode.ExtensionContext,
-  input: { command: string; mountName: string; remoteCwd?: string; source?: string },
+  input: {
+    command: string; mountName: string; remoteCwd?: string; source?: string; agentName?: string;
+    agentPlatform?: string;
+  },
   token?: vscode.CancellationToken
 ): Promise<Record<string, unknown>> {
   if (!input.command?.trim()) throw new Error('Remote command must not be empty.');
@@ -1599,6 +1631,8 @@ async function executeRemoteCommand(
     if (matched) {
       void appendMcpCommandLog({
         source: 'high_risk',
+        agentName: input.agentName,
+        agentPlatform: input.agentPlatform,
         mountName: mount.name,
         remoteCwd,
         command: input.command
@@ -1631,6 +1665,8 @@ async function executeRemoteCommand(
   }
   appendMcpCommandLog({
     source,
+    agentName: input.agentName,
+    agentPlatform: input.agentPlatform,
     mountName: mount.name,
     remoteCwd,
     command: input.command
@@ -1725,13 +1761,14 @@ async function executeRemoteCommand(
 }
 
 async function runRemote(input: {
-  mountName: string; command: string; remoteCwd?: string; source?: string;
+  mountName: string; command: string; remoteCwd?: string; source?: string; agentName?: string;
+  agentPlatform?: string;
 }): Promise<unknown> {
   return executeRemoteCommand(vscodeContext, { ...input, source: input.source ?? 'mcp' });
 }
 
 async function remoteSearch(input: {
-  mountName: string; query: string; path?: string;
+  mountName: string; query: string; path?: string; agentName?: string; agentPlatform?: string;
 }): Promise<unknown> {
   const { folder } = await mountAndFolder(input.mountName);
   const requestedPath = resolveRemotePath(folder, input.path);
@@ -1747,6 +1784,8 @@ async function remoteSearch(input: {
     mountName: input.mountName,
     remoteCwd: currentWorkspacePath(folder),
     source: 'remote_search',
+    agentName: input.agentName,
+    agentPlatform: input.agentPlatform,
     command: `grep -rIn ${excludeDirs} -- ${shellQuote(input.query)} ${
       shellQuote(searchPath)
     } | cut -c 1-300 | head -n 200`
@@ -2168,6 +2207,9 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
         run: async (input) => executeRemoteCommand(context, {
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
+        request: (agentName, agentPlatform) => {
+          updateSafsStatusBar(vscode.window.state.focused, agentName, agentPlatform);
+        },
         log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
       }
     );
@@ -2185,6 +2227,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
   const location = currentRemoteLocation();
   const enabled = new Set(context.globalState.get<string[]>(aiForwardMountsKey, []));
   if (!location || !enabled.has(location.mountName) || !mcp?.running || mcp.portUnavailable) {
+    updateSafsStatusBar(false, undefined, undefined, true);
     if (location && !enabled.has(location.mountName)) await mcp?.stop();
     await agentWorkspacePublisher.remove();
     const reason = !location ? '非远程工作区'
@@ -2199,6 +2242,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
   const config = await readConfig();
   const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
   if (!mount) {
+    updateSafsStatusBar(false, undefined, undefined, true);
     await agentWorkspacePublisher.remove();
     return;
   }
@@ -2213,6 +2257,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
     host: mount.host,
     mcpUrl: mcp.url
   });
+  updateSafsStatusBar(vscode.window.state.focused);
   const state = `published:${mount.name}:${workspacePath}:${mcp.url}:${vscode.window.state.focused}`;
   if (lastAgentDiscoveryState !== state) {
     lastAgentDiscoveryState = state;
@@ -2246,6 +2291,7 @@ function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
   const forwardingTimer = setInterval(forwardingRefresh, 10_000);
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((state) => {
+      if (!state.focused) updateSafsStatusBar(false);
       refresh();
       if (state.focused) forwardingRefresh();
     }),
@@ -2338,6 +2384,11 @@ async function configureDetectedAgents(
   const agentPlatform = await resolveAgentPlatform(
     settings().get<string>('agentPlatform', 'auto')
   );
+  const platformLabel: AgentPlatformLabel = agentPlatform.wsl || platformAdapter.kind === 'wsl'
+    ? 'wsl'
+    : platformAdapter.kind === 'windows'
+      ? 'win'
+      : platformAdapter.kind === 'macos' ? 'mac' : 'linux';
   // 卸载路径的探测集合 = 当前设置 ∪ 曾成功配置的记录（`<cliName>:safs`），
   // 两者皆空时兜底内置默认集合——保证设置被清空/Agent 被移出列表后，
   // 残留的固定 MCP 仍能被探测并移除（而非静默跳过）。
@@ -2364,6 +2415,7 @@ async function configureDetectedAgents(
 
   interface AgentState {
     def: AgentDefinition;
+    mcpUrl?: string;
     command?: string;
     enabled: boolean;
     fixedExists: boolean;
@@ -2372,6 +2424,9 @@ async function configureDetectedAgents(
   }
 
   const states: AgentState[] = await Promise.all(definitions.map(async (def): Promise<AgentState> => {
+    const mcpUrl = routerUrl
+      ? agentTaggedMcpUrl(routerUrl, def.cliName, platformLabel)
+      : undefined;
     const enabled = forwardingAgents.some(
       (name) => name === def.cliName || def.legacyIds?.includes(name)
     );
@@ -2383,7 +2438,7 @@ async function configureDetectedAgents(
         }`
       );
       return {
-        def, command: undefined, enabled,
+        def, mcpUrl, command: undefined, enabled,
         fixedExists: false, fixedConfigured: false, supportsMcp: true
       };
     }
@@ -2395,12 +2450,12 @@ async function configureDetectedAgents(
         `[Agent MCP] ${def.displayName} 前置条件缺失，跳过自动注册：${prerequisiteMissing}`
       );
       return {
-        def, command, enabled,
+        def, mcpUrl, command, enabled,
         fixedExists: false, fixedConfigured: false, supportsMcp: true
       };
     }
     // 探测缓存：TTL 内复用同一 (cliName, routerUrl) 的结果；命中则跳过 spawn。
-    const cacheKey = `${def.cliName}\0${routerUrl ?? ''}`;
+    const cacheKey = `${def.cliName}\0${mcpUrl ?? ''}`;
     const cached = agentProbeCache.get(cacheKey);
     const cachedStatus = cached && Date.now() - cached.at < agentProbeCacheTtlMs
       ? cached.status
@@ -2415,7 +2470,7 @@ async function configureDetectedAgents(
           `[Agent MCP] ${def.displayName} 探测超时（${agentProbeTimeoutMs}ms），跳过自动注册。`
         );
         return {
-          def, command, enabled,
+          def, mcpUrl, command, enabled,
           fixedExists: false, fixedConfigured: false, supportsMcp: true
         };
       }
@@ -2423,14 +2478,14 @@ async function configureDetectedAgents(
       const output = `${status.stdout}\n${status.stderr}`;
       const fixedExists = status.exitCode === 0;
       const supportsMcp = agentSupportsMcpFor(def, status);
-      const fixedConfigured = fixedExists && Boolean(routerUrl && output.includes(routerUrl));
-      return { def, command, enabled, fixedExists, fixedConfigured, supportsMcp };
+      const fixedConfigured = fixedExists && Boolean(mcpUrl && output.includes(mcpUrl));
+      return { def, mcpUrl, command, enabled, fixedExists, fixedConfigured, supportsMcp };
     }
     const output = `${cachedStatus.stdout}\n${cachedStatus.stderr}`;
     const fixedExists = cachedStatus.exitCode === 0;
     const supportsMcp = agentSupportsMcpFor(def, cachedStatus);
-    const fixedConfigured = fixedExists && Boolean(routerUrl && output.includes(routerUrl));
-    return { def, command, enabled, fixedExists, fixedConfigured, supportsMcp };
+    const fixedConfigured = fixedExists && Boolean(mcpUrl && output.includes(mcpUrl));
+    return { def, mcpUrl, command, enabled, fixedExists, fixedConfigured, supportsMcp };
   }));
 
   const unsupportedMcp = states.filter((state) => state.command && !state.supportsMcp);
@@ -2510,7 +2565,7 @@ async function configureDetectedAgents(
       failures.push(`${state.def.displayName} MCP remove 超时`);
     } else if (result.exitCode === 0) {
       configured.delete(`${state.def.cliName}:safs`);
-      agentProbeCache.set(`${state.def.cliName}\0${routerUrl ?? ''}`, {
+      agentProbeCache.set(`${state.def.cliName}\0${state.mcpUrl ?? ''}`, {
         status: { exitCode: 1, stdout: '', stderr: '', truncated: false }, at: Date.now()
       });
       bridgeOutput?.appendLine(
@@ -2537,7 +2592,7 @@ async function configureDetectedAgents(
     if (canAdd) {
       const signal = AbortSignal.timeout(agentProbeTimeoutMs);
       const result = await runAgentMcpOperation(
-        state.def, state.command!, 'add', routerUrl!, mcpRunner, 'safs', signal
+        state.def, state.command!, 'add', state.mcpUrl!, mcpRunner, 'safs', signal
       );
       if (signal.aborted) {
         failures.push(`${state.def.displayName}: MCP add 超时`);
@@ -2546,8 +2601,8 @@ async function configureDetectedAgents(
       } else {
         configured.add(`${state.def.cliName}:safs`);
         // 注册成功后更新探测缓存，后续 configure 不再重复探测/重复 add。
-        agentProbeCache.set(`${state.def.cliName}\0${routerUrl ?? ''}`, {
-          status: { exitCode: 0, stdout: routerUrl ?? '', stderr: '', truncated: false },
+        agentProbeCache.set(`${state.def.cliName}\0${state.mcpUrl ?? ''}`, {
+          status: { exitCode: 0, stdout: state.mcpUrl ?? '', stderr: '', truncated: false },
           at: Date.now()
         });
         bridgeOutput?.appendLine(
@@ -2569,8 +2624,8 @@ async function configureDetectedAgents(
         states
           .filter((state) => state.enabled && state.command && state.supportsMcp)
           .map((state) => state.def.mcp.handler
-            ? state.def.mcp.handler.describeAdd('safs', routerUrl!)
-            : `${state.def.cliName} ${state.def.mcp.add('safs', routerUrl!).join(' ')}`
+            ? state.def.mcp.handler.describeAdd('safs', state.mcpUrl!)
+            : `${state.def.cliName} ${state.def.mcp.add('safs', state.mcpUrl!).join(' ')}`
           )
           .join('\n')
       );
@@ -2737,6 +2792,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   output = vscode.window.createOutputChannel('SAFS');
   bridgeOutput = vscode.window.createOutputChannel('SAFS Log', { log: true });
   context.subscriptions.push(output, bridgeOutput);
+  // 独立、高优先级 ID：避免长焦点文案被底栏布局整项挤掉，也不复用
+  // 旧匿名 SAFS 状态项可能已被用户隐藏的可见性偏好。
+  safsStatusBar = vscode.window.createStatusBarItem(
+    'safs.agentForwardingFocus', vscode.StatusBarAlignment.Left, 10_000
+  );
+  safsStatusBar.name = 'SAFS Agent 转发焦点';
+  safsStatusBar.command = `${commandPrefix}.openFolder`;
+  updateSafsStatusBar(false);
+  safsStatusBar.show();
+  context.subscriptions.push(safsStatusBar);
   const logCleanup = setInterval(() => {
     output.clear();
     bridgeOutput?.clear();
@@ -2890,11 +2955,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     tree.refresh();
   });
   command('copyStreamableHttpUrl', async () => {
+    const agentName = await vscode.window.showInputBox({
+      title: 'SAFS：复制 Streamable HTTP URL',
+      prompt: '请输入使用该 URL 的 Agent 名（仅用于日志和诊断）',
+      placeHolder: '例如：Codex、Claude、MyAgent',
+      ignoreFocusOut: true,
+      validateInput: (value) => !value.trim()
+        ? '请输入 Agent 名'
+        : value.trim().length > 100
+          ? 'Agent 名最多 100 个字符'
+          : /[\u0000-\u001f\u007f]/.test(value)
+            ? 'Agent 名不能包含控制字符'
+            : undefined
+    });
+    if (agentName === undefined) return;
+    const platform = await vscode.window.showQuickPick<{
+      label: string; description: string; value: AgentPlatformLabel;
+    }>([
+      { label: 'WSL', description: 'Agent 运行在 Windows Subsystem for Linux', value: 'wsl' },
+      { label: 'mac', description: 'Agent 运行在 macOS', value: 'mac' },
+      { label: 'linux', description: 'Agent 运行在 Linux', value: 'linux' },
+      { label: 'win', description: 'Agent 运行在 Windows', value: 'win' }
+    ], {
+      title: 'SAFS：选择 Agent 所在平台',
+      placeHolder: '选择 wsl、mac、linux 或 win',
+      ignoreFocusOut: true
+    });
+    if (!platform) return;
     startAgentHttpRouterLeadership(context);
     const router = await ensureAgentHttpRouter(context);
-    await vscode.env.clipboard.writeText(router.url);
+    const url = agentTaggedMcpUrl(router.url, agentName, platform.value);
+    await vscode.env.clipboard.writeText(url);
     void vscode.window.showInformationMessage(
-      '已复制 Streamable HTTP URL。在桌面版的 Settings > MCP servers 中添加 Streamable HTTP 服务器“safs”，粘贴该地址后重启 Agent。'
+      `已复制 ${agentName.trim()} 的 Streamable HTTP URL。在 Agent 的 MCP 设置中添加服务器“safs”，粘贴该地址后重启 Agent。`
     );
   });
   command('refreshExplorer', async () => tree.refresh());
@@ -3041,14 +3134,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   startAgentWorkspacePublishing(context);
 
-  // Status bar
-  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  statusBar.name = 'SAFS';
-  statusBar.text = '$(remote) SAFS SFTP';
-  statusBar.tooltip = '打开 SFTP 远程目录';
-  statusBar.command = `${commandPrefix}.openFolder`;
-  statusBar.show();
-  context.subscriptions.push(statusBar);
 }
 
 export async function deactivate(): Promise<void> {

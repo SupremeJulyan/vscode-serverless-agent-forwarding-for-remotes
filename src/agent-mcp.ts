@@ -21,8 +21,15 @@ export interface AgentMcpCallbacks {
   currentFile(input: { mountName?: string }): Promise<unknown>;
   list(input: { mountName?: string; path?: string; limit?: number }): Promise<unknown>;
   write(input: { mountName?: string; path: string; content: string }): Promise<unknown>;
-  search(input: { mountName?: string; query: string; path?: string }): Promise<unknown>;
-  run(input: { command: string; mountName?: string; remoteCwd?: string }): Promise<unknown>;
+  search(input: {
+    mountName?: string; query: string; path?: string; agentName?: string;
+    agentPlatform?: string;
+  }): Promise<unknown>;
+  run(input: {
+    command: string; mountName?: string; remoteCwd?: string; agentName?: string;
+    agentPlatform?: string;
+  }): Promise<unknown>;
+  request?(agentName?: string, agentPlatform?: string): void;
   log?(message: string): void;
 }
 
@@ -50,7 +57,7 @@ export class AgentMcpServer {
     return this._portUnavailable;
   }
 
-  private createProtocolServer(): McpServer {
+  private createProtocolServer(agentName?: string, agentPlatform?: string): McpServer {
     const server = new McpServer(
       { name: 'safs', version: '1.0.0' },
       {
@@ -185,7 +192,9 @@ export class AgentMcpServer {
           path: z.string().optional()
         }
       },
-      async (input) => invoke(() => this.callbacks.search(input))
+      async (input) => invoke(() => this.callbacks.search({
+        ...input, agentName, agentPlatform
+      }))
     );
     server.registerTool(
       'run_remote_command',
@@ -199,7 +208,9 @@ export class AgentMcpServer {
           remoteCwd: z.string().optional()
         }
       },
-      async (input) => invoke(() => this.callbacks.run(input))
+      async (input) => invoke(() => this.callbacks.run({
+        ...input, agentName, agentPlatform
+      }))
     );
     return server;
   }
@@ -219,10 +230,22 @@ export class AgentMcpServer {
         response.status(405).json({ error: 'Method not allowed' });
         return;
       }
+      const agentName = typeof request.query.agent === 'string'
+        ? request.query.agent.trim().slice(0, 100).replace(/[\u0000-\u001f\u007f]/g, '_')
+        : undefined;
+      const platformValue = request.query.platform;
+      const agentPlatform = typeof platformValue === 'string'
+        && ['wsl', 'mac', 'linux', 'win'].includes(platformValue)
+        ? platformValue
+        : undefined;
       const method = typeof request.body?.method === 'string' ? request.body.method : 'unknown';
       const tool = request.body?.params?.name;
-      this.callbacks.log?.(`收到 MCP 请求：${method}${tool ? ` (${tool})` : ''}`);
-      const protocol = this.createProtocolServer();
+      this.callbacks.log?.(`收到 MCP 请求：${method}${tool ? ` (${tool})` : ''}${
+        agentName ? `，agent=${agentName}` : '，agent=<unknown>'
+      }${agentPlatform ? `，platform=${agentPlatform}` : ''
+      }`);
+      this.callbacks.request?.(agentName, agentPlatform);
+      const protocol = this.createProtocolServer(agentName, agentPlatform);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
         await protocol.connect(transport);

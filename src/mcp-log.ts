@@ -5,6 +5,9 @@ import { redactSensitiveText } from './redact';
 
 export interface McpCommandLogEntry {
   source: string;
+  /** URL 中由 MCP 注册方声明的来源标签，仅用于日志/诊断。 */
+  agentName?: string;
+  agentPlatform?: string;
   mountName: string;
   remoteCwd: string;
   command: string;
@@ -32,7 +35,10 @@ export function formatMcpCommandLogLine(
     .replace(/\n/g, '\\n')
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t');
-  return `${now.toISOString()} [${entry.source}] [mount=${entry.mountName}] [cwd=${entry.remoteCwd}] $ ${escaped}`;
+  const agent = entry.agentName?.trim().slice(0, 100)
+    .replace(/[\]\r\n\t]/g, '_');
+  const platform = entry.agentPlatform?.trim().replace(/[^a-z]/gi, '').slice(0, 10);
+  return `${now.toISOString()} [${entry.source}]${agent ? ` [agent=${agent}]` : ''}${platform ? ` [platform=${platform}]` : ''} [mount=${entry.mountName}] [cwd=${entry.remoteCwd}] $ ${escaped}`;
 }
 
 export async function appendMcpCommandLog(

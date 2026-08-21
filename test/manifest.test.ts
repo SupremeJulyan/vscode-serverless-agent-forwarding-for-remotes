@@ -22,7 +22,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.5.4');
+  assert.equal(manifest.version, '1.5.6');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -63,6 +63,27 @@ test('packages Agent integration without a spawned stdio router or Codex plugin'
   await assert.rejects(access(new URL(
     '../plugins/safs/.codex-plugin/plugin.json', import.meta.url
   )));
+});
+
+test('shows when this window is the Agent forwarding focus', async () => {
+  const extensionSource = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
+  assert.ok(extensionSource.includes(
+    '当前窗口已作为Agent转发焦点，可以让它干活了 😏'
+  ));
+  assert.ok(extensionSource.includes(
+    '当前窗口已作为Agent转发焦点，${source}正在干活 💪'
+  ));
+  assert.ok(extensionSource.includes("value: 'wsl'"));
+  assert.ok(extensionSource.includes("value: 'mac'"));
+  assert.ok(extensionSource.includes("value: 'linux'"));
+  assert.ok(extensionSource.includes("value: 'win'"));
+  assert.ok(extensionSource.includes('updateSafsStatusBar(vscode.window.state.focused)'));
+  assert.ok(extensionSource.includes('if (agentName && agentPlatform)'));
+  assert.ok(extensionSource.includes(
+    'updateSafsStatusBar(vscode.window.state.focused, agentName, agentPlatform)'
+  ));
+  assert.ok(extensionSource.includes("'safs.agentForwardingFocus'"));
+  assert.ok(extensionSource.includes('vscode.StatusBarAlignment.Left, 10_000'));
 });
 
 test('uses only the unified cross-platform config path', async () => {

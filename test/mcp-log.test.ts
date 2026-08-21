@@ -12,6 +12,8 @@ test('writes one escaped command line per entry under the per-day log file', asy
   const now = new Date('2026-08-04T08:00:00.000Z');
   const first = await appendMcpCommandLog({
     source: 'mcp',
+    agentName: 'MyAgent',
+    agentPlatform: 'linux',
     mountName: 'prod',
     remoteCwd: '/srv/project',
     command: 'git status'
@@ -29,7 +31,7 @@ test('writes one escaped command line per entry under the per-day log file', asy
   const content = await readFile(first, 'utf8');
   assert.match(
     content,
-    /^2026-08-04T08:00:00\.000Z \[mcp\] \[mount=prod\] \[cwd=\/srv\/project\] \$ git status\n/m
+    /^2026-08-04T08:00:00\.000Z \[mcp\] \[agent=MyAgent\] \[platform=linux\] \[mount=prod\] \[cwd=\/srv\/project\] \$ git status\n/m
   );
   assert.match(
     content,

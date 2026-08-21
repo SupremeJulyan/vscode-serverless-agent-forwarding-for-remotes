@@ -3,7 +3,7 @@ import * as http from 'node:http';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { AgentHttpRouter } from '../src/agent-http-router';
+import { AgentHttpRouter, agentTaggedMcpUrl } from '../src/agent-http-router';
 import { AgentMcpServer } from '../src/agent-mcp';
 import { DiscoveredAgentWorkspace } from '../src/agent-discovery';
 
@@ -54,6 +54,15 @@ async function freePort(): Promise<number> {
   return address.port;
 }
 
+test('adds an encoded Agent source label without changing the router token', () => {
+  const tagged = new URL(agentTaggedMcpUrl(
+    'http://127.0.0.1:9848/mcp?token=secret', '  自定义 Agent  ', 'wsl'
+  ));
+  assert.equal(tagged.searchParams.get('token'), 'secret');
+  assert.equal(tagged.searchParams.get('agent'), '自定义 Agent');
+  assert.equal(tagged.searchParams.get('platform'), 'wsl');
+});
+
 test('fixed HTTP router follows a reconnected mount without changing the Agent URL', async () => {
   const first = new AgentMcpServer(0, 'first', callbacks('first'));
   const second = new AgentMcpServer(0, 'second', callbacks('second'));
@@ -66,7 +75,9 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     await Promise.all([first.start(), second.start()]);
     await router.start();
     assert.equal(router.leader, true);
-    await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
+    await client.connect(new StreamableHTTPClientTransport(
+      new URL(agentTaggedMcpUrl(router.url, 'Codex', 'wsl'))
+    ));
     assert.deepEqual(await client.listResources(), { resources: [] });
     assert.deepEqual(await client.listResourceTemplates(), { resourceTemplates: [] });
 
@@ -82,6 +93,12 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
       name: 'remote_list', arguments: { path: 'README.md' }
     });
     assert.equal(JSON.parse((connected.content as any[])[0].text).label, 'first');
+
+    const ran = await client.callTool({
+      name: 'run_remote_command', arguments: { command: 'pwd' }
+    });
+    assert.equal(JSON.parse((ran.content as any[])[0].text).input.agentName, 'Codex');
+    assert.equal(JSON.parse((ran.content as any[])[0].text).input.agentPlatform, 'wsl');
 
     const rejected = await client.callTool({
       name: 'remote_list', arguments: { path: 'forbidden' }

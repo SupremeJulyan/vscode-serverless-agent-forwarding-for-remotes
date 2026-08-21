@@ -281,15 +281,19 @@ The extension generates an authentication token and automatically applies config
 equivalent to:
 
 ```sh
-codex mcp add safs --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
-claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+codex mcp add safs --url 'http://127.0.0.1:9848/mcp?token=<generated-token>&agent=codex&platform=wsl'
+claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?token=<generated-token>&agent=claude&platform=wsl'
 ```
 
 If no Agent CLI is installed, run **SAFS: Copy Streamable HTTP
-URL** from the VS Code Command Palette. In the desktop app, open **Settings > MCP
+URL** from the VS Code Command Palette, enter the Agent name, and select its
+`wsl`, `mac`, `linux`, or `win` platform.
+In the desktop app, open **Settings > MCP
 servers**, add a **Streamable HTTP** server named `safs`, and paste the
 copied URL. The URL contains an authentication token; do not share it or commit it
-to the repository.
+to the repository. The `agent` and `platform` query parameters are only source
+labels for the status bar, router output, and command logs; they can identify Agents outside the automatic configuration
+list, but it is not secure authentication.
 
 Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after

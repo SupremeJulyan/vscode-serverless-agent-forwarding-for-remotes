@@ -246,15 +246,18 @@ HTTP 路由器完成，不安装 Codex 插件、Skill 或 hooks。多个 VS Code
 扩展会生成鉴权令牌并自动执行等价于以下形式的配置：
 
 ```sh
-codex mcp add safs --url 'http://127.0.0.1:9848/mcp?token=<generated-token>'
-claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?token=<generated-token>'
+codex mcp add safs --url 'http://127.0.0.1:9848/mcp?token=<generated-token>&agent=codex&platform=wsl'
+claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?token=<generated-token>&agent=claude&platform=wsl'
 ```
 
 如果未安装 Agent CLI，可在 VS Code 命令面板执行
-**SAFS: 复制 Streamable HTTP URL**，然后在桌面版
+**SAFS: 复制 Streamable HTTP URL**，在输入框中填写 Agent 名并选择
+`wsl`/`mac`/`linux`/`win` 平台，然后在桌面版
 **Settings > MCP servers** 中添加名为 `safs` 的
 **Streamable HTTP** 服务器并粘贴该地址。地址包含鉴权令牌，不要共享或
-提交到仓库。
+提交到仓库。URL 中的 `agent`/`platform` 参数仅用于状态栏、
+路由输出和命令日志，
+可记录自动配置列表之外的 Agent，但不是安全身份认证。
 
 安装后重启 Agent 并新建对话。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
 不会关闭 Agent 转发偏好，重连相同挂载后 MCP 会发现新端口。如果同时打开多个远程窗口，

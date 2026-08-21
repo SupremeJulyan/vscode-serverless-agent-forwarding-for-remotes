@@ -13,6 +13,24 @@ import {
 
 const routerIdentity = 'safs-http-router-v1';
 
+/** 为共用 MCP 地址附加可观测的 Agent 来源标签（不作为身份认证）。 */
+export type AgentPlatformLabel = 'wsl' | 'mac' | 'linux' | 'win';
+
+export function agentTaggedMcpUrl(
+  routerUrl: string, agentName: string, platform?: AgentPlatformLabel
+): string {
+  const normalized = agentName.trim();
+  if (!normalized) throw new Error('Agent name must not be empty');
+  if (normalized.length > 100) throw new Error('Agent name must not exceed 100 characters');
+  if (/[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error('Agent name must not contain control characters');
+  }
+  const url = new URL(routerUrl);
+  url.searchParams.set('agent', normalized);
+  if (platform) url.searchParams.set('platform', platform);
+  return url.toString();
+}
+
 export interface AgentHttpRouterOptions {
   discover?: () => DiscoveredAgentWorkspace[];
   log?: (message: string) => void;
@@ -98,7 +116,8 @@ export class AgentHttpRouter {
   }
 
   private async forward(
-    workspace: DiscoveredAgentWorkspace, name: string, args: Record<string, unknown>
+    workspace: DiscoveredAgentWorkspace, name: string, args: Record<string, unknown>,
+    agentName?: string, agentPlatform?: AgentPlatformLabel
   ): Promise<any> {
     const url = new URL(workspace.mcpUrl);
     if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) {
@@ -108,9 +127,13 @@ export class AgentHttpRouter {
     if (url.port === String(this.port)) {
       throw new Error('Refusing to forward to the router itself');
     }
+    if (agentName) url.searchParams.set('agent', agentName);
+    if (agentPlatform) url.searchParams.set('platform', agentPlatform);
     const requestId = `http-router-${process.pid}-${Date.now()}-${randomUUID()}`;
     this.options.log?.(
-      `转发工具 ${name} 到 mount=${workspace.mountName}，port=${url.port}`
+      `转发工具 ${name} 到 mount=${workspace.mountName}，port=${url.port}${
+        agentName ? `，agent=${agentName}` : ''
+      }`
     );
     const response = await fetch(url, {
       method: 'POST',
@@ -142,7 +165,10 @@ export class AgentHttpRouter {
     return downstream.result;
   }
 
-  private async callTool(name: string, input: Record<string, unknown>): Promise<any> {
+  private async callTool(
+    name: string, input: Record<string, unknown>, agentName?: string,
+    agentPlatform?: AgentPlatformLabel
+  ): Promise<any> {
     if (name === 'list_remote_folders') {
       return {
         content: [{
@@ -177,7 +203,7 @@ export class AgentHttpRouter {
     }
     const args = { ...input, mountName: workspace.mountName };
     try {
-      return await this.forward(workspace, name, args);
+      return await this.forward(workspace, name, args, agentName, agentPlatform);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.options.log?.(`工具 ${name} 失败，mount=${workspace.mountName}：${detail}`);
@@ -189,7 +215,9 @@ export class AgentHttpRouter {
     }
   }
 
-  private createProtocolServer(): McpServer {
+  private createProtocolServer(
+    agentName?: string, agentPlatform?: AgentPlatformLabel
+  ): McpServer {
     const server = new McpServer(
       { name: 'safs-http-router', version: '1.0.0' },
       {
@@ -217,7 +245,9 @@ export class AgentHttpRouter {
     ) => server.registerTool(
       name,
       { title, description, inputSchema, annotations },
-      async (input) => this.callTool(name, input as Record<string, unknown>)
+      async (input) => this.callTool(
+        name, input as Record<string, unknown>, agentName, agentPlatform
+      )
     );
     register(
       'resolve_workspace_execution', 'Resolve workspace execution route',
@@ -311,7 +341,23 @@ export class AgentHttpRouter {
         response.status(405).json({ error: 'Method not allowed' });
         return;
       }
-      const protocol = this.createProtocolServer();
+      const agentName = typeof request.query.agent === 'string'
+        ? request.query.agent.trim().slice(0, 100).replace(/[\u0000-\u001f\u007f]/g, '_')
+        : undefined;
+      const platformValue = request.query.platform;
+      const agentPlatform = typeof platformValue === 'string'
+        && ['wsl', 'mac', 'linux', 'win'].includes(platformValue)
+        ? platformValue as AgentPlatformLabel
+        : undefined;
+      const method = typeof request.body?.method === 'string' ? request.body.method : 'unknown';
+      const tool = request.body?.params?.name;
+      this.options.log?.(
+        `收到 MCP 请求：${method}${tool ? ` (${tool})` : ''}${
+          agentName ? `，agent=${agentName}` : '，agent=<unknown>'
+        }${agentPlatform ? `，platform=${agentPlatform}` : ''
+        }`
+      );
+      const protocol = this.createProtocolServer(agentName, agentPlatform);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
         await protocol.connect(transport);
