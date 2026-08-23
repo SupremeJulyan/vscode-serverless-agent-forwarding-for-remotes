@@ -86,6 +86,7 @@ export class RemoteSyncManager {
   private readonly pendingLocalOps = new Set<string>();
   /** 基线失败后的退避重试定时器。 */
   private readonly baselineTimers = new Map<string, NodeJS.Timeout>();
+  private readonly ownedTasks = new Set<string>();
 
   constructor(
     private readonly getSession: (mountName: string) => Promise<SftpSession>,
@@ -94,7 +95,10 @@ export class RemoteSyncManager {
     ) => { mountName: string; remotePath: string } | undefined,
     private readonly log: (message: string) => void = () => undefined,
     private readonly onTaskChanged: () => void = () => undefined,
-    private readonly status: (message: string) => void = () => undefined
+    private readonly status: (message: string) => void = () => undefined,
+    private readonly acquireTask: (task: RemoteSyncTask) => Promise<boolean> = async () => true,
+    private readonly releaseTask: (task: RemoteSyncTask) => Promise<void> = async () => undefined,
+    private readonly markTaskReady: (task: RemoteSyncTask) => Promise<void> = async () => undefined
   ) {}
 
   list(): RemoteSyncTask[] {
@@ -114,7 +118,21 @@ export class RemoteSyncManager {
     this.tasks.set(key, task);
     this.readyTasks.delete(key);
     this.onTaskChanged();
-    void this.runBaseline(task, 0);
+    void this.startTask(task);
+  }
+
+  private async startTask(task: RemoteSyncTask): Promise<void> {
+    const key = taskKey(task.mountName, task.remotePath);
+    if (!await this.acquireTask(task)) {
+      this.log(`同步任务由另一个 VS Code 窗口管理：${task.remotePath}`);
+      return;
+    }
+    if (this.tasks.get(key) !== task) {
+      await this.releaseTask(task);
+      return;
+    }
+    this.ownedTasks.add(key);
+    await this.runBaseline(task, 0);
   }
 
   remove(mountName: string, remotePath: string): void {
@@ -138,6 +156,7 @@ export class RemoteSyncManager {
     }
     this.tasks.delete(key);
     this.readyTasks.delete(key);
+    if (this.ownedTasks.delete(key) && task) void this.releaseTask(task);
     this.log(`已停止同步：${remotePath}`);
     this.onTaskChanged();
   }
@@ -147,6 +166,11 @@ export class RemoteSyncManager {
     this.baselineTimers.clear();
     for (const entry of this.watchers.values()) entry.watcher.dispose();
     this.watchers.clear();
+    for (const key of this.ownedTasks) {
+      const task = this.tasks.get(key);
+      if (task) void this.releaseTask(task);
+    }
+    this.ownedTasks.clear();
   }
 
   /** provider 回调：远程发生写/删/重命名/建目录时同步到本地。 */
@@ -254,6 +278,7 @@ export class RemoteSyncManager {
     // 不得在这时复活 watcher 或把新任务错误标记为就绪。
     if (ok && this.tasks.get(key) === task) {
       this.readyTasks.add(key);
+      await this.markTaskReady(task);
       this.startLocalWatcher(task);
       this.onTaskChanged();
       return;
@@ -373,6 +398,7 @@ export class RemoteSyncManager {
     const watcher = vscode.workspace.createFileSystemWatcher(pattern);
     const taskKeys = new Set([taskKey(task.mountName, task.remotePath)]);
     const dispatch = (kind: 'created' | 'changed' | 'deleted') => (uri: vscode.Uri) => {
+      if (uri.fsPath.endsWith('.safs-part')) return;
       for (const candidate of this.tasks.values()) {
         if (!taskKeys.has(taskKey(candidate.mountName, candidate.remotePath))) continue;
         if (kind === 'created') this.onLocalCreated(candidate, uri);

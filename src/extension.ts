@@ -48,6 +48,7 @@ import { defaultSshClientIdent, ensureSshCapabilities } from './ssh-algorithms';
 import { SftpConnectionPool } from './sftp/connection-pool';
 import { migratePiSessionKeys } from './pi-session-migrate';
 import { RemoteSyncManager, RemoteSyncTask, ensureRemoteDir } from './remote-sync';
+import { SyncCoordinator } from './sync-coordination';
 import {
   remotePathForUri, RemoteFolder, RemoteFolderRegistry, SftpFileSystemProvider,
   workspacePathForRemote
@@ -148,6 +149,7 @@ function updateSafsStatusBar(
 }
 
 let syncManager: RemoteSyncManager | undefined;
+let syncCoordinator: SyncCoordinator | undefined;
 const syncTasksKey = 'safs.syncTasks';
 
 function saveSyncTasks(): void {
@@ -159,7 +161,7 @@ function saveSyncTasks(): void {
     }))
   );
   refreshTree();
-  updateSyncStatusBar();
+  void updateSyncStatusBar();
 }
 
 function historySyncTask(item: HistoryItem): RemoteSyncTask | undefined {
@@ -168,16 +170,20 @@ function historySyncTask(item: HistoryItem): RemoteSyncTask | undefined {
   );
 }
 
-function updateSyncStatusBar(): void {
+async function updateSyncStatusBar(): Promise<void> {
   if (!syncStatusBar) return;
   const localFolders = (vscode.workspace.workspaceFolders ?? [])
     .filter((folder) => folder.uri.scheme === 'file')
     .map((folder) => path.resolve(folder.uri.fsPath));
-  const task = syncManager?.list().find((candidate) => {
+  let task: RemoteSyncTask | undefined;
+  for (const candidate of syncManager?.list() ?? []) {
     const target = path.resolve(candidate.localDir);
-    return syncManager?.isReady(candidate.mountName, candidate.remotePath)
-      && localFolders.some((folder) => folder === target);
-  });
+    if (localFolders.some((folder) => folder === target)
+      && await syncCoordinator?.isReady(candidate.mountName, candidate.remotePath)) {
+      task = candidate;
+      break;
+    }
+  }
   if (!task) {
     syncStatusBar.hide();
     return;
@@ -882,12 +888,14 @@ async function enableHistorySync(item: HistoryItem): Promise<void> {
   const manager = syncManager;
   if (!manager) throw new Error('远程同步尚未就绪');
   const localDir = path.join(picked[0].fsPath, path.posix.basename(item.path));
+  await syncCoordinator?.clearReady(item.mountName, item.path);
   manager.add({ mountName: item.mountName, remotePath: item.path, localDir });
   void vscode.window.showInformationMessage(`已开始同步：${item.path} → ${localDir}`);
 }
 
 function disableHistorySync(item: HistoryItem): void {
   syncManager?.remove(item.mountName, item.path);
+  void syncCoordinator?.clearReady(item.mountName, item.path);
 }
 
 // ---- SAFS：可视化下载（大文件流式 + 进度 + 可取消） ----
@@ -2863,6 +2871,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   syncStatusBar.name = 'SAFS 本地同步';
   context.subscriptions.push(syncStatusBar);
+  syncCoordinator = new SyncCoordinator(
+    vscode.Uri.joinPath(context.globalStorageUri, 'sync-coordination').fsPath
+  );
+  context.subscriptions.push({ dispose: () => void syncCoordinator?.dispose() });
   const logCleanup = setInterval(() => {
     output.clear();
     bridgeOutput?.clear();
@@ -2939,13 +2951,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (message) => bridgeOutput?.appendLine(`[远程同步] ${message}`),
     () => saveSyncTasks(),
     // 同步进度显示在 VS Code 底部中间（短暂消息，如“正在下载…”）。
-    (message) => void vscode.window.setStatusBarMessage(message, 3000)
+    (message) => void vscode.window.setStatusBarMessage(message, 3000),
+    (task) => syncCoordinator?.acquire(task.mountName, task.remotePath) ?? Promise.resolve(true),
+    (task) => syncCoordinator?.release(task.mountName, task.remotePath) ?? Promise.resolve(),
+    async (task) => {
+      await syncCoordinator?.markReady(task.mountName, task.remotePath);
+      await updateSyncStatusBar();
+    }
   );
   // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
   for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
     syncManager.add(task);
   }
-  updateSyncStatusBar();
+  void updateSyncStatusBar();
   await guard(preloadRemoteWorkspaces);
   // Merge pi/vscode-pi conversation history from legacy SAFS session keys
   // (WSL, old extension folder) into the current key of the same mount so
@@ -3084,7 +3102,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   command('openHistoryItem', async (item: HistoryItem) => {
     const syncTask = historySyncTask(item);
-    if (syncTask && syncManager?.isReady(item.mountName, item.path)) {
+    if (syncTask) {
+      if (!await syncCoordinator?.isReady(item.mountName, item.path)) {
+        void vscode.window.showInformationMessage(
+          `正在同步 ${item.path}，本地目录准备完成后再打开。`
+        );
+        return;
+      }
       await vscode.commands.executeCommand(
         'vscode.openFolder', vscode.Uri.file(syncTask.localDir), true
       );
@@ -3201,7 +3225,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void syncTerminalToActiveFile(uri);
   }));
   context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(updateSyncStatusBar)
+    vscode.workspace.onDidChangeWorkspaceFolders(() => void updateSyncStatusBar())
   );
 
   // Agent MCP: keep one in-extension fixed HTTP router alive, then start the
