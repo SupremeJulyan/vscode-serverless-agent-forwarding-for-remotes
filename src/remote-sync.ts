@@ -120,7 +120,6 @@ export class RemoteSyncManager {
     const key = taskKey(task.mountName, task.remotePath);
     this.tasks.set(key, task);
     this.readyTasks.delete(key);
-    this.onTaskChanged();
     void this.startTask(task);
   }
 
@@ -151,6 +150,9 @@ export class RemoteSyncManager {
       return;
     }
     this.ownedTasks.add(key);
+    // 只有取得任务所有权的窗口可以持久化任务/指纹；恢复任务的旁观窗口
+    // 不得用自己的旧副本覆盖 owner 刚写入的状态。
+    this.onTaskChanged();
     const monitor = setInterval(() => {
       void this.isStopRequested(task).then((stopped) => {
         if (stopped && this.tasks.get(key) === task) this.remove(task.mountName, task.remotePath);
