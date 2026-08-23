@@ -42,7 +42,13 @@ export class SyncCoordinator {
         const pid = Number(owner.split('-', 1)[0]);
         let alive = Number.isInteger(pid) && pid > 0;
         if (alive) {
-          try { process.kill(pid, 0); } catch { alive = false; }
+          try {
+            process.kill(pid, 0);
+          } catch (error) {
+            // Windows 与多用户环境下 EPERM 表示进程存在但无权发信号：
+            // 只有“进程不存在”（ESRCH 等）才能认定锁已死并回收。
+            alive = (error as NodeJS.ErrnoException).code === 'EPERM';
+          }
         }
         if (alive) return false;
         await fs.rm(lock, { force: true });

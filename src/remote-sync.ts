@@ -292,6 +292,18 @@ export class RemoteSyncManager {
         }
         const localTarget = joinLocal(task.localDir, relTarget);
         await fs.mkdir(path.dirname(localTarget), { recursive: true });
+        // Windows 的 rename 不覆盖已存在目标（与下载替换同理）；先清除目标。
+        // 大小写不同的改名（Foo→foo）在大小写不敏感文件系统上是同一文件，
+        // 按 dev+ino 识别后跳过清除，避免误删唯一副本。
+        const existing = await fs.stat(localTarget).catch(() => undefined);
+        if (existing) {
+          const source = await fs.stat(localFull).catch(() => undefined);
+          const sameFile = source !== undefined
+            && source.dev === existing.dev && source.ino === existing.ino;
+          if (!sameFile) {
+            await fs.rm(localTarget, { recursive: true, force: true }).catch(() => undefined);
+          }
+        }
         await fs.rename(localFull, localTarget).catch(() => undefined);
         this.log(`已重命名本地: ${localFull} -> ${localTarget}`);
       }
