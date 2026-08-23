@@ -13,15 +13,19 @@ export class SyncCoordinator {
 
   constructor(private readonly root: string) {}
 
-  private paths(mountName: string, remotePath: string): {
-    lock: string; ready: string; stopped: string;
-  } {
+  private paths(mountName: string, remotePath: string): { lock: string; stopped: string } {
     const key = keyFor(mountName, remotePath);
     return {
       lock: path.join(this.root, `${key}.lock`),
-      ready: path.join(this.root, `${key}.ready`),
       stopped: path.join(this.root, `${key}.stopped`)
     };
+  }
+
+  private readyPath(mountName: string, remotePath: string, localDir: string): string {
+    const key = createHash('sha256')
+      .update(mountName).update('\0').update(remotePath).update('\0').update(path.resolve(localDir))
+      .digest('hex').slice(0, 24);
+    return path.join(this.root, `${key}.ready`);
   }
 
   async acquire(mountName: string, remotePath: string): Promise<boolean> {
@@ -47,23 +51,23 @@ export class SyncCoordinator {
     return false;
   }
 
-  async markReady(mountName: string, remotePath: string): Promise<void> {
-    const { ready } = this.paths(mountName, remotePath);
+  async markReady(mountName: string, remotePath: string, localDir: string): Promise<void> {
+    const ready = this.readyPath(mountName, remotePath, localDir);
     await fs.mkdir(this.root, { recursive: true });
     await fs.writeFile(ready, `${Date.now()}\n`, { mode: 0o600 });
   }
 
-  async isReady(mountName: string, remotePath: string): Promise<boolean> {
+  async isReady(mountName: string, remotePath: string, localDir: string): Promise<boolean> {
     try {
-      await fs.access(this.paths(mountName, remotePath).ready);
+      await fs.access(this.readyPath(mountName, remotePath, localDir));
       return true;
     } catch {
       return false;
     }
   }
 
-  async clearReady(mountName: string, remotePath: string): Promise<void> {
-    await fs.rm(this.paths(mountName, remotePath).ready, { force: true });
+  async clearReady(mountName: string, remotePath: string, localDir: string): Promise<void> {
+    await fs.rm(this.readyPath(mountName, remotePath, localDir), { force: true });
   }
 
   async requestStop(mountName: string, remotePath: string): Promise<void> {

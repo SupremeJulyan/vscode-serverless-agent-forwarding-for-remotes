@@ -179,7 +179,9 @@ async function updateSyncStatusBar(): Promise<void> {
   for (const candidate of syncManager?.list() ?? []) {
     const target = path.resolve(candidate.localDir);
     if (localFolders.some((folder) => folder === target)
-      && await syncCoordinator?.isReady(candidate.mountName, candidate.remotePath)) {
+      && await syncCoordinator?.isReady(
+        candidate.mountName, candidate.remotePath, candidate.localDir
+      )) {
       task = candidate;
       break;
     }
@@ -837,12 +839,19 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
   const manager = syncManager;
   if (!manager) throw new Error('远程同步尚未就绪');
   if (manager.has(location.mountName, remotePath)) {
+    const existingTask = manager.list().find(
+      (task) => task.mountName === location.mountName && task.remotePath === remotePath
+    );
     const choice = await vscode.window.showInformationMessage(
       `“${remotePath}”已在同步中。`, '停止同步'
     );
     if (choice === '停止同步') {
       await syncCoordinator?.requestStop(location.mountName, remotePath);
-      await syncCoordinator?.clearReady(location.mountName, remotePath);
+      if (existingTask) {
+        await syncCoordinator?.clearReady(
+          location.mountName, remotePath, existingTask.localDir
+        );
+      }
       manager.remove(location.mountName, remotePath);
       saveSyncTasks();
     }
@@ -865,7 +874,7 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
     remotePath,
     localDir: localTarget
   };
-  await syncCoordinator?.clearReady(location.mountName, remotePath);
+  await syncCoordinator?.clearReady(location.mountName, remotePath, localTarget);
   await syncCoordinator?.clearStop(location.mountName, remotePath);
   manager.add(task);
   void vscode.window.showInformationMessage(
@@ -892,7 +901,7 @@ async function enableHistorySync(item: HistoryItem): Promise<void> {
   const manager = syncManager;
   if (!manager) throw new Error('远程同步尚未就绪');
   const localDir = path.join(picked[0].fsPath, path.posix.basename(item.path));
-  await syncCoordinator?.clearReady(item.mountName, item.path);
+  await syncCoordinator?.clearReady(item.mountName, item.path, localDir);
   await syncCoordinator?.clearStop(item.mountName, item.path);
   manager.add({ mountName: item.mountName, remotePath: item.path, localDir });
   void vscode.window.showInformationMessage(`已开始同步：${item.path} → ${localDir}`);
@@ -900,8 +909,9 @@ async function enableHistorySync(item: HistoryItem): Promise<void> {
 
 async function disableHistorySync(item: HistoryItem): Promise<void> {
   await syncCoordinator?.requestStop(item.mountName, item.path);
+  const task = historySyncTask(item);
   syncManager?.remove(item.mountName, item.path);
-  void syncCoordinator?.clearReady(item.mountName, item.path);
+  if (task) await syncCoordinator?.clearReady(item.mountName, item.path, task.localDir);
 }
 
 // ---- SAFS：可视化下载（大文件流式 + 进度 + 可取消） ----
@@ -2961,7 +2971,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (task) => syncCoordinator?.acquire(task.mountName, task.remotePath) ?? Promise.resolve(true),
     (task) => syncCoordinator?.release(task.mountName, task.remotePath) ?? Promise.resolve(),
     async (task) => {
-      await syncCoordinator?.markReady(task.mountName, task.remotePath);
+      await syncCoordinator?.markReady(task.mountName, task.remotePath, task.localDir);
       await updateSyncStatusBar();
     },
     (task) => syncCoordinator?.isStopRequested(task.mountName, task.remotePath)
@@ -3111,7 +3121,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   command('openHistoryItem', async (item: HistoryItem) => {
     const syncTask = historySyncTask(item);
     if (syncTask) {
-      if (!await syncCoordinator?.isReady(item.mountName, item.path)) {
+      if (!await syncCoordinator?.isReady(item.mountName, item.path, syncTask.localDir)) {
         void vscode.window.showInformationMessage(
           `正在同步 ${item.path}，本地目录准备完成后再打开。`
         );
