@@ -9,8 +9,8 @@ import { writeStreamToFile } from './stream-file';
 /**
  * 远程目录/文件 ↔ 本地目录的双向自动同步（事件驱动，不轮询）。
  *
- * 远程 → 本地：VS Code 通过 SAFS 文件系统保存/删除/重命名/建目录时，
- * provider 回调 notifyRemoteChange，把变更同步到本地。
+ * 远程 → 本地：SAFS 文件系统变更通过 provider 回调即时同步；低频指纹扫描
+ * 补获远程终端、Agent 或其他 SSH 客户端直接产生的变更。
  * 本地 → 远程：监听本地目标目录的文件系统事件，把本地变更上传/删除到远程。
  *
  * 一致性设计：
@@ -91,6 +91,7 @@ export class RemoteSyncManager {
   private readonly ownedTasks = new Set<string>();
   private readonly ownershipMonitors = new Map<string, NodeJS.Timeout>();
   private readonly pendingAcquireTimers = new Map<string, NodeJS.Timeout>();
+  private readonly remoteScanTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly getSession: (mountName: string) => Promise<SftpSession>,
@@ -103,7 +104,8 @@ export class RemoteSyncManager {
     private readonly acquireTask: (task: RemoteSyncTask) => Promise<boolean> = async () => true,
     private readonly releaseTask: (task: RemoteSyncTask) => Promise<void> = async () => undefined,
     private readonly markTaskReady: (task: RemoteSyncTask) => Promise<void> = async () => undefined,
-    private readonly isStopRequested: (task: RemoteSyncTask) => Promise<boolean> = async () => false
+    private readonly isStopRequested: (task: RemoteSyncTask) => Promise<boolean> = async () => false,
+    private readonly remoteScanIntervalMs = 5_000
   ) {}
 
   list(): RemoteSyncTask[] {
@@ -142,6 +144,9 @@ export class RemoteSyncManager {
     const pendingAcquire = this.pendingAcquireTimers.get(key);
     if (pendingAcquire) clearTimeout(pendingAcquire);
     this.pendingAcquireTimers.delete(key);
+    const remoteScan = this.remoteScanTimers.get(key);
+    if (remoteScan) clearTimeout(remoteScan);
+    this.remoteScanTimers.delete(key);
     if (this.tasks.get(key) !== task) {
       await this.releaseTask(task);
       return;
@@ -192,6 +197,9 @@ export class RemoteSyncManager {
     const pendingAcquire = this.pendingAcquireTimers.get(key);
     if (pendingAcquire) clearTimeout(pendingAcquire);
     this.pendingAcquireTimers.delete(key);
+    const remoteScan = this.remoteScanTimers.get(key);
+    if (remoteScan) clearTimeout(remoteScan);
+    this.remoteScanTimers.delete(key);
     if (this.ownedTasks.delete(key) && task) void this.releaseTask(task);
     this.log(`已停止同步：${remotePath}`);
     this.onTaskChanged();
@@ -206,6 +214,8 @@ export class RemoteSyncManager {
     this.ownershipMonitors.clear();
     for (const timer of this.pendingAcquireTimers.values()) clearTimeout(timer);
     this.pendingAcquireTimers.clear();
+    for (const timer of this.remoteScanTimers.values()) clearTimeout(timer);
+    this.remoteScanTimers.clear();
     for (const key of this.ownedTasks) {
       const task = this.tasks.get(key);
       if (task) void this.releaseTask(task);
@@ -272,8 +282,8 @@ export class RemoteSyncManager {
   }
 
   /** 首次/恢复时的增量基线同步。成功返回 true；失败返回 false（触发退避重试）。 */
-  private async baseline(task: RemoteSyncTask): Promise<boolean> {
-    this.status(`正在同步: ${task.remotePath} → ${task.localDir}`);
+  private async baseline(task: RemoteSyncTask, showStatus = true): Promise<boolean> {
+    if (showStatus) this.status(`正在同步: ${task.remotePath} → ${task.localDir}`);
     try {
       const session = await this.getSession(task.mountName);
       const lines = await scanRemote(session, task.remotePath);
@@ -326,6 +336,7 @@ export class RemoteSyncManager {
       await this.markTaskReady(task);
       this.startLocalWatcher(task);
       this.onTaskChanged();
+      this.scheduleRemoteScan(task);
       return;
     }
     if (ok) return;
@@ -338,6 +349,26 @@ export class RemoteSyncManager {
     }, delay);
     timer.unref?.();
     this.baselineTimers.set(key, timer);
+  }
+
+  private scheduleRemoteScan(task: RemoteSyncTask): void {
+    const key = taskKey(task.mountName, task.remotePath);
+    if (this.remoteScanTimers.has(key) || this.tasks.get(key) !== task
+      || !this.ownedTasks.has(key)) return;
+    const timer = setTimeout(() => {
+      this.remoteScanTimers.delete(key);
+      void this.runRemoteScan(task);
+    }, this.remoteScanIntervalMs);
+    timer.unref?.();
+    this.remoteScanTimers.set(key, timer);
+  }
+
+  private async runRemoteScan(task: RemoteSyncTask): Promise<void> {
+    const key = taskKey(task.mountName, task.remotePath);
+    if (this.tasks.get(key) !== task || !this.ownedTasks.has(key)) return;
+    const ok = await this.baseline(task, false);
+    if (ok && this.tasks.get(key) === task) this.onTaskChanged();
+    this.scheduleRemoteScan(task);
   }
 
   /** 下载单个远程文件到本地（流式落盘）；覆盖前检测下载窗口内的本地改动，避免覆盖用户编辑。 */

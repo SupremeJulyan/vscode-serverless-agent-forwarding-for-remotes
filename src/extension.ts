@@ -2963,7 +2963,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     idleTimer.unref?.();
     context.subscriptions.push({ dispose: () => clearInterval(idleTimer) });
   }
-  // 远程文件/目录 ↔ 本地双向同步管理器（事件驱动，不轮询）。
+  // 远程文件/目录 ↔ 本地双向同步管理器：provider 事件即时同步，低频扫描
+  // 补获终端、Agent 与其他 SSH 客户端直接产生的远程变更。
   syncManager = new RemoteSyncManager(
     async (mountName) => {
       const existing = registry.get(mountName);
@@ -2997,7 +2998,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await updateSyncStatusBar();
     },
     (task) => syncCoordinator?.isStopRequested(task.mountName, task.remotePath)
-      ?? Promise.resolve(false)
+      ?? Promise.resolve(false),
+    settings().get<number>('sftp.watchInterval', 5) * 1000
   );
   // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
   for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
