@@ -842,6 +842,7 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
     );
     if (choice === '停止同步') {
       await syncCoordinator?.requestStop(location.mountName, remotePath);
+      await syncCoordinator?.clearReady(location.mountName, remotePath);
       manager.remove(location.mountName, remotePath);
       saveSyncTasks();
     }
@@ -864,6 +865,7 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
     remotePath,
     localDir: localTarget
   };
+  await syncCoordinator?.clearReady(location.mountName, remotePath);
   await syncCoordinator?.clearStop(location.mountName, remotePath);
   manager.add(task);
   void vscode.window.showInformationMessage(
