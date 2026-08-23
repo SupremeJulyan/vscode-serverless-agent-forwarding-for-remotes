@@ -38,6 +38,20 @@ export interface RemoteSyncTask {
   resetLocalOnFirstSync?: boolean;
 }
 
+export interface RemoteSyncProgress {
+  phase: 'scanning' | 'downloading';
+  currentFile?: string;
+  completedFiles: number;
+  totalFiles: number;
+  transferredBytes: number;
+  totalBytes: number;
+}
+
+export interface RemoteSyncStartOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: RemoteSyncProgress) => void;
+}
+
 export type RemoteMutationKind = 'write' | 'delete' | 'rename' | 'mkdir';
 
 function taskKey(mountName: string, remotePath: string): string {
@@ -121,14 +135,16 @@ export class RemoteSyncManager {
     return this.readyTasks.has(taskKey(mountName, remotePath));
   }
 
-  add(task: RemoteSyncTask): Promise<void> {
+  add(task: RemoteSyncTask, options: RemoteSyncStartOptions = {}): Promise<void> {
     const key = taskKey(task.mountName, task.remotePath);
     this.tasks.set(key, task);
     this.readyTasks.delete(key);
-    return this.startTask(task);
+    return this.startTask(task, options);
   }
 
-  private async startTask(task: RemoteSyncTask): Promise<void> {
+  private async startTask(
+    task: RemoteSyncTask, options: RemoteSyncStartOptions = {}
+  ): Promise<void> {
     const key = taskKey(task.mountName, task.remotePath);
     if (!await this.acquireTask(task)) {
       this.log(`同步任务由另一个 VS Code 窗口管理：${task.remotePath}`);
@@ -168,7 +184,7 @@ export class RemoteSyncManager {
     }, 1_000);
     monitor.unref?.();
     this.ownershipMonitors.set(key, monitor);
-    await this.runBaseline(task, 0);
+    await this.runBaseline(task, 0, options);
   }
 
   remove(mountName: string, remotePath: string): void {
@@ -285,17 +301,34 @@ export class RemoteSyncManager {
   }
 
   /** 首次/恢复时的增量基线同步。成功返回 true；失败返回 false（触发退避重试）。 */
-  private async baseline(task: RemoteSyncTask, showStatus = true): Promise<boolean> {
+  private async baseline(
+    task: RemoteSyncTask, showStatus = true, options: RemoteSyncStartOptions = {}
+  ): Promise<boolean> {
     if (showStatus) this.status(`正在同步: ${task.remotePath} → ${task.localDir}`);
     try {
       const session = await this.getSession(task.mountName);
-      const lines = await scanRemote(session, task.remotePath);
+      options.onProgress?.({
+        phase: 'scanning', completedFiles: 0, totalFiles: 0,
+        transferredBytes: 0, totalBytes: 0
+      });
+      const lines = await scanRemote(session, task.remotePath, options.signal);
       const isFile = lines.length === 1 && lines[0].startsWith('f::');
       if (!task.fingerprintLines) {
         if (task.resetLocalOnFirstSync) {
           await fs.rm(task.localDir, { recursive: true, force: true });
         }
-        await this.downloadTree(session, task.remotePath, task.localDir, isFile);
+        const fileLines = lines.filter((line) => line.startsWith('f:'));
+        const totalBytes = fileLines.reduce((sum, line) => {
+          const relEnd = line.indexOf(':', 2);
+          return sum + Number(line.slice(relEnd + 1).split(':', 1)[0] || 0);
+        }, 0);
+        const progressState = {
+          completedFiles: 0, totalFiles: fileLines.length,
+          transferredBytes: 0, totalBytes
+        };
+        await this.downloadTree(
+          session, task.remotePath, task.localDir, isFile, options, progressState
+        );
         task.resetLocalOnFirstSync = false;
         this.log(`首次同步完成: ${task.remotePath} -> ${task.localDir}（${lines.length} 项）`);
       } else {
@@ -329,9 +362,11 @@ export class RemoteSyncManager {
     }
   }
 
-  private async runBaseline(task: RemoteSyncTask, attempt: number): Promise<void> {
+  private async runBaseline(
+    task: RemoteSyncTask, attempt: number, options: RemoteSyncStartOptions = {}
+  ): Promise<void> {
     const key = taskKey(task.mountName, task.remotePath);
-    const ok = await this.baseline(task);
+    const ok = await this.baseline(task, true, options);
     // 下载期间用户可能已经关闭同步（或用同一路径创建了新任务）；旧基线
     // 不得在这时复活 watcher 或把新任务错误标记为就绪。
     if (ok && this.tasks.get(key) === task) {
@@ -343,6 +378,10 @@ export class RemoteSyncManager {
       return;
     }
     if (ok) return;
+    if (options.signal?.aborted) {
+      this.remove(task.mountName, task.remotePath);
+      return;
+    }
     if (!this.tasks.has(key) || this.baselineTimers.has(key)) return;
     // 指数退避重试：连接中断/瞬时故障时不留下半初始化镜像。
     const delay = Math.min(baselineRetryBaseMs * 2 ** attempt, baselineRetryCapMs);
@@ -376,7 +415,8 @@ export class RemoteSyncManager {
 
   /** 下载单个远程文件到本地（流式落盘）；覆盖前检测下载窗口内的本地改动，避免覆盖用户编辑。 */
   private async downloadOne(
-    session: SftpSession, remotePath: string, localFull: string
+    session: SftpSession, remotePath: string, localFull: string,
+    options: RemoteSyncStartOptions = {}, onDelta?: (delta: number) => void
   ): Promise<void> {
     await this.withDownload(localFull, async () => {
       await fs.mkdir(path.dirname(localFull), { recursive: true });
@@ -387,7 +427,10 @@ export class RemoteSyncManager {
       // 避免两个实例互相 rename/delete 同一个固定 .safs-part 路径。
       const temporaryPath = `${localFull}.${process.pid}-${randomBytes(6).toString('hex')}.safs-part`;
       try {
-        await writeStreamToFile(await session.readFileStream(remotePath), temporaryPath);
+        await writeStreamToFile(
+          await session.readFileStream(remotePath, options.signal), temporaryPath,
+          { signal: options.signal, onDelta }
+        );
       } catch (error) {
         await fs.rm(temporaryPath, { force: true });
         throw error;
@@ -431,10 +474,31 @@ export class RemoteSyncManager {
   }
 
   private async downloadTree(
-    session: SftpSession, remotePath: string, localTarget: string, isFile?: boolean
+    session: SftpSession, remotePath: string, localTarget: string, isFile?: boolean,
+    options: RemoteSyncStartOptions = {},
+    progressState?: {
+      completedFiles: number; totalFiles: number; transferredBytes: number; totalBytes: number;
+    }
   ): Promise<void> {
     if (isFile) {
-      await this.downloadOne(session, remotePath, localTarget);
+      options.onProgress?.({
+        phase: 'downloading', currentFile: remotePath,
+        ...(progressState ?? {
+          completedFiles: 0, totalFiles: 1, transferredBytes: 0, totalBytes: 0
+        })
+      });
+      await this.downloadOne(session, remotePath, localTarget, {
+        ...options,
+        onProgress: undefined
+      }, (delta) => {
+        if (!progressState) return;
+        progressState.transferredBytes += delta;
+        options.onProgress?.({ phase: 'downloading', currentFile: remotePath, ...progressState });
+      });
+      if (progressState) {
+        progressState.completedFiles++;
+        options.onProgress?.({ phase: 'downloading', currentFile: remotePath, ...progressState });
+      }
       return;
     }
     const stat = await session.stat(remotePath);
@@ -448,13 +512,13 @@ export class RemoteSyncManager {
           await fs.mkdir(localTarget, { recursive: true });
         }
       });
-      const entries = await session.readDirectory(remotePath);
+      const entries = await session.readDirectory(remotePath, options.signal);
       for (const entry of entries) {
         await this.downloadTree(
           session,
           path.posix.join(remotePath, entry.name),
           path.join(localTarget, entry.name),
-          entry.type !== 'directory'
+          entry.type !== 'directory', options, progressState
         );
       }
     } else {

@@ -12,15 +12,15 @@ import { SftpSession } from './sftp/session';
 
 /** 递归扫描远程子树，返回排序后的指纹行数组。 */
 export async function scanRemote(
-  session: SftpSession, remotePath: string
+  session: SftpSession, remotePath: string, signal?: AbortSignal
 ): Promise<string[]> {
-  const rootStat = await session.stat(remotePath);
+  const rootStat = await session.stat(remotePath, signal);
   if (rootStat.type !== 'directory') {
     return [`f::${rootStat.size}:${rootStat.mtime}`];
   }
   const lines: string[] = [];
   const walk = async (dir: string): Promise<void> => {
-    const entries = await session.readDirectory(dir);
+    const entries = await session.readDirectory(dir, signal);
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const full = path.posix.join(dir, entry.name);

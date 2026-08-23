@@ -883,11 +883,7 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
   };
   await syncCoordinator?.clearReady(location.mountName, remotePath, localTarget);
   await syncCoordinator?.clearStop(location.mountName, remotePath);
-  await vscode.window.withProgress({
-    location: vscode.ProgressLocation.Notification,
-    title: `SAFS：正在同步 ${remotePath} 到本地`,
-    cancellable: false
-  }, () => manager.add(task));
+  if (!await startRemoteSyncWithProgress(manager, task)) return;
   void vscode.window.showInformationMessage(
     `已开始同步：${remotePath} → ${localTarget}`
   );
@@ -929,13 +925,9 @@ async function enableHistorySync(item: HistoryItem): Promise<void> {
   if (resetLocalOnFirstSync === undefined) return;
   await syncCoordinator?.clearReady(item.mountName, item.path, localDir);
   await syncCoordinator?.clearStop(item.mountName, item.path);
-  await vscode.window.withProgress({
-    location: vscode.ProgressLocation.Notification,
-    title: `SAFS：正在同步 ${item.path} 到本地`,
-    cancellable: false
-  }, () => manager.add({
+  if (!await startRemoteSyncWithProgress(manager, {
     mountName: item.mountName, remotePath: item.path, localDir, resetLocalOnFirstSync
-  }));
+  })) return;
   void vscode.window.showInformationMessage(`已开始同步：${item.path} → ${localDir}`);
 }
 
@@ -953,6 +945,53 @@ function formatDownloadBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${bytes} B`;
+}
+
+async function startRemoteSyncWithProgress(
+  manager: RemoteSyncManager, task: RemoteSyncTask
+): Promise<boolean> {
+  return vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `SAFS：同步 ${path.posix.basename(task.remotePath)} 到本地`,
+    cancellable: true
+  }, async (progress, token) => {
+    const controller = new AbortController();
+    const cancellation = token.onCancellationRequested(() => controller.abort());
+    let reportedPercent = 0;
+    progress.report({ message: '正在扫描远程目录…' });
+    try {
+      await manager.add(task, {
+        signal: controller.signal,
+        onProgress: (state) => {
+          if (state.phase === 'scanning') {
+            progress.report({ message: '正在统计文件数量和大小…' });
+            return;
+          }
+          const percent = state.totalBytes > 0
+            ? Math.min(100, state.transferredBytes / state.totalBytes * 100)
+            : state.totalFiles > 0
+              ? state.completedFiles / state.totalFiles * 100
+              : 100;
+          const increment = Math.max(0, percent - reportedPercent);
+          reportedPercent = Math.max(reportedPercent, percent);
+          const file = state.currentFile ? path.posix.basename(state.currentFile) : '';
+          progress.report({
+            message: `${file} · ${state.completedFiles}/${state.totalFiles} 个文件 · ${
+              formatDownloadBytes(state.transferredBytes)
+            }/${formatDownloadBytes(state.totalBytes)}（${Math.floor(percent)}%）`,
+            increment
+          });
+        }
+      });
+      if (controller.signal.aborted) {
+        void vscode.window.showInformationMessage(`已取消同步 ${task.remotePath}。`);
+        return false;
+      }
+      return true;
+    } finally {
+      cancellation.dispose();
+    }
+  });
 }
 
 async function visualDownload(uri?: vscode.Uri): Promise<void> {
