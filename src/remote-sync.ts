@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { isRemotePathInsideRoot } from './sftp/uri';
 import { SftpSession } from './sftp/session';
@@ -120,11 +121,11 @@ export class RemoteSyncManager {
     return this.readyTasks.has(taskKey(mountName, remotePath));
   }
 
-  add(task: RemoteSyncTask): void {
+  add(task: RemoteSyncTask): Promise<void> {
     const key = taskKey(task.mountName, task.remotePath);
     this.tasks.set(key, task);
     this.readyTasks.delete(key);
-    void this.startTask(task);
+    return this.startTask(task);
   }
 
   private async startTask(task: RemoteSyncTask): Promise<void> {
@@ -382,7 +383,9 @@ export class RemoteSyncManager {
       const before = await fs.stat(localFull).catch(() => undefined);
       // 流式下载到临时文件：下载期间目标文件不被触碰，完成后按 before/after
       // 比对决定是否替换——本地在下载期间被修改/删除则丢弃产物，保留用户改动。
-      const temporaryPath = `${localFull}.safs-part`;
+      // Extension Host 重载时旧基线可能仍在收尾；每次下载使用唯一临时文件，
+      // 避免两个实例互相 rename/delete 同一个固定 .safs-part 路径。
+      const temporaryPath = `${localFull}.${process.pid}-${randomBytes(6).toString('hex')}.safs-part`;
       try {
         await writeStreamToFile(await session.readFileStream(remotePath), temporaryPath);
       } catch (error) {

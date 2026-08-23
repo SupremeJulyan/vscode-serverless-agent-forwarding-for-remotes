@@ -883,7 +883,11 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
   };
   await syncCoordinator?.clearReady(location.mountName, remotePath, localTarget);
   await syncCoordinator?.clearStop(location.mountName, remotePath);
-  manager.add(task);
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `SAFS：正在同步 ${remotePath} 到本地`,
+    cancellable: false
+  }, () => manager.add(task));
   void vscode.window.showInformationMessage(
     `已开始同步：${remotePath} → ${localTarget}`
   );
@@ -925,9 +929,13 @@ async function enableHistorySync(item: HistoryItem): Promise<void> {
   if (resetLocalOnFirstSync === undefined) return;
   await syncCoordinator?.clearReady(item.mountName, item.path, localDir);
   await syncCoordinator?.clearStop(item.mountName, item.path);
-  manager.add({
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `SAFS：正在同步 ${item.path} 到本地`,
+    cancellable: false
+  }, () => manager.add({
     mountName: item.mountName, remotePath: item.path, localDir, resetLocalOnFirstSync
-  });
+  }));
   void vscode.window.showInformationMessage(`已开始同步：${item.path} → ${localDir}`);
 }
 
@@ -3005,7 +3013,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
   for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
-    syncManager.add(task);
+    void syncManager.add(task);
   }
   void updateSyncStatusBar();
   await guard(preloadRemoteWorkspaces);
