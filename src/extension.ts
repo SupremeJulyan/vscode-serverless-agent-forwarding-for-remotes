@@ -2160,6 +2160,27 @@ async function restoreRemoteWorkspaces(): Promise<void> {
   }
 }
 
+/**
+ * 同步镜像以 file:// 工作区打开，不会进入 restoreRemoteWorkspaces。
+ * 根据持久化同步任务把本地根映射回远程 cwd，恢复与远程工作区一致的自动终端。
+ */
+async function restoreSyncedLocalWorkspaceTerminal(): Promise<void> {
+  const localRoots = (vscode.workspace.workspaceFolders ?? [])
+    .filter((folder) => folder.uri.scheme === 'file')
+    .map((folder) => path.resolve(folder.uri.fsPath));
+  if (localRoots.length === 0 || !syncManager) return;
+  const task = syncManager.list().find((candidate) =>
+    localRoots.includes(path.resolve(candidate.localDir))
+  );
+  if (!task || !await syncCoordinator?.isReady(
+    task.mountName, task.remotePath, task.localDir
+  )) return;
+  const config = await readConfig();
+  const mount = config.mounts.find((candidate) => candidate.name === task.mountName);
+  if (!mount || mount.remote_terminal !== 'open') return;
+  await openTerminal(vscodeContext, mount, task.remotePath);
+}
+
 async function preloadRemoteWorkspaces(): Promise<void> {
   const workspaces = vscode.workspace.workspaceFolders?.filter(
     (folder) => folder.uri.scheme === remoteFileSystemScheme
@@ -3306,6 +3327,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Restore workspaces on startup
   await guard(restoreRemoteWorkspaces);
+  await guard(restoreSyncedLocalWorkspaceTerminal);
   tree.refresh();
 
   // 每次切换到远程文件时：若设置开启则同步终端；重开窗口后首次文件激活
