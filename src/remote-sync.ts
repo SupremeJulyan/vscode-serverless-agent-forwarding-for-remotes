@@ -66,6 +66,8 @@ const baselineRetryCapMs = 30_000;
 
 export class RemoteSyncManager {
   private readonly tasks = new Map<string, RemoteSyncTask>();
+  /** 已完成首次/恢复基线、可以安全打开本地镜像的任务。 */
+  private readonly readyTasks = new Set<string>();
   /** localDir → watcher 与共享该 watcher 的任务 key 集合（引用计数共享）。 */
   private readonly watchers = new Map<string, {
     watcher: vscode.Disposable;
@@ -103,8 +105,14 @@ export class RemoteSyncManager {
     return this.tasks.has(taskKey(mountName, remotePath));
   }
 
+  isReady(mountName: string, remotePath: string): boolean {
+    return this.readyTasks.has(taskKey(mountName, remotePath));
+  }
+
   add(task: RemoteSyncTask): void {
-    this.tasks.set(taskKey(task.mountName, task.remotePath), task);
+    const key = taskKey(task.mountName, task.remotePath);
+    this.tasks.set(key, task);
+    this.readyTasks.delete(key);
     this.onTaskChanged();
     void this.runBaseline(task, 0);
   }
@@ -129,6 +137,7 @@ export class RemoteSyncManager {
       this.localOpQueues.delete(key);
     }
     this.tasks.delete(key);
+    this.readyTasks.delete(key);
     this.log(`已停止同步：${remotePath}`);
     this.onTaskChanged();
   }
@@ -241,11 +250,15 @@ export class RemoteSyncManager {
   private async runBaseline(task: RemoteSyncTask, attempt: number): Promise<void> {
     const key = taskKey(task.mountName, task.remotePath);
     const ok = await this.baseline(task);
-    if (ok) {
+    // 下载期间用户可能已经关闭同步（或用同一路径创建了新任务）；旧基线
+    // 不得在这时复活 watcher 或把新任务错误标记为就绪。
+    if (ok && this.tasks.get(key) === task) {
+      this.readyTasks.add(key);
       this.startLocalWatcher(task);
       this.onTaskChanged();
       return;
     }
+    if (ok) return;
     if (!this.tasks.has(key) || this.baselineTimers.has(key)) return;
     // 指数退避重试：连接中断/瞬时故障时不留下半初始化镜像。
     const delay = Math.min(baselineRetryBaseMs * 2 ** attempt, baselineRetryCapMs);

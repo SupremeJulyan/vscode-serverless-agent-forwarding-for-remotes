@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.5.7",
+  "version": "1.6.0",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -50,6 +50,8 @@
     "onCommand:safs.copyStreamableHttpUrl",
     "onCommand:safs.installAgentForwarding",
     "onCommand:safs.openHistoryItem",
+    "onCommand:safs.enableHistorySync",
+    "onCommand:safs.disableHistorySync",
     "onCommand:safs.openTerminalFromHistory",
     "onCommand:safs.deleteHistoryItem"
   ],
@@ -144,6 +146,16 @@
         "command": "safs.visualUpload",
         "title": "SAFS：可视化上传",
         "icon": "$(arrow-up)"
+      },
+      {
+        "command": "safs.enableHistorySync",
+        "title": "开启本地同步",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "safs.disableHistorySync",
+        "title": "关闭本地同步",
+        "icon": "$(sync-ignored)"
       },
       {
         "command": "safs.openHistoryItem",
@@ -271,6 +283,16 @@
           "command": "safs.deleteConfigItem",
           "when": "view == safs.mounts && viewItem =~ /safs\\.connection/",
           "group": "inline@4"
+        },
+        {
+          "command": "safs.enableHistorySync",
+          "when": "view == safs.mounts && viewItem == safs.history.syncDisabled",
+          "group": "inline@0"
+        },
+        {
+          "command": "safs.disableHistorySync",
+          "when": "view == safs.mounts && viewItem == safs.history.syncEnabled",
+          "group": "inline@0"
         },
         {
           "command": "safs.openHistoryItem",
