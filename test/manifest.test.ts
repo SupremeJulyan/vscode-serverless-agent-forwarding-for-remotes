@@ -22,7 +22,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.6.1');
+  assert.equal(manifest.version, '1.6.2');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -68,11 +68,15 @@ test('packages Agent integration without a spawned stdio router or Codex plugin'
 test('shows when this window is the Agent forwarding focus', async () => {
   const extensionSource = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
   assert.ok(extensionSource.includes(
-    '当前窗口已作为Agent转发焦点，可以让它干活了 😏'
+    '$(sparkle) Agent 已聚焦当前窗口😏'
   ));
   assert.ok(extensionSource.includes(
-    '当前窗口已作为Agent转发焦点，${source}正在干活 💪'
+    '$(sparkle) ${source}远程转发中💪'
   ));
+  // 悬停说明路由关系；同步镜像窗口注明改动与远程双向同步。
+  assert.ok(extensionSource.includes('本窗口的远程连接干活'));
+  assert.ok(extensionSource.includes('改动与远程双向同步'));
+  assert.ok(extensionSource.includes('isSyncMirrorWindow()'));
   assert.ok(extensionSource.includes("value: 'wsl'"));
   assert.ok(extensionSource.includes("value: 'mac'"));
   assert.ok(extensionSource.includes("value: 'linux'"));
@@ -84,6 +88,16 @@ test('shows when this window is the Agent forwarding focus', async () => {
   ));
   assert.ok(extensionSource.includes("'safs.agentForwardingFocus'"));
   assert.ok(extensionSource.includes('vscode.StatusBarAlignment.Left, 10_000'));
+  // SAFS SFTP 入口与转发焦点提示分项显示（与 SAFS SYNC 一致），互不顶替。
+  assert.ok(extensionSource.includes("'safs.sftpEntry'"));
+  assert.ok(extensionSource.includes("'$(remote) SAFS SCP'"));
+  assert.ok(extensionSource.includes("'$(remote) SAFS SFTP'"));
+  assert.ok(extensionSource.includes('forwardingFocusStatusBar.show()'));
+  assert.ok(extensionSource.includes('forwardingFocusStatusBar.hide()'));
+  // 服务器无 SFTP 子系统回退 SCP/exec 时，入口显示为 SAFS SCP 并即时刷新。
+  assert.ok(extensionSource.includes('refreshSafsEntryLabel()'));
+  // 连接状态变化事件即时刷新入口文案（重连换通道、空闲回收后懒重连）。
+  assert.ok(extensionSource.includes('refreshTree();\n      refreshSafsEntryLabel()'));
 });
 
 test('uses only the unified cross-platform config path', async () => {

@@ -158,6 +158,12 @@ export class SftpConnectionPool {
     return entry?.state ?? 'disconnected';
   }
 
+  /** 活动会话的传输通道（'sftp' 或 SCP/exec 回退）；未连接返回 undefined，不触发新连接。 */
+  transport(hostName: string): 'sftp' | 'scp' | undefined {
+    const entry = this.entries.get(hostName);
+    return entry?.session?.isAlive() ? entry.session.transport : undefined;
+  }
+
   error(hostName: string): Error | undefined {
     return this.entries.get(hostName)?.error;
   }
