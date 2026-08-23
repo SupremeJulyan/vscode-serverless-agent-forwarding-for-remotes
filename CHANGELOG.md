@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.7
+
+- 新增 **SAFS: 为我的Agent安装转发功能** 命令：与"复制 Streamable HTTP URL"
+  相同的 Agent 名与平台选择流程，但复制到剪贴板的是一段安装提示词；
+  把提示词粘贴到 Agent 输入框，由 Agent 自行注册名为 `safs` 的
+  Streamable HTTP MCP 服务器（用户级）。
+
 ## 1.5.6
 
 - Agent 焦点底栏改为两阶段文案：尚未收到 MCP 调用时提示

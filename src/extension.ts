@@ -2954,9 +2954,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await addSshConfig(context);
     tree.refresh();
   });
-  command('copyStreamableHttpUrl', async () => {
+  const askAgentNameAndPlatform = async (
+    title: string
+  ): Promise<{ agentName: string; platform: AgentPlatformLabel } | undefined> => {
     const agentName = await vscode.window.showInputBox({
-      title: 'SAFS：复制 Streamable HTTP URL',
+      title,
       prompt: '请输入使用该 URL 的 Agent 名（仅用于日志和诊断）',
       placeHolder: '例如：Codex、Claude、MyAgent',
       ignoreFocusOut: true,
@@ -2968,7 +2970,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             ? 'Agent 名不能包含控制字符'
             : undefined
     });
-    if (agentName === undefined) return;
+    if (agentName === undefined) return undefined;
     const platform = await vscode.window.showQuickPick<{
       label: string; description: string; value: AgentPlatformLabel;
     }>([
@@ -2981,13 +2983,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       placeHolder: '选择 wsl、mac、linux 或 win',
       ignoreFocusOut: true
     });
-    if (!platform) return;
+    if (!platform) return undefined;
+    return { agentName: agentName.trim(), platform: platform.value };
+  };
+  command('copyStreamableHttpUrl', async () => {
+    const answer = await askAgentNameAndPlatform('SAFS：复制 Streamable HTTP URL');
+    if (!answer) return;
     startAgentHttpRouterLeadership(context);
     const router = await ensureAgentHttpRouter(context);
-    const url = agentTaggedMcpUrl(router.url, agentName, platform.value);
+    const url = agentTaggedMcpUrl(router.url, answer.agentName, answer.platform);
     await vscode.env.clipboard.writeText(url);
     void vscode.window.showInformationMessage(
-      `已复制 ${agentName.trim()} 的 Streamable HTTP URL。在 Agent 的 MCP 设置中添加服务器“safs”，粘贴该地址后重启 Agent。`
+      `已复制 ${answer.agentName} 的 Streamable HTTP URL。在 Agent 的 MCP 设置中添加服务器“safs”，粘贴该地址后重启 Agent。`
+    );
+  });
+  command('installAgentForwarding', async () => {
+    const answer =
+      await askAgentNameAndPlatform('SAFS：为我的Agent安装转发功能');
+    if (!answer) return;
+    startAgentHttpRouterLeadership(context);
+    const router = await ensureAgentHttpRouter(context);
+    const url = agentTaggedMcpUrl(router.url, answer.agentName, answer.platform);
+    // 复制一段提示词而不是裸 URL：让 Agent 自己完成 MCP 注册，
+    // 用户只需把提示词粘贴到 Agent 输入框里。
+    const promptText = [
+      `请为自己安装名为 safs 的 MCP 服务器（Streamable HTTP，用户级）：${url}`,
+      '完成后提醒我重启并新建对话生效。该 URL 含鉴权令牌，不要外泄。'
+    ].join('\n');
+    await vscode.env.clipboard.writeText(promptText);
+    void vscode.window.showInformationMessage(
+      `已复制 ${answer.agentName} 的安装提示词。请把提示词粘贴到 Agent 输入框里，由 Agent 自动完成 SAFS 转发配置。`
     );
   });
   command('refreshExplorer', async () => tree.refresh());
