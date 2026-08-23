@@ -841,6 +841,7 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
       `“${remotePath}”已在同步中。`, '停止同步'
     );
     if (choice === '停止同步') {
+      await syncCoordinator?.requestStop(location.mountName, remotePath);
       manager.remove(location.mountName, remotePath);
       saveSyncTasks();
     }
@@ -863,6 +864,7 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
     remotePath,
     localDir: localTarget
   };
+  await syncCoordinator?.clearStop(location.mountName, remotePath);
   manager.add(task);
   void vscode.window.showInformationMessage(
     `已开始同步：${remotePath} → ${localTarget}`
@@ -889,11 +891,13 @@ async function enableHistorySync(item: HistoryItem): Promise<void> {
   if (!manager) throw new Error('远程同步尚未就绪');
   const localDir = path.join(picked[0].fsPath, path.posix.basename(item.path));
   await syncCoordinator?.clearReady(item.mountName, item.path);
+  await syncCoordinator?.clearStop(item.mountName, item.path);
   manager.add({ mountName: item.mountName, remotePath: item.path, localDir });
   void vscode.window.showInformationMessage(`已开始同步：${item.path} → ${localDir}`);
 }
 
-function disableHistorySync(item: HistoryItem): void {
+async function disableHistorySync(item: HistoryItem): Promise<void> {
+  await syncCoordinator?.requestStop(item.mountName, item.path);
   syncManager?.remove(item.mountName, item.path);
   void syncCoordinator?.clearReady(item.mountName, item.path);
 }
@@ -2957,7 +2961,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     async (task) => {
       await syncCoordinator?.markReady(task.mountName, task.remotePath);
       await updateSyncStatusBar();
-    }
+    },
+    (task) => syncCoordinator?.isStopRequested(task.mountName, task.remotePath)
+      ?? Promise.resolve(false)
   );
   // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
   for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
@@ -3144,7 +3150,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     tree.refresh();
   });
   command('disableHistorySync', async (item: HistoryItem) => {
-    disableHistorySync(item);
+    await disableHistorySync(item);
     tree.refresh();
   });
   command('openTerminalFromHistory', async (item: HistoryItem) => {

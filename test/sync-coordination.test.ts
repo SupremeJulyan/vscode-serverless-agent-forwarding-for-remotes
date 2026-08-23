@@ -27,3 +27,13 @@ test('clearing readiness is visible to other coordinators', async () => {
   await second.clearReady('dev', '/srv/project');
   assert.equal(await first.isReady('dev', '/srv/project'), false);
 });
+
+test('stop requests are shared and can be cleared when restarting', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'safs-sync-stop-'));
+  const first = new SyncCoordinator(root);
+  const second = new SyncCoordinator(root);
+  await first.requestStop('dev', '/srv/project');
+  assert.equal(await second.isStopRequested('dev', '/srv/project'), true);
+  await second.clearStop('dev', '/srv/project');
+  assert.equal(await first.isStopRequested('dev', '/srv/project'), false);
+});

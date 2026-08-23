@@ -87,6 +87,7 @@ export class RemoteSyncManager {
   /** 基线失败后的退避重试定时器。 */
   private readonly baselineTimers = new Map<string, NodeJS.Timeout>();
   private readonly ownedTasks = new Set<string>();
+  private readonly ownershipMonitors = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly getSession: (mountName: string) => Promise<SftpSession>,
@@ -98,7 +99,8 @@ export class RemoteSyncManager {
     private readonly status: (message: string) => void = () => undefined,
     private readonly acquireTask: (task: RemoteSyncTask) => Promise<boolean> = async () => true,
     private readonly releaseTask: (task: RemoteSyncTask) => Promise<void> = async () => undefined,
-    private readonly markTaskReady: (task: RemoteSyncTask) => Promise<void> = async () => undefined
+    private readonly markTaskReady: (task: RemoteSyncTask) => Promise<void> = async () => undefined,
+    private readonly isStopRequested: (task: RemoteSyncTask) => Promise<boolean> = async () => false
   ) {}
 
   list(): RemoteSyncTask[] {
@@ -132,6 +134,13 @@ export class RemoteSyncManager {
       return;
     }
     this.ownedTasks.add(key);
+    const monitor = setInterval(() => {
+      void this.isStopRequested(task).then((stopped) => {
+        if (stopped && this.tasks.get(key) === task) this.remove(task.mountName, task.remotePath);
+      });
+    }, 1_000);
+    monitor.unref?.();
+    this.ownershipMonitors.set(key, monitor);
     await this.runBaseline(task, 0);
   }
 
@@ -156,6 +165,9 @@ export class RemoteSyncManager {
     }
     this.tasks.delete(key);
     this.readyTasks.delete(key);
+    const monitor = this.ownershipMonitors.get(key);
+    if (monitor) clearInterval(monitor);
+    this.ownershipMonitors.delete(key);
     if (this.ownedTasks.delete(key) && task) void this.releaseTask(task);
     this.log(`已停止同步：${remotePath}`);
     this.onTaskChanged();
@@ -166,6 +178,8 @@ export class RemoteSyncManager {
     this.baselineTimers.clear();
     for (const entry of this.watchers.values()) entry.watcher.dispose();
     this.watchers.clear();
+    for (const monitor of this.ownershipMonitors.values()) clearInterval(monitor);
+    this.ownershipMonitors.clear();
     for (const key of this.ownedTasks) {
       const task = this.tasks.get(key);
       if (task) void this.releaseTask(task);

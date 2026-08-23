@@ -13,11 +13,14 @@ export class SyncCoordinator {
 
   constructor(private readonly root: string) {}
 
-  private paths(mountName: string, remotePath: string): { lock: string; ready: string } {
+  private paths(mountName: string, remotePath: string): {
+    lock: string; ready: string; stopped: string;
+  } {
     const key = keyFor(mountName, remotePath);
     return {
       lock: path.join(this.root, `${key}.lock`),
-      ready: path.join(this.root, `${key}.ready`)
+      ready: path.join(this.root, `${key}.ready`),
+      stopped: path.join(this.root, `${key}.stopped`)
     };
   }
 
@@ -61,6 +64,25 @@ export class SyncCoordinator {
 
   async clearReady(mountName: string, remotePath: string): Promise<void> {
     await fs.rm(this.paths(mountName, remotePath).ready, { force: true });
+  }
+
+  async requestStop(mountName: string, remotePath: string): Promise<void> {
+    const { stopped } = this.paths(mountName, remotePath);
+    await fs.mkdir(this.root, { recursive: true });
+    await fs.writeFile(stopped, `${Date.now()}\n`, { mode: 0o600 });
+  }
+
+  async clearStop(mountName: string, remotePath: string): Promise<void> {
+    await fs.rm(this.paths(mountName, remotePath).stopped, { force: true });
+  }
+
+  async isStopRequested(mountName: string, remotePath: string): Promise<boolean> {
+    try {
+      await fs.access(this.paths(mountName, remotePath).stopped);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async release(mountName: string, remotePath: string): Promise<void> {
