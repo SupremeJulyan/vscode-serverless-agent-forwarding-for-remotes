@@ -158,9 +158,9 @@ function saveSyncTasks(persist = true): void {
     void vscodeContext.globalState.update(
       syncTasksKey,
       syncManager.list().map(({
-        mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
+        mountName, remotePath, localDir, isFile, fingerprintLines, resetLocalOnFirstSync
       }) => ({
-        mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
+        mountName, remotePath, localDir, isFile, fingerprintLines, resetLocalOnFirstSync
       }))
     );
   }
@@ -172,6 +172,36 @@ function historySyncTask(item: HistoryItem): RemoteSyncTask | undefined {
   return syncManager?.list().find(
     (task) => task.mountName === item.mountName && task.remotePath === item.path
   );
+}
+
+/** 找到包含指定本地路径的最具体同步任务。 */
+function syncTaskForLocalPath(localPath: string): RemoteSyncTask | undefined {
+  const resolvedPath = path.resolve(localPath);
+  return [...(syncManager?.list() ?? [])]
+    .sort((left, right) => path.resolve(right.localDir).length - path.resolve(left.localDir).length)
+    .find((task) => {
+      const localRoot = path.resolve(task.localDir);
+      const relative = path.relative(localRoot, resolvedPath);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`)
+        || path.isAbsolute(relative)) return false;
+      return !task.isFile || relative === '';
+    });
+}
+
+/** 把同步镜像中的本地路径映射回远程路径。 */
+function syncedRemoteLocation(localPath: string): {
+  mountName: string;
+  remotePath: string;
+} | undefined {
+  const task = syncTaskForLocalPath(localPath);
+  if (!task) return undefined;
+  const relative = path.relative(path.resolve(task.localDir), path.resolve(localPath));
+  return {
+    mountName: task.mountName,
+    remotePath: relative
+      ? path.posix.join(task.remotePath, relative.split(path.sep).join('/'))
+      : task.remotePath
+  };
 }
 
 async function updateSyncStatusBar(): Promise<void> {
@@ -734,28 +764,13 @@ function terminalRemoteLocationForUri(
     }
   }
   if (uri.scheme !== 'file') return undefined;
-  // 嵌套同步任务优先匹配更具体的本地根。
-  const tasks = [...(syncManager?.list() ?? [])]
-    .sort((left, right) => right.localDir.length - left.localDir.length);
-  for (const task of tasks) {
-    const relative = path.relative(task.localDir, uri.fsPath);
-    if (relative === '..' || relative.startsWith(`..${path.sep}`)
-      || path.isAbsolute(relative)) continue;
-    if (task.isFile && relative !== '') continue;
-    return {
-      mountName: task.mountName,
-      remotePath: relative
-        ? path.posix.join(task.remotePath, relative.split(path.sep).join('/'))
-        : task.remotePath
-    };
-  }
-  return undefined;
+  return syncedRemoteLocation(uri.fsPath);
 }
 
 /**
- * Metadata for the remote file currently open in the active editor of this
- * window (falling back to the first visible remote editor), or null when none
- * is active. Computed live on every call — no listeners or persisted state.
+ * Metadata for the remote file or synchronized local mirror file currently
+ * open in the active editor (falling back to the first matching visible
+ * editor), or null when none is active. Computed live on every call.
  * The remote stat is best-effort: a file deleted on the remote still resolves
  * with exists=false so callers can distinguish "file gone" from "no active
  * file". `mountName` optionally filters to one mount (the active file of any
@@ -773,19 +788,21 @@ async function activeRemoteFile(mountName?: string): Promise<{
   const editor = vscode.window.activeTextEditor
     ?? vscode.window.visibleTextEditors.find(
       (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
+        || candidate.document.uri.scheme === 'file'
     );
   const uri = editor?.document.uri;
-  if (uri?.scheme !== remoteFileSystemScheme) return null;
-  let location: { mountName: string; remotePath: string };
-  try {
-    location = parseRemoteUri(uri.toString());
-  } catch {
-    return null;
-  }
+  if (!uri) return null;
+  const location = terminalRemoteLocationForUri(uri);
+  if (!location) return null;
   if (mountName && location.mountName !== mountName) return null;
-  const folder = registry.get(location.mountName);
-  if (!folder) return null;
-  const filePath = remotePathForUri(folder, location.remotePath);
+  let folder = registry.get(location.mountName);
+  if (!folder) {
+    const config = await readConfig();
+    const mount = config.mounts.find((candidate) => candidate.name === location.mountName);
+    if (!mount) return null;
+    folder = await ensureFolder(mount);
+  }
+  const filePath = location.remotePath;
   const relative = path.posix.relative(folder.remoteRoot, filePath);
   // 活动编辑器 URI 理论上必在挂载根内；防御性校验，避免越界路径泄漏。
   if (relative === '..' || relative.startsWith('../') || path.posix.isAbsolute(relative)) {
@@ -1298,10 +1315,17 @@ function currentRemoteLocation(): { mountName: string; remotePath: string } | un
     (folder) => folder.uri.scheme === remoteFileSystemScheme
   );
   if (workspace) return resolveLocation(parseRemoteUri(workspace.uri.toString()));
+  // 同步镜像是 file:// 工作区，但语义上仍绑定到对应的远程目录。
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== 'file') continue;
+    const location = syncedRemoteLocation(folder.uri.fsPath);
+    if (location) return location;
+  }
   const active = vscode.window.activeTextEditor?.document.uri;
   if (active?.scheme === remoteFileSystemScheme) {
     return resolveLocation(parseRemoteUri(active.toString()));
   }
+  if (active?.scheme === 'file') return syncedRemoteLocation(active.fsPath);
   return undefined;
 }
 
