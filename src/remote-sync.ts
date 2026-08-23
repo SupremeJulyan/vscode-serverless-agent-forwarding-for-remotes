@@ -221,6 +221,7 @@ export class RemoteSyncManager {
     };
     this.status(`远程${kindLabels[kind]} → 本地`);
     for (const task of this.tasks.values()) {
+      if (!this.ownedTasks.has(taskKey(task.mountName, task.remotePath))) continue;
       if (task.mountName !== resolved.mountName) continue;
       if (!isRemotePathInsideRoot(task.remotePath, resolved.remotePath)) continue;
       await this.applyRemoteChange(task, resolved.remotePath, kind, targetUri);
