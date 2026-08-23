@@ -706,19 +706,50 @@ async function activeRemoteFileDirectory(mountName: string): Promise<string | un
   const editor = vscode.window.activeTextEditor
     ?? vscode.window.visibleTextEditors.find(
       (candidate) => candidate.document.uri.scheme === remoteFileSystemScheme
+        || candidate.document.uri.scheme === 'file'
     );
   const uri = editor?.document.uri;
-  if (uri?.scheme !== remoteFileSystemScheme) return undefined;
-  try {
-    const location = parseRemoteUri(uri.toString());
-    if (location.mountName !== mountName) return undefined;
-    const folder = registry.get(mountName);
-    if (!folder) return undefined;
-    const filePath = remotePathForUri(folder, location.remotePath);
-    return path.posix.dirname(filePath);
-  } catch {
-    return undefined;
+  if (!uri) return undefined;
+  const location = terminalRemoteLocationForUri(uri);
+  return location?.mountName === mountName
+    ? path.posix.dirname(location.remotePath)
+    : undefined;
+}
+
+/** 把远程 URI 或同步镜像中的本地文件统一解析为远程位置。 */
+function terminalRemoteLocationForUri(
+  uri: vscode.Uri
+): { mountName: string; remotePath: string } | undefined {
+  if (uri.scheme === remoteFileSystemScheme) {
+    try {
+      const location = parseRemoteUri(uri.toString());
+      const folder = registry.get(location.mountName);
+      if (!folder) return undefined;
+      return {
+        mountName: location.mountName,
+        remotePath: remotePathForUri(folder, location.remotePath)
+      };
+    } catch {
+      return undefined;
+    }
   }
+  if (uri.scheme !== 'file') return undefined;
+  // 嵌套同步任务优先匹配更具体的本地根。
+  const tasks = [...(syncManager?.list() ?? [])]
+    .sort((left, right) => right.localDir.length - left.localDir.length);
+  for (const task of tasks) {
+    const relative = path.relative(task.localDir, uri.fsPath);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`)
+      || path.isAbsolute(relative)) continue;
+    if (task.isFile && relative !== '') continue;
+    return {
+      mountName: task.mountName,
+      remotePath: relative
+        ? path.posix.join(task.remotePath, relative.split(path.sep).join('/'))
+        : task.remotePath
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -785,11 +816,9 @@ async function activeRemoteFile(mountName?: string): Promise<{
  */
 async function syncTerminalToActiveFile(uri: vscode.Uri): Promise<void> {
   try {
-    const location = parseRemoteUri(uri.toString());
-    const folder = registry.get(location.mountName);
-    if (!folder) return;
-    const filePath = remotePathForUri(folder, location.remotePath);
-    const fileDir = path.posix.dirname(filePath);
+    const location = terminalRemoteLocationForUri(uri);
+    if (!location) return;
+    const fileDir = path.posix.dirname(location.remotePath);
     const restoreFollow = restoredFileSyncPending.has(location.mountName);
     const follows = settings().get<boolean>('terminalFollowsActiveFile', false)
       || restoreFollow;
@@ -820,7 +849,7 @@ function deferRestoreFollow(mountName: string): void {
     void (async () => {
       if (!restoredFileSyncPending.has(mountName)) return;
       const uri = vscode.window.activeTextEditor?.document.uri;
-      if (uri?.scheme === remoteFileSystemScheme) {
+      if (uri?.scheme === remoteFileSystemScheme || uri?.scheme === 'file') {
         await syncTerminalToActiveFile(uri);
       }
     })();
@@ -3330,11 +3359,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await guard(restoreSyncedLocalWorkspaceTerminal);
   tree.refresh();
 
-  // 每次切换到远程文件时：若设置开启则同步终端；重开窗口后首次文件激活
-  // 也无条件跟随（配合标签页恢复）。
+  // 每次切换到远程文件或同步镜像文件时：若设置开启则同步远程终端；
+  // 重开远程窗口后首次文件激活也无条件跟随（配合标签页恢复）。
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
     const uri = editor?.document.uri;
-    if (!uri || uri.scheme !== remoteFileSystemScheme) return;
+    if (!uri || (uri.scheme !== remoteFileSystemScheme && uri.scheme !== 'file')) return;
     void syncTerminalToActiveFile(uri);
   }));
   context.subscriptions.push(
