@@ -152,16 +152,18 @@ let syncManager: RemoteSyncManager | undefined;
 let syncCoordinator: SyncCoordinator | undefined;
 const syncTasksKey = 'safs.syncTasks';
 
-function saveSyncTasks(): void {
+function saveSyncTasks(persist = true): void {
   if (!syncManager) return;
-  void vscodeContext.globalState.update(
-    syncTasksKey,
-    syncManager.list().map(({
-      mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
-    }) => ({
-      mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
-    }))
-  );
+  if (persist) {
+    void vscodeContext.globalState.update(
+      syncTasksKey,
+      syncManager.list().map(({
+        mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
+      }) => ({
+        mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
+      }))
+    );
+  }
   refreshTree();
   void updateSyncStatusBar();
 }
@@ -2988,7 +2990,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     (message) => bridgeOutput?.appendLine(`[远程同步] ${message}`),
-    () => saveSyncTasks(),
+    (persist) => saveSyncTasks(persist),
     // 同步进度显示在 VS Code 底部中间（短暂消息，如“正在下载…”）。
     (message) => void vscode.window.setStatusBarMessage(message, 3000),
     (task) => syncCoordinator?.acquire(task.mountName, task.remotePath) ?? Promise.resolve(true),

@@ -99,7 +99,7 @@ export class RemoteSyncManager {
       uri: vscode.Uri
     ) => { mountName: string; remotePath: string } | undefined,
     private readonly log: (message: string) => void = () => undefined,
-    private readonly onTaskChanged: () => void = () => undefined,
+    private readonly onTaskChanged: (persist: boolean) => void = () => undefined,
     private readonly status: (message: string) => void = () => undefined,
     private readonly acquireTask: (task: RemoteSyncTask) => Promise<boolean> = async () => true,
     private readonly releaseTask: (task: RemoteSyncTask) => Promise<void> = async () => undefined,
@@ -159,7 +159,7 @@ export class RemoteSyncManager {
     this.ownedTasks.add(key);
     // 只有取得任务所有权的窗口可以持久化任务/指纹；恢复任务的旁观窗口
     // 不得用自己的旧副本覆盖 owner 刚写入的状态。
-    this.onTaskChanged();
+    this.onTaskChanged(true);
     const monitor = setInterval(() => {
       void this.isStopRequested(task).then((stopped) => {
         if (stopped && this.tasks.get(key) === task) this.remove(task.mountName, task.remotePath);
@@ -200,9 +200,11 @@ export class RemoteSyncManager {
     const remoteScan = this.remoteScanTimers.get(key);
     if (remoteScan) clearTimeout(remoteScan);
     this.remoteScanTimers.delete(key);
-    if (this.ownedTasks.delete(key) && task) void this.releaseTask(task);
+    const wasOwned = this.ownedTasks.delete(key);
+    if (wasOwned && task) void this.releaseTask(task);
     this.log(`已停止同步：${remotePath}`);
-    this.onTaskChanged();
+    // 非 owner 只更新自己的树视图；共享停止标记会让 owner 执行真正的持久化删除。
+    this.onTaskChanged(wasOwned);
   }
 
   dispose(): void {
@@ -335,7 +337,7 @@ export class RemoteSyncManager {
       this.readyTasks.add(key);
       await this.markTaskReady(task);
       this.startLocalWatcher(task);
-      this.onTaskChanged();
+      this.onTaskChanged(true);
       this.scheduleRemoteScan(task);
       return;
     }
@@ -367,7 +369,7 @@ export class RemoteSyncManager {
     const key = taskKey(task.mountName, task.remotePath);
     if (this.tasks.get(key) !== task || !this.ownedTasks.has(key)) return;
     const ok = await this.baseline(task, false);
-    if (ok && this.tasks.get(key) === task) this.onTaskChanged();
+    if (ok && this.tasks.get(key) === task) this.onTaskChanged(true);
     this.scheduleRemoteScan(task);
   }
 
