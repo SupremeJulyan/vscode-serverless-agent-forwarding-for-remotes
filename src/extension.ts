@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, readdir, stat } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, deriveMounts, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -156,8 +156,10 @@ function saveSyncTasks(): void {
   if (!syncManager) return;
   void vscodeContext.globalState.update(
     syncTasksKey,
-    syncManager.list().map(({ mountName, remotePath, localDir, fingerprintLines }) => ({
-      mountName, remotePath, localDir, fingerprintLines
+    syncManager.list().map(({
+      mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
+    }) => ({
+      mountName, remotePath, localDir, fingerprintLines, resetLocalOnFirstSync
     }))
   );
   refreshTree();
@@ -869,10 +871,13 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
   // 本地目标：远程目录 → 所选目录下的同名子目录；远程文件 → 同名文件。
   const baseName = path.posix.basename(remotePath);
   const localTarget = path.join(picked[0].fsPath, baseName);
+  const resetLocalOnFirstSync = await confirmInitialSyncTarget(localTarget);
+  if (resetLocalOnFirstSync === undefined) return;
   const task: RemoteSyncTask = {
     mountName: location.mountName,
     remotePath,
-    localDir: localTarget
+    localDir: localTarget,
+    resetLocalOnFirstSync
   };
   await syncCoordinator?.clearReady(location.mountName, remotePath, localTarget);
   await syncCoordinator?.clearStop(location.mountName, remotePath);
@@ -880,6 +885,19 @@ async function syncToLocal(uri?: vscode.Uri): Promise<void> {
   void vscode.window.showInformationMessage(
     `已开始同步：${remotePath} → ${localTarget}`
   );
+}
+
+async function confirmInitialSyncTarget(localDir: string): Promise<boolean | undefined> {
+  const targetStat = await stat(localDir).catch(() => undefined);
+  if (!targetStat) return false;
+  const hasContent = !targetStat.isDirectory() || (await readdir(localDir)).length > 0;
+  if (!hasContent) return false;
+  const choice = await vscode.window.showWarningMessage(
+    `本地目标 ${localDir} 已有内容。首次同步将以远程目录为准，删除本地独有内容并覆盖同名文件。是否继续？`,
+    { modal: true },
+    '继续同步'
+  );
+  return choice === '继续同步' ? true : undefined;
 }
 
 async function enableHistorySync(item: HistoryItem): Promise<void> {
@@ -901,9 +919,13 @@ async function enableHistorySync(item: HistoryItem): Promise<void> {
   const manager = syncManager;
   if (!manager) throw new Error('远程同步尚未就绪');
   const localDir = path.join(picked[0].fsPath, path.posix.basename(item.path));
+  const resetLocalOnFirstSync = await confirmInitialSyncTarget(localDir);
+  if (resetLocalOnFirstSync === undefined) return;
   await syncCoordinator?.clearReady(item.mountName, item.path, localDir);
   await syncCoordinator?.clearStop(item.mountName, item.path);
-  manager.add({ mountName: item.mountName, remotePath: item.path, localDir });
+  manager.add({
+    mountName: item.mountName, remotePath: item.path, localDir, resetLocalOnFirstSync
+  });
   void vscode.window.showInformationMessage(`已开始同步：${item.path} → ${localDir}`);
 }
 

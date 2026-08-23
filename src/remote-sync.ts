@@ -33,6 +33,8 @@ export interface RemoteSyncTask {
   isFile?: boolean;
   /** 最近一次同步的条目指纹行（用于重载后增量补同步）。 */
   fingerprintLines?: string[];
+  /** 首次基线前清空已有本地目标，确保远程权威镜像没有本地独有残留。 */
+  resetLocalOnFirstSync?: boolean;
 }
 
 export type RemoteMutationKind = 'write' | 'delete' | 'rename' | 'mkdir';
@@ -277,7 +279,11 @@ export class RemoteSyncManager {
       const lines = await scanRemote(session, task.remotePath);
       const isFile = lines.length === 1 && lines[0].startsWith('f::');
       if (!task.fingerprintLines) {
+        if (task.resetLocalOnFirstSync) {
+          await fs.rm(task.localDir, { recursive: true, force: true });
+        }
         await this.downloadTree(session, task.remotePath, task.localDir, isFile);
+        task.resetLocalOnFirstSync = false;
         this.log(`首次同步完成: ${task.remotePath} -> ${task.localDir}（${lines.length} 项）`);
       } else {
         const current = linesToMap(lines);
