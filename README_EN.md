@@ -22,7 +22,8 @@ intranet hosts and remote servers that forbid port forwarding.
   state; inline buttons open the remote
   folder, open a terminal, toggle Agent forwarding, or delete the config. A
   config expands to show **recently opened remote directories** (up to 10 per
-  config); each history entry can be reopened, opened in a terminal, or removed.
+  config); each history entry can be reopened, opened in a terminal, toggled for
+  local two-way sync, or removed.
 - In the SAFS view, `👁` marks the config bound to the **currently focused
   window** (the default MCP routing target). A `Agent State: ` prefix shows one
   symbol next to the config name, in priority order: `👁` (focused window) >
@@ -34,7 +35,22 @@ intranet hosts and remote servers that forbid port forwarding.
 - **SAFS: Visual Download** on remote files/folders: streaming download with
   progress and cancellation; recursive folder download.
 - **SAFS: Visual Sync** on remote files/folders: two-way automatic local ↔ remote
-  sync (incremental, resumes after reload).
+  sync that mirrors the remote directory into a real local `file://` workspace,
+  working around `safs://` virtual-workspace limits — local command-line programs
+  cannot touch virtual files and third-party extensions that only support local
+  workspaces cannot load; once synced you edit with a full native toolchain
+  (Git, builds, language servers, ...) and changes flow both ways automatically
+  (incremental, resumes after reload); the first baseline download reuses the
+  visual download experience (scanning, current file, progress, cancellable),
+  and a cross-window file lock prevents several VS Code windows from syncing the
+  same task concurrently; the sync-ready state is shared across windows, so
+  history entries open the local mirror directly with full remote context
+  preserved.
+- The bottom status bar keeps a persistent `SAFS SFTP` transport entry and a
+  `SAFS SYNC` sync entry; the Agent-forwarding focus hint is its own item:
+  `Agent 已聚焦当前窗口😏` when ready, or e.g. `codex（wsl）远程转发中💪` once
+  the source is known. When the server has no SFTP subsystem and the extension
+  falls back to SCP/exec, the transport entry reads `SAFS SCP`.
 - **SAFS: Visual Upload** on local files/folders: streaming upload to the remote
   (no open remote directory needed; pick the mount, then the target directory),
   recursive folder upload.
@@ -44,7 +60,7 @@ intranet hosts and remote servers that forbid port forwarding.
 ### Install
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.1.1.vsix
+code --install-extension safs-serverless-agent-forwarding-1.6.2.vsix
 ```
 
 ### Add an SSH config and open a remote folder
@@ -73,6 +89,14 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
   `SSH: <name> — <relative path>`.
 - With `remote_terminal: "open"`, a terminal is connected automatically after
   opening the remote folder.
+- Opening a synced task opens the local mirror workspace: the terminal still
+  connects to the original remote directory per the original `remote_terminal`
+  setting, and `safs.terminalFollowsActiveFile` also applies to local files in
+  the mirror — the relative path is mapped back to the remote directory before
+  `cd`. Mirror windows fully preserve the remote context: terminal reconnects,
+  remote directory operations, Agent/MCP bindings, "current remote file", and
+  relative-path commands are all mapped back to the corresponding remote
+  locations.
 
 ### Open the remote directory
 
@@ -88,9 +112,11 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
   remote folder restores both the workspace and the terminal there.
 - A config entry in the SAFS view (Remote Folders) can be expanded to show the
   **recently opened remote directory history** (up to 10 entries, newest
-  first). Each history entry has three buttons: open the history directory,
-  open a terminal there, or delete the record. Reopening or switching to a
-  directory moves its record to the top.
+  first). Each history entry has buttons to open the history directory, open a
+  terminal there, toggle local sync, or delete the record (the toggle reads
+  "disable local sync" once enabled, and opening the entry then goes straight
+  to the local mirror workspace). Reopening or switching to a directory moves
+  its record to the top.
 
 ### Keyboard Shortcuts
 
@@ -111,6 +137,17 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
 - **SAFS: Visual Sync** (formerly "Sync…"): right-click a remote file/folder —
   pick a local target directory to start **two-way automatic sync**
   (remote ↔ local); incremental and persisted, it resumes after a window reload.
+  Sync exists to solve a virtual-workspace problem: `safs://` files are invisible
+  to local command-line programs and unusable by extensions that require local
+  workspaces, while the mirror is a real local directory where Git, build tools,
+  language servers, and debuggers all work — edits upload automatically and
+  remote changes are pulled back down. The first baseline download reuses the
+  visual download experience: scanning,
+  current file, file count, accumulated bytes, and percentage, with cancellation;
+  unique temp file names avoid concurrent baseline conflicts, and the local
+  watcher ignores `.safs-part` temp files. The same sync task is coordinated by a
+  cross-Extension-Host file lock, so multiple VS Code windows never download,
+  watch, or reverse-upload at the same time.
 
 ### Enable Agent Forwarding
 
@@ -145,6 +182,18 @@ platforms.
    `current_remote_file` to inspect the remote file currently open in VS Code.
 6. To disable: click "Disable Agent Forwarding" on the connection item. The
    extension runs `mcp remove` only after the last enabled mount is disabled.
+
+#### Other ways to install
+
+Besides the automatic registration above, the `safs` MCP can also be installed
+as follows:
+
+- Run `SAFS: 为我的Agent安装转发功能` from the Command Palette: after entering
+  the Agent name and platform, an **installation prompt** is copied to the
+  clipboard — paste it into the Agent input box and the Agent registers the
+  user-scoped Streamable HTTP MCP named `safs` by itself.
+- Manually add the URL generated by `SAFS: Copy Streamable HTTP URL` in the
+  Agent's MCP management UI (see "Unified Agent MCP" below).
 
 #### Multiple remote windows
 
