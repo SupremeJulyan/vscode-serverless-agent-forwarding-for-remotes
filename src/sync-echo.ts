@@ -6,6 +6,7 @@ export interface LocalFileFingerprint {
 }
 
 interface DownloadFingerprint {
+  exists: boolean;
   size: number;
   mtimeMs: number;
   ctimeMs: number;
@@ -27,6 +28,7 @@ export class DownloadEchoGuard {
 
   record(localPath: string, stat: LocalFileFingerprint): void {
     this.fingerprints.set(localPath, {
+      exists: true,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
       ctimeMs: stat.ctimeMs,
@@ -35,17 +37,25 @@ export class DownloadEchoGuard {
     });
   }
 
-  matches(localPath: string, stat: LocalFileFingerprint): boolean {
+  recordMissing(localPath: string): void {
+    this.fingerprints.set(localPath, {
+      exists: false, size: 0, mtimeMs: 0, ctimeMs: 0, directory: false,
+      expiresAt: this.now() + this.ttlMs
+    });
+  }
+
+  matches(localPath: string, stat: LocalFileFingerprint | undefined): boolean {
     const expected = this.fingerprints.get(localPath);
     if (!expected) return false;
     if (expected.expiresAt < this.now()) {
       this.fingerprints.delete(localPath);
       return false;
     }
-    const matches = expected.size === stat.size
+    const matches = expected.exists === (stat !== undefined)
+      && (!stat || expected.size === stat.size
       && expected.mtimeMs === stat.mtimeMs
       && expected.ctimeMs === stat.ctimeMs
-      && expected.directory === stat.isDirectory();
+      && expected.directory === stat.isDirectory());
     if (!matches) this.fingerprints.delete(localPath);
     return matches;
   }

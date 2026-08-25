@@ -21,3 +21,10 @@ test('sync ownership retries silently and SFTP negotiation has a bounded timeout
   assert.ok(sftp.includes('const sftpHandshakeTimeoutMs = 15_000'));
   assert.ok(sftp.includes('SFTP 版本协商超时'));
 });
+
+test('directory sync watches both the root entry and its descendants', async () => {
+  const sync = await readFile(new URL('../src/remote-sync.ts', import.meta.url), 'utf8');
+  assert.ok(sync.includes("new vscode.RelativePattern(path.dirname(task.localDir), '*')"));
+  assert.ok(sync.includes("new vscode.RelativePattern(task.localDir, '**/*')"));
+  assert.ok(sync.includes('previousRootType !== isFile'));
+});

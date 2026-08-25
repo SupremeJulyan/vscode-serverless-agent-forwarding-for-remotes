@@ -28,3 +28,10 @@ test('a real local edit invalidates the downloaded fingerprint immediately', () 
   assert.equal(guard.matches('/tmp/new.txt', stat(13, 21, 31)), false);
   assert.equal(guard.matches('/tmp/new.txt', stat(12, 20, 30)), false);
 });
+
+test('remote deletion tombstone absorbs delete echoes but not local recreation', () => {
+  const guard = new DownloadEchoGuard();
+  guard.recordMissing('/tmp/deleted.txt');
+  assert.equal(guard.matches('/tmp/deleted.txt', undefined), true);
+  assert.equal(guard.matches('/tmp/deleted.txt', stat(1, 2, 3)), false);
+});
