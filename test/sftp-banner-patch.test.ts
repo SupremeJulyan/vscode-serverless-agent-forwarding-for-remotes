@@ -148,6 +148,23 @@ test('clean VERSION without banner: behaviour unchanged', () => {
   assert.equal(ready, true);
 });
 
+test('yx account denial split across chunks fails fast with an actionable error', () => {
+  const SftpClass: any = compilePatchedSftp();
+  const sftp = makeSftp(SftpClass);
+  let fatal: Error | undefined;
+  sftp.on('error', (error: Error) => {
+    fatal = error;
+  });
+  const denial = Buffer.from(
+    'your user information can not be found,please contact your customer manager if you need 34 '
+  );
+  sftp.push(denial.subarray(0, 25));
+  assert.equal(fatal, undefined);
+  sftp.push(denial.subarray(25));
+  assert.match(fatal?.message ?? '', /未找到该用户信息/);
+  assert.equal((fatal as Error & { code?: string } | undefined)?.code, 'SAFS_ACCOUNT_NOT_FOUND');
+});
+
 test('non-banner garbage without terminator falls through to original behaviour', () => {
   const SftpClass: any = compilePatchedSftp();
   const sftp = makeSftp(SftpClass);

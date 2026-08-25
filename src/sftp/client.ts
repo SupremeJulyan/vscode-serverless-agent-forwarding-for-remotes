@@ -82,6 +82,8 @@ function callback<T>(
 /** SFTP 控制类操作（元数据/目录/重命名等）的超时：防止请求石沉大海永久挂起。
  * 文件内容传输（readFile/writeFile/流式读写）不走该超时，避免大文件被误杀。 */
 const sftpControlTimeoutMs = 60_000;
+/** SSH 已认证后，SFTP VERSION 应很快返回；防止网关只输出提示后永久挂起。 */
+const sftpHandshakeTimeoutMs = 15_000;
 
 export class Ssh2SftpSession implements SftpSession {
   readonly transport = 'sftp' as const;
@@ -469,7 +471,11 @@ function attemptConnect(
   const client = new Client();
   return new Promise<SftpSession>((resolve, reject) => {
     let settled = false;
+    let fallbackResolved = false;
+    let sftpHandshakeTimer: NodeJS.Timeout | undefined;
     const cleanup = () => {
+      if (sftpHandshakeTimer) clearTimeout(sftpHandshakeTimer);
+      sftpHandshakeTimer = undefined;
       signal?.removeEventListener('abort', abort);
       client.removeListener('ready', ready);
       client.removeListener('error', failed);
@@ -484,7 +490,19 @@ function attemptConnect(
     const failed = (error: Error) => finishError(error);
     const abort = () => finishError(abortError());
     const ready = () => {
+      sftpHandshakeTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        fallbackResolved = true;
+        cleanup();
+        const reason = `SFTP 版本协商超时（${sftpHandshakeTimeoutMs}ms），远程网关未返回有效响应`;
+        onSftpFallback?.(reason);
+        resolve(new ScpSession(host.name, client, releaseRelay));
+      }, sftpHandshakeTimeoutMs);
+      sftpHandshakeTimer.unref?.();
       client.sftp((error, sftp) => {
+        if (sftpHandshakeTimer) clearTimeout(sftpHandshakeTimer);
+        sftpHandshakeTimer = undefined;
         if (error) {
           // 握手失败时附上通道首字节 hex（由构建期补丁暂存在 client 上），
           // 便于识别网关 banner 的实际格式并精确匹配。
@@ -500,10 +518,11 @@ function attemptConnect(
           if (sftpUnusablePattern.test(error.message)) {
             if (settled) {
               sftp?.end();
-              client.end();
+              if (!fallbackResolved) client.end();
               return;
             }
             settled = true;
+            fallbackResolved = true;
             cleanup();
             onSftpFallback?.(`${error.message}${probeDetail}`);
             resolve(new ScpSession(host.name, client, releaseRelay));
@@ -514,7 +533,7 @@ function attemptConnect(
         }
         if (settled) {
           sftp.end();
-          client.end();
+          if (!fallbackResolved) client.end();
           return;
         }
         settled = true;

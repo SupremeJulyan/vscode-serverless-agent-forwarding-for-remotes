@@ -36,7 +36,7 @@ import {
   AgentPlatformContext, resolveAgentPlatform, wslBashInvocation, wslBundledCli, wslCommandExists
 } from './agent-platform';
 import {
-  ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory, readLastRemoteDirectory,
+  ensureAgentCwdPlaceholder, ensureAgentCwdSubdirectory,
   writeLastRemoteDirectory
 } from './agent-cwd';
 import { connectSftp } from './sftp/client';
@@ -90,9 +90,6 @@ const logClearIntervalMs = 24 * 60 * 60 * 1000;
 const agentProbeCacheTtlMs = 60_000;
 const agentProbeTimeoutMs = 15_000;
 const agentProbeCache = new Map<string, { status: CapturedProcessResult; at: number }>();
-/** 远程 cwd 校验结果缓存：短窗口内同一子目录复用 realpath/stat 结果，减少往返。 */
-const validatedRemoteCwdTtlMs = 30_000;
-const validatedRemoteCwdCache = new Map<string, { path: string; at: number }>();
 
 let output: vscode.OutputChannel;
 let bridgeOutput: vscode.LogOutputChannel | undefined;
@@ -526,33 +523,6 @@ function localRootForFolder(folder: RemoteFolder): string {
   return vscode.Uri.from({ scheme: 'file', path: folder.workspaceRoot }).fsPath;
 }
 
-async function cachedRemoteDirectory(folder: RemoteFolder): Promise<string> {
-  const localRoot = localRootForFolder(folder);
-  const cached = await readLastRemoteDirectory(localRoot);
-  if (!cached || !isRemotePathInsideRoot(folder.remoteRoot, cached)) return folder.remoteRoot;
-  // 最近目录即远程根：无需再次 realpath/stat 往返。
-  if (cached === folder.remoteRoot) return folder.remoteRoot;
-  // 内存缓存：短窗口内同一子目录的校验结果复用，减少重复 realpath/stat RTT。
-  const memo = validatedRemoteCwdCache.get(folder.mountName);
-  if (memo && memo.path === cached && Date.now() - memo.at < validatedRemoteCwdTtlMs) {
-    await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, memo.path).catch(() => undefined);
-    return memo.path;
-  }
-  try {
-    const session = await pool.get(folder.hostName);
-    // realpath + stat 一步完成（SCP 回退下合并为单条 exec）。
-    const { path: resolved, stat } = await session.statResolved(cached);
-    if (!isRemotePathInsideRoot(folder.remoteRoot, resolved)) return folder.remoteRoot;
-    if (stat.type !== 'directory') return folder.remoteRoot;
-    await ensureAgentCwdSubdirectory(localRoot, folder.remoteRoot, resolved);
-    validatedRemoteCwdCache.set(folder.mountName, { path: resolved, at: Date.now() });
-    return resolved;
-  } catch {
-    await writeLastRemoteDirectory(localRoot, folder.remoteRoot, folder.remoteRoot);
-    return folder.remoteRoot;
-  }
-}
-
 async function openDirectoryItem(requested: MountConfig): Promise<void> {
   const forwarding = vscodeContext.globalState
     .get<string[]>(aiForwardMountsKey, []).includes(requested.name);
@@ -569,8 +539,7 @@ async function openDirectoryItem(requested: MountConfig): Promise<void> {
   }, async (progress) => {
     progress.report({ message: '正在验证远程目录…' });
     const folder = await ensureFolder(requested);
-    const remoteDirectory = await cachedRemoteDirectory(folder);
-    await recordDirectoryHistory(vscodeContext, requested.name, remoteDirectory);
+    const remoteDirectory = folder.remoteRoot;
     agentTrace('Open', `创建新窗口，workspace=${folderUri(folder, remoteDirectory)}`);
     progress.report({ message: '正在打开工作区…' });
     await vscode.commands.executeCommand(

@@ -37,7 +37,8 @@ const INJECT_CONST = [
   '// SAFS-PATCH: NSG gateway MOTD banner signatures and probe cap',
   'const SAFS_MOTD_SIG = Buffer.from([0x0d, 0x20, 0x0d, 0x20]); // \\r \\r',
   'const SAFS_MOTD_TERMINATOR = Buffer.from([0xe4, 0xb8, 0x80, 0x0d, 0x0a]); // 一 + CRLF',
-  'const SAFS_MOTD_MAX_PROBE = 256 * 1024;'
+  'const SAFS_MOTD_MAX_PROBE = 256 * 1024;',
+  "const SAFS_ACCOUNT_DENIED = Buffer.from('your user information can not be found');"
 ].join('\n');
 
 const INJECT_CTOR = [
@@ -57,6 +58,15 @@ const INJECT_PUSH = [
   '        try { this._client._safsMotdProbe = data.subarray(0, 128); } catch {}',
   '      }',
   '      this._motdPending = Buffer.concat([this._motdPending, data]);',
+  '      if (this._motdPending.toString(\'utf8\').toLowerCase().includes(',
+  "          SAFS_ACCOUNT_DENIED.toString('utf8'))) {",
+  "        const err = new Error('远程网关未找到该用户信息，请联系客户经理或管理员开通账号');",
+  "        err.code = 'SAFS_ACCOUNT_NOT_FOUND';",
+  "        err.level = 'sftp-protocol';",
+  "        this.emit('error', err);",
+  '        this.destroy();',
+  '        return;',
+  '      }',
   '      if (this._motdPending.length < 8) return;',
   '      const sigIdx = this._motdPending.indexOf(SAFS_MOTD_SIG);',
   '      if (sigIdx !== -1) {',
