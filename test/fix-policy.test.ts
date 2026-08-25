@@ -12,14 +12,14 @@ test('mount parent opens the resolved default root without recording it as histo
   assert.equal(body.includes('recordDirectoryHistory'), false);
 });
 
-test('sync ownership retries silently and SFTP negotiation has a bounded timeout', async () => {
+test('sync ownership retries silently and SFTP negotiation has no fixed timeout', async () => {
   const sync = await readFile(new URL('../src/remote-sync.ts', import.meta.url), 'utf8');
   assert.equal(sync.includes('同步任务由另一个 VS Code 窗口管理'), false);
   assert.ok(sync.includes('pendingAcquireTimers'));
 
   const sftp = await readFile(new URL('../src/sftp/client.ts', import.meta.url), 'utf8');
-  assert.ok(sftp.includes('const sftpHandshakeTimeoutMs = 15_000'));
-  assert.ok(sftp.includes('SFTP 版本协商超时'));
+  assert.equal(sftp.includes('sftpHandshakeTimeoutMs'), false);
+  assert.equal(sftp.includes('SFTP 版本协商超时'), false);
 });
 
 test('directory sync watches both the root entry and its descendants', async () => {

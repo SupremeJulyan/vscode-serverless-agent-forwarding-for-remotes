@@ -148,21 +148,33 @@ test('clean VERSION without banner: behaviour unchanged', () => {
   assert.equal(ready, true);
 });
 
-test('yx account denial split across chunks fails fast with an actionable error', () => {
+test('yx English account-information MOTD is skipped instead of treated as fatal', () => {
   const SftpClass: any = compilePatchedSftp();
   const sftp = makeSftp(SftpClass);
-  let fatal: Error | undefined;
-  sftp.on('error', (error: Error) => {
-    fatal = error;
+  let ready = false;
+  sftp.on('ready', () => {
+    ready = true;
   });
   const denial = Buffer.from(
-    'your user information can not be found,please contact your customer manager if you need 34 '
+    '*'.repeat(90) + '\r\n***your user information can not be found,please contact '
+    + 'your customer manager if you need 75***\r\n' + '*'.repeat(90) + '\r\n'
   );
   sftp.push(denial.subarray(0, 25));
-  assert.equal(fatal, undefined);
-  sftp.push(denial.subarray(25));
-  assert.match(fatal?.message ?? '', /未找到该用户信息/);
-  assert.equal((fatal as Error & { code?: string } | undefined)?.code, 'SAFS_ACCOUNT_NOT_FOUND');
+  assert.equal(ready, false);
+  sftp.push(Buffer.concat([denial.subarray(25), VERSION_PACKET]));
+  assert.equal(sftp._version, 3);
+  assert.equal(ready, true);
+});
+
+test('plausible packet length in binary garbage is ignored unless type is VERSION', () => {
+  const SftpClass: any = compilePatchedSftp();
+  const sftp = makeSftp(SftpClass);
+  let ready = false;
+  sftp.on('ready', () => { ready = true; });
+  const falseHeader = Buffer.from([0, 0, 0, 5, 0x41, 0, 0, 0, 3]);
+  sftp.push(Buffer.concat([falseHeader, Buffer.from('gateway text'), VERSION_PACKET]));
+  assert.equal(sftp._version, 3);
+  assert.equal(ready, true);
 });
 
 test('non-banner garbage without terminator falls through to original behaviour', () => {

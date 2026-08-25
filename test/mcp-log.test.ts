@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  appendMcpCommandLog, formatMcpCommandLogLine, mcpLogDirectory, mcpLogFilePath
+  appendMcpCommandLog, appendMcpToolLog, formatMcpCommandLogLine,
+  formatMcpToolLogLine, mcpLogDirectory, mcpLogFilePath
 } from '../src/mcp-log';
 
 test('writes one escaped command line per entry under the per-day log file', async () => {
@@ -59,4 +60,30 @@ test('defaults the log directory to ~/.safs/mcp_logs', () => {
     mcpLogFilePath('/home/alice/.safs/mcp_logs', new Date('2026-08-04T08:00:00.000Z')),
     path.join('/home/alice/.safs/mcp_logs', 'mcp-2026-08-04.log')
   );
+});
+
+test('logs every tool with Agent identity without storing file content', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'safs-mcp-tool-log-'));
+  const now = new Date('2026-08-25T09:00:00.000Z');
+  const line = formatMcpToolLogLine({
+    toolName: 'remote_write', agentName: 'codex', agentPlatform: 'wsl',
+    input: { mountName: 'prod', path: 'notes.txt', content: 'top secret content' }
+  }, now);
+  assert.match(line, /^2026-08-25T09:00:00\.000Z \[tool=remote_write\] \[agent=codex\] \[platform=wsl\]/);
+  assert.match(line, /"mountName":"prod"/);
+  assert.match(line, /"path":"notes.txt"/);
+  assert.match(line, /"contentBytes":18/);
+  assert.equal(line.includes('top secret content'), false);
+
+  const file = await appendMcpToolLog({
+    toolName: 'remote_list', agentName: 'opencode', agentPlatform: 'linux',
+    input: { mountName: 'yx', path: '.' }
+  }, directory, now);
+  assert.match(await readFile(file, 'utf8'), /\[tool=remote_list\] \[agent=opencode\]/);
+});
+
+test('untagged MCP URLs are explicitly logged as unknown Agent', () => {
+  assert.match(formatMcpToolLogLine({
+    toolName: 'list_remote_folders', input: {}
+  }), /\[agent=unknown\]/);
 });

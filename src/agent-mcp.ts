@@ -30,6 +30,10 @@ export interface AgentMcpCallbacks {
     agentPlatform?: string;
   }): Promise<unknown>;
   request?(agentName?: string, agentPlatform?: string): void;
+  audit?(entry: {
+    toolName: string; input: Record<string, unknown>;
+    agentName?: string; agentPlatform?: string;
+  }): void;
   log?(message: string): void;
 }
 
@@ -245,6 +249,14 @@ export class AgentMcpServer {
       }${agentPlatform ? `，platform=${agentPlatform}` : ''
       }`);
       this.callbacks.request?.(agentName, agentPlatform);
+      if (method === 'tools/call' && typeof tool === 'string') {
+        const input = request.body?.params?.arguments;
+        this.callbacks.audit?.({
+          toolName: tool,
+          input: input && typeof input === 'object' ? input as Record<string, unknown> : {},
+          agentName, agentPlatform
+        });
+      }
       const protocol = this.createProtocolServer(agentName, agentPlatform);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {

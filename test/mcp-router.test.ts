@@ -67,8 +67,10 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
   const first = new AgentMcpServer(0, 'first', callbacks('first'));
   const second = new AgentMcpServer(0, 'second', callbacks('second'));
   let workspaces: DiscoveredAgentWorkspace[] = [];
+  const routerAudits: string[] = [];
   const router = new AgentHttpRouter(await freePort(), 'router-token', {
-    discover: () => workspaces
+    discover: () => workspaces,
+    audit: (entry) => routerAudits.push(entry.toolName)
   });
   const client = new Client({ name: 'http-router-test', version: '1.0.0' });
   try {
@@ -88,6 +90,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     const routeValue = JSON.parse((route.content as any[])[0].text);
     assert.equal(routeValue.execution, 'remote');
     assert.equal(routeValue.workspace.mountName, 'A');
+    assert.deepEqual(routerAudits, ['resolve_workspace_execution']);
 
     const connected = await client.callTool({
       name: 'remote_list', arguments: { path: 'README.md' }

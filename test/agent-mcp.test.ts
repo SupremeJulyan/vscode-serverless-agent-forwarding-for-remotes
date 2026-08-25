@@ -6,6 +6,7 @@ import { AgentMcpServer } from '../src/agent-mcp';
 
 test('serves direct SFTP file and SSH command tools through MCP', async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
+  const audited: Array<{ toolName: string; agentName?: string }> = [];
   const server = new AgentMcpServer(port, 'test-token', {
     listFolders: async () => [{
       name: 'project',
@@ -26,12 +27,16 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     },
     write: async (input) => ({ ...input, bytes: input.content.length }),
     search: async (input) => ({ ...input, stdout: 'src/index.ts:1:hello' }),
-    run: async (input) => ({ ...input, exitCode: 0, stdout: 'ok' })
+    run: async (input) => ({ ...input, exitCode: 0, stdout: 'ok' }),
+    audit: (entry) => audited.push(entry)
   });
   await server.start();
   const client = new Client({ name: 'agent-mcp-test', version: '1.0.0' });
   try {
-    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    const taggedUrl = new URL(server.url);
+    taggedUrl.searchParams.set('agent', 'codex');
+    taggedUrl.searchParams.set('platform', 'wsl');
+    await client.connect(new StreamableHTTPClientTransport(taggedUrl));
     assert.deepEqual(await client.listResources(), { resources: [] });
     assert.deepEqual(await client.listResourceTemplates(), { resourceTemplates: [] });
     const tools = await client.listTools();
@@ -78,6 +83,10 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     assert.deepEqual(JSON.parse(rejectedText), {
       code: 'REMOTE_TOOL_ERROR', message: '路径越界'
     });
+    assert.deepEqual(audited.map((entry) => entry.toolName), [
+      'current_remote_file', 'resolve_workspace_execution', 'remote_list', 'remote_list'
+    ]);
+    assert.ok(audited.every((entry) => entry.agentName === 'codex'));
   } finally {
     await client.close();
     await server.stop();

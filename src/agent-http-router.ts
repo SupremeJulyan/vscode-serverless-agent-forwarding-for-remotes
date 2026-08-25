@@ -36,6 +36,10 @@ export interface AgentHttpRouterOptions {
   log?: (message: string) => void;
   /** 转发到窗口 MCP 的 fetch 超时（毫秒），缺省 120s。 */
   forwardTimeoutMs?: number;
+  audit?: (entry: {
+    toolName: string; input: Record<string, unknown>;
+    agentName?: string; agentPlatform?: AgentPlatformLabel;
+  }) => void;
 }
 
 export class AgentHttpRouter {
@@ -357,6 +361,16 @@ export class AgentHttpRouter {
         }${agentPlatform ? `，platform=${agentPlatform}` : ''
         }`
       );
+      // 这两个工具由固定路由器本地完成；其它工具只在实际执行窗口记录，避免双份日志。
+      if (method === 'tools/call' && typeof tool === 'string'
+        && (tool === 'resolve_workspace_execution' || tool === 'list_remote_folders')) {
+        const input = request.body?.params?.arguments;
+        this.options.audit?.({
+          toolName: tool,
+          input: input && typeof input === 'object' ? input as Record<string, unknown> : {},
+          agentName, agentPlatform
+        });
+      }
       const protocol = this.createProtocolServer(agentName, agentPlatform);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {

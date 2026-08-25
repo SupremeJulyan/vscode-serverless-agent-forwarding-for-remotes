@@ -62,7 +62,7 @@ import { verifySystemSshHostKey } from './system-ssh-host-key';
 import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
-import { appendMcpCommandLog } from './mcp-log';
+import { appendMcpCommandLog, appendMcpToolLog } from './mcp-log';
 import { redactSensitiveText } from './redact';
 import {
   defaultHighRiskCommandPatterns, matchHighRiskCommand
@@ -2332,6 +2332,17 @@ async function agentMcpToken(context: vscode.ExtensionContext): Promise<string> 
   return token;
 }
 
+function auditMcpTool(entry: {
+  toolName: string; input: Record<string, unknown>;
+  agentName?: string; agentPlatform?: string;
+}): void {
+  void appendMcpToolLog(entry).catch((error) => {
+    bridgeOutput?.appendLine(
+      `[MCP 工具日志] 写入失败：${error instanceof Error ? error.message : String(error)}`
+    );
+  });
+}
+
 async function ensureAgentHttpRouter(
   context: vscode.ExtensionContext
 ): Promise<AgentHttpRouter> {
@@ -2344,6 +2355,7 @@ async function ensureAgentHttpRouter(
           await agentMcpToken(context),
           {
             log: (message) => bridgeOutput?.appendLine(`[Agent HTTP Router] ${message}`),
+            audit: auditMcpTool,
             forwardTimeoutMs: settings().get<number>('agentMcpTimeoutMs', 120_000)
           }
         );
@@ -2440,6 +2452,7 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
         request: (agentName, agentPlatform) => {
           updateSafsStatusBar(vscode.window.state.focused, agentName, agentPlatform);
         },
+        audit: auditMcpTool,
         log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
       }
     );

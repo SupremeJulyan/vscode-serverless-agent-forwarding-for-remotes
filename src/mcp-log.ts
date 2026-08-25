@@ -13,6 +13,13 @@ export interface McpCommandLogEntry {
   command: string;
 }
 
+export interface McpToolLogEntry {
+  toolName: string;
+  agentName?: string;
+  agentPlatform?: string;
+  input?: Record<string, unknown>;
+}
+
 export function mcpLogDirectory(homeDirectory = os.homedir()): string {
   return path.join(homeDirectory, '.safs', 'mcp_logs');
 }
@@ -51,6 +58,40 @@ export async function appendMcpCommandLog(
   await appendFile(filePath, `${formatMcpCommandLogLine(entry, now)}\n`, {
     encoding: 'utf8',
     mode: 0o600
+  });
+  return filePath;
+}
+
+function safeToolInput(toolName: string, input: Record<string, unknown> = {}): string {
+  const summary: Record<string, unknown> = {};
+  for (const key of ['mountName', 'path', 'limit', 'query', 'remoteCwd']) {
+    const value = input[key];
+    if (typeof value === 'string') summary[key] = redactSensitiveText(value).slice(0, 500);
+    else if (typeof value === 'number' || typeof value === 'boolean') summary[key] = value;
+  }
+  if (toolName === 'remote_write' && typeof input.content === 'string') {
+    summary.contentBytes = Buffer.byteLength(input.content, 'utf8');
+  }
+  if (toolName === 'run_remote_command' && typeof input.command === 'string') {
+    summary.commandBytes = Buffer.byteLength(input.command, 'utf8');
+  }
+  return JSON.stringify(summary);
+}
+
+export function formatMcpToolLogLine(entry: McpToolLogEntry, now = new Date()): string {
+  const agent = entry.agentName?.trim().slice(0, 100).replace(/[\]\r\n\t]/g, '_');
+  const platform = entry.agentPlatform?.trim().replace(/[^a-z]/gi, '').slice(0, 10);
+  const tool = entry.toolName.trim().replace(/[^a-z0-9_.-]/gi, '_').slice(0, 100);
+  return `${now.toISOString()} [tool=${tool || 'unknown'}]${agent ? ` [agent=${agent}]` : ' [agent=unknown]'}${platform ? ` [platform=${platform}]` : ''} args=${safeToolInput(tool, entry.input)}`;
+}
+
+export async function appendMcpToolLog(
+  entry: McpToolLogEntry, directory = mcpLogDirectory(), now = new Date()
+): Promise<string> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const filePath = mcpLogFilePath(directory, now);
+  await appendFile(filePath, `${formatMcpToolLogLine(entry, now)}\n`, {
+    encoding: 'utf8', mode: 0o600
   });
   return filePath;
 }
