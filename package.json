@@ -565,16 +565,16 @@
           "items": {
             "type": "string"
           },
-          "description": "Regular expressions matched against remote commands requested by Agents. A matching command is denied, or requires confirmation when safs.highRiskCommandAction is \"confirm\". Set to [] to disable interception. Matching ignores quoted strings so search terms are not false positives."
+          "description": "Regular expressions matched against remote commands requested by Agents. Matching commands are handled by safs.highRiskCommandAction without interactive prompts. Set to [] to disable interception. Matching ignores quoted strings so search terms are not false positives."
         },
         "safs.highRiskCommandAction": {
           "type": "string",
           "enum": [
             "deny",
-            "confirm"
+            "allow"
           ],
           "default": "deny",
-          "description": "How to handle remote commands matching safs.highRiskCommandPatterns: \"deny\" rejects them without running; \"confirm\" asks the user before each execution."
+          "description": "How to handle remote commands matching safs.highRiskCommandPatterns: \"deny\" rejects them without running; \"allow\" runs them. No interactive prompt is shown. Legacy \"confirm\" values are treated as \"deny\"."
         },
         "safs.terminalFollowsActiveFile": {
           "type": "boolean",

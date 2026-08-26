@@ -65,7 +65,7 @@ import {
 import { appendMcpCommandLog, appendMcpToolLog } from './mcp-log';
 import { redactSensitiveText } from './redact';
 import {
-  defaultHighRiskCommandPatterns, isReadOnlyRemoteCommand, matchHighRiskCommand
+  defaultHighRiskCommandPatterns, matchHighRiskCommand
 } from './high-risk-commands';
 
 const commandPrefix = 'safs';
@@ -337,13 +337,15 @@ function redactAgentMcpText(value: string): string {
 
 function highRiskSettings(): {
   patterns: string[];
-  action: 'deny' | 'confirm';
+  action: 'deny' | 'allow';
 } {
+  const configuredAction = settings().get<string>('highRiskCommandAction', 'deny');
   return {
     patterns: settings().get<string[]>(
       'highRiskCommandPatterns', defaultHighRiskCommandPatterns
     ),
-    action: settings().get<'deny' | 'confirm'>('highRiskCommandAction', 'deny')
+    // 旧版的 confirm 配置不再弹窗，按安全默认值 deny 处理。
+    action: configuredAction === 'allow' ? 'allow' : 'deny'
   };
 }
 
@@ -1844,7 +1846,7 @@ async function executeRemoteCommand(
         remoteCwd,
         command: input.command
       }).catch(logFailure);
-      if (action === 'deny') {
+      if (action !== 'allow') {
         bridgeOutput?.appendLine(
           `[高危指令拦截] 拒绝执行：${redactSensitiveText(input.command)}（规则：${matched}）`
         );
@@ -1852,33 +1854,9 @@ async function executeRemoteCommand(
           `高危指令已被 SAFS 拦截（规则：${matched}）：${redactSensitiveText(input.command)}`
         );
       }
-      const phrase = `允许 ${mount.host}`;
-      const entered = await vscode.window.showInputBox({
-        title: 'SAFS：确认高风险远程 Shell 操作',
-        prompt: `Agent：${input.agentName ?? 'unknown'} (${input.agentPlatform ?? 'unknown'})\n目标：[${mount.host}] : [${currentWorkspacePath(folder)}]\n命令：${redactSensitiveText(input.command)}\n匹配规则：${matched}\n请输入“${phrase}”确认`,
-        ignoreFocusOut: true
-      });
-      const approved = entered === phrase;
-      if (!approved) {
-        bridgeOutput?.appendLine(
-          `[高危指令拦截] 用户拒绝：${redactSensitiveText(input.command)}（规则：${matched}）`
-        );
-        throw new Error(
-          `高危指令已被用户拒绝（规则：${matched}）：${redactSensitiveText(input.command)}`
-        );
-      }
       bridgeOutput?.appendLine(
-        `[高危指令拦截] 用户已批准：${redactSensitiveText(input.command)}（规则：${matched}）`
+        `[高危指令放行] 已按配置执行：${redactSensitiveText(input.command)}（规则：${matched}）`
       );
-    } else if (!isReadOnlyRemoteCommand(input.command)) {
-      const approved = await vscode.window.showWarningMessage(
-        `Agent 请求执行可能修改远端状态的 Shell 命令。普通文件写入应使用 remote_write。\n\nAgent：${input.agentName ?? 'unknown'} (${input.agentPlatform ?? 'unknown'})\n目标：[${mount.host}] : [${currentWorkspacePath(folder)}]\n命令：${redactSensitiveText(input.command)}`,
-        { modal: true },
-        '允许本次执行'
-      ) === '允许本次执行';
-      if (!approved) {
-        throw new Error('可能修改远端状态的 Shell 命令已被用户拒绝');
-      }
     }
   }
   appendMcpCommandLog({

@@ -10,8 +10,8 @@
 - MCP 对外接口移除与 `host` 重复的 `mountName` 参数和返回字段。
 - 每次选择返回独立短 `bindingId`，后续工具必须携带；窗口失效、Router 接管或绑定
   不匹配时明确要求重选，不再静默回退，多个同名 Agent 会话也不会互相覆盖。
-- 普通文件写入继续限制在当前工作区；任意 Shell 中无法证明只读的命令必须确认，
-  高风险命令在确认模式下需要输入目标主机确认短语。
+- 普通文件写入继续限制在当前工作区；Shell 命令不再逐次弹窗，命中高风险规则时
+  仅按配置直接拒绝或放行，旧版 `confirm` 配置按拒绝处理。
 - 更新 MCP SDK 传递依赖补丁，`npm audit` 生产依赖漏洞归零。
 - 兼容省略工具输入的 MCP/VS Code Agent 客户端，将缺失参数统一归一化为空对象，
   修复偶发的 `Cannot read properties of undefined (reading 'mountName')`。

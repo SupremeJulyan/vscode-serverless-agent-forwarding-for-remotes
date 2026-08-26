@@ -202,7 +202,7 @@ export class AgentMcpServer {
       'run_remote_command',
       {
         title: 'Run a remote SSH command',
-        description: 'Runs a shell command on the selected SSH host. Provably read-only inspection commands run directly; commands that may change state require user confirmation, and high-risk commands are denied or require typed confirmation. Prefer remote_write for ordinary file writes.',
+        description: 'Runs a shell command on the selected SSH host. The default working directory is the current VS Code workspace root.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           command: z.string().min(1),

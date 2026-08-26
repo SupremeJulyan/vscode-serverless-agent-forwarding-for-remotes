@@ -173,6 +173,23 @@ test('declares host key change action setting', async () => {
   assert.equal(property?.default, 'prompt');
 });
 
+test('handles high-risk Agent commands without per-command prompts', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  ) as ExtensionManifest;
+  const property = manifest.contributes?.configuration?.properties?.[
+    'safs.highRiskCommandAction'
+  ] as { type?: string; enum?: string[]; default?: unknown } | undefined;
+  assert.equal(property?.type, 'string');
+  assert.deepEqual(property?.enum, ['deny', 'allow']);
+  assert.equal(property?.default, 'deny');
+
+  const extensionSource = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
+  assert.equal(extensionSource.includes('SAFS：确认高风险远程 Shell 操作'), false);
+  assert.equal(extensionSource.includes('允许本次执行'), false);
+  assert.ok(extensionSource.includes("configuredAction === 'allow' ? 'allow' : 'deny'"));
+});
+
 test('declares the visual download command and the renamed sync command', async () => {
   const manifest = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8')

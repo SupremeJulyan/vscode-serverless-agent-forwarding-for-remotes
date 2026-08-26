@@ -296,10 +296,10 @@ with `run_remote_command` (`head`/`sed`/`grep`/`tail` and similar). Agent routin
 and tool guidance are managed by the fixed MCP service; the
 extension does not create or read Agent guidance files on the remote host.
 
-Provably read-only inspection commands run directly through `run_remote_command`.
-Shell commands that may change remote state require confirmation; ordinary file
-writes should use workspace-confined `remote_write`. High-risk commands are denied
-by default, or require a typed target-host phrase when confirmation mode is enabled.
+`run_remote_command` does not show per-command Shell confirmation prompts.
+Commands matching the high-risk rules are denied or allowed directly according
+to configuration, while ordinary commands run directly. Prefer workspace-confined
+`remote_write` for ordinary file writes.
 
 Tool results are throttled so large output cannot blow up model context:
 `remote_list` returns at most 500 entries by default (raise with `limit`; when
@@ -469,6 +469,6 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   per `safs.highRiskCommandAction`; set to `[]` to disable interception.
   Matches inside quotes are ignored to avoid false positives when searching
   for keywords like `sudo`.
-- `safs.highRiskCommandAction`: `deny` (default) rejects the risky command
-  outright and logs it; `confirm` prompts the user for confirmation before
-  every such execution.
+- `safs.highRiskCommandAction`: `deny` (default) rejects and logs matching
+  commands; `allow` runs them. Neither mode shows per-command prompts; legacy
+  `confirm` values are treated as `deny`.

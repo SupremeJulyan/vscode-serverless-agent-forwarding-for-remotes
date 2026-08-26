@@ -350,7 +350,7 @@ export class AgentHttpRouter {
     );
     register(
       'run_remote_command', 'Run a remote SSH command',
-      'Runs a command on the bound SSH host. Provably read-only inspection commands run directly; commands that may change remote state require user confirmation, and high-risk commands are denied or require typed confirmation. Prefer remote_write for ordinary file writes.',
+      'Runs a command on the bound SSH host. The default working directory is the current VS Code workspace root.',
       {
         bindingId: z.string().min(1), command: z.string().min(1),
         remoteCwd: z.string().optional()

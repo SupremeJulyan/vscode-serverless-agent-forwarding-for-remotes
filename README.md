@@ -250,9 +250,9 @@ Agent 仅在 SAFS 远程任务中列出并选择当前 SFTP 虚拟工作区；
 使用约束由固定 MCP 服务统一管理，扩展
 不会在远端创建或读取 Agent 指引文件。
 
-`run_remote_command` 中可证明只读的查看命令直接执行；无法证明只读的 Shell 命令会
-要求用户确认，普通文件创建或覆盖应使用受当前工作区边界保护的 `remote_write`。
-命中高风险规则的命令默认拒绝；配置为确认时，用户必须输入包含目标主机的确认短语。
+`run_remote_command` 不再对 Shell 命令弹出逐次确认。命中高风险规则的命令按配置
+直接拒绝或放行，普通命令直接执行；普通文件创建或覆盖仍建议使用受当前工作区边界
+保护的 `remote_write`。
 
 为避免大输出刷爆模型上下文，工具结果做了多层限流：`remote_list` 默认最多返回
 500 条条目（可用 `limit` 上调，超限返回 `truncated` 与 `total`）；`remote_search`
@@ -378,5 +378,5 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按
   `safs.highRiskCommandAction` 处理；设为 `[]` 可关闭拦截。匹配会忽略引号内的内容，避免搜索
   “sudo” 这类关键词时误伤。
-- `safs.highRiskCommandAction`：`deny`（默认）直接拒绝高危命令并记录日志；`confirm` 则每次
-  执行前弹窗让用户确认。
+- `safs.highRiskCommandAction`：`deny`（默认）直接拒绝高危命令并记录日志；`allow` 直接
+  放行。两种模式均不弹出逐次确认；旧版 `confirm` 值按 `deny` 处理。
