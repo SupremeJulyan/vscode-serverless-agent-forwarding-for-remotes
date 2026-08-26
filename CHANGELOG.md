@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.4
+
+- SAFS MCP 改为按需使用：工作区工具更名为 `safs_get_remote_workspace`，移除无意义的
+  `execution` 字段、全局强制调用和 `alwaysLoad` 提示，普通本地工作区不再被自动探测或误判为远程。
+- 调用 `safs_get_remote_workspace` 时由用户从 `[host] : [workspaceRoot]` 列表选择
+  远程工作区，聚焦窗口排在首项；再次调用可切换，后续工具自动保持 Agent 绑定。
+- MCP 对外接口移除与 `host` 重复的 `mountName` 参数和返回字段。
+
 ## 1.6.3
 
 - 本地 watcher 改为同路径串行并保留尾沿事件，修复上传期间再次保存时最终版本

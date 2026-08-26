@@ -22,7 +22,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.6.3');
+  assert.equal(manifest.version, '1.6.4');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -63,6 +63,22 @@ test('packages Agent integration without a spawned stdio router or Codex plugin'
   await assert.rejects(access(new URL(
     '../plugins/safs/.codex-plugin/plugin.json', import.meta.url
   )));
+});
+
+test('SAFS MCP is opt-in for remote context instead of mandatory in every workspace', async () => {
+  const direct = await readFile(new URL('../src/agent-mcp.ts', import.meta.url), 'utf8');
+  const router = await readFile(new URL('../src/agent-http-router.ts', import.meta.url), 'utf8');
+  assert.equal(direct.includes('anthropic/alwaysLoad'), false);
+  assert.equal(direct.includes('At the start of every conversation'), false);
+  assert.equal(router.includes('Before reading files, editing, searching'), false);
+  assert.ok(direct.includes('Do not call SAFS tools for ordinary local workspaces'));
+  assert.ok(router.includes('do not call SAFS tools for ordinary local workspaces'));
+  assert.ok(direct.includes("'safs_get_remote_workspace'"));
+  assert.ok(router.includes("'safs_get_remote_workspace'"));
+  assert.ok(direct.includes('Call safs_get_remote_workspace again'));
+  assert.ok(router.includes('Call safs_get_remote_workspace again'));
+  assert.equal(direct.includes('resolve_workspace_execution'), false);
+  assert.equal(router.includes('resolve_workspace_execution'), false);
 });
 
 test('shows when this window is the Agent forwarding focus', async () => {
