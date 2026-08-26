@@ -172,12 +172,14 @@ platforms.
    the new window, the extension starts the fixed HTTP router and registers
    the Agent. The new window starts its dynamic-port service, and the Agent
    for a confirmed SAFS remote task, the Agent can get the current remote
-   window via `safs_get_remote_workspace`; later tool calls retain that binding.
+   candidates via `safs_list_remote_workspaces`, asks the user in its own UI,
+   and calls `safs_select_remote_workspace` to bind the choice. Later tool calls
+   retain that binding.
 4. Restart the Agent and start a new conversation (required after installing,
    updating, or removing MCP).
 5. The Agent can now use the remote tools directly: `#safsList`,
    `#safsWrite`, `#safsSearch`, and `#safsRun` for VS Code agents, or the MCP
-   tools `safs_get_remote_workspace`, `list_remote_folders`, `remote_list`,
+   tools `safs_list_remote_workspaces`, `safs_select_remote_workspace`, `remote_list`,
    `remote_write`, `remote_search`, and `run_remote_command`, plus
    `current_remote_file` to inspect the remote file currently open in VS Code.
 6. To disable: click "Disable Agent Forwarding" on the connection item. The
@@ -200,27 +202,30 @@ as follows:
 - When several remote windows are open, they all share the same fixed HTTP MCP
   entry; the windows elect one Router Leader on the fixed port, and another
   window takes over when the leader exits.
-- `safs_get_remote_workspace` lists the focused window first, followed by the
-  most recently updated windows. Later calls retain the selection; call it
-  again to switch remote workspaces.
+- `safs_list_remote_workspaces` returns candidates with the focused
+  window first, followed by recently updated windows. The Agent asks the user in
+  its own UI, then calls `safs_select_remote_workspace` with the chosen `host`
+  and `workspaceRoot`. Every later workspace tool call includes the returned
+  `bindingId`. Repeat list then select to switch or renew an expired binding;
+  the router never silently falls back to another window.
 - Each window's dynamic-port service can only access its own mount and cannot
   reach other mounts through request parameters.
 
 #### Determine which remote the Agent session is bound to
 
-- Call `safs_get_remote_workspace` only when the user explicitly asks to use
+- Call `safs_list_remote_workspaces` only when the user explicitly asks to use
   SAFS or the context already identifies a `safs://` virtual workspace. Do not
-  call SAFS tools for an ordinary local workspace. It opens a
-  `[host] : [workspaceRoot]` picker with the focused window first. The returned
-  `workspaceRoot`, `host`, and `focused` describe the binding. Call the tool
-  again when the user wants to switch remote workspaces.
+  call SAFS tools for an ordinary local workspace. Its first call returns
+  compact candidates containing only `host` and `workspaceRoot`, with the focused window first. The Agent
+  asks the user in its own UI and calls `safs_select_remote_workspace` with the
+  selected `host` and `workspaceRoot`. Later tools pass the returned `bindingId`,
+  which isolates concurrent sessions using the same Agent label.
 - `workspaceRoot` is the remote directory actually open in that VS Code window,
   not the configured SFTP mount root. Relative `remote_list`/`remote_search`
   paths and the default `run_remote_command` working directory start there.
 - `remote_write` can create or replace files only inside `workspaceRoot` and
   its descendants. Read-only `remote_list`/`remote_search` may still inspect
   explicitly supplied absolute paths elsewhere.
-- `list_remote_folders` lists all active Agent-forwarded remote workspaces.
 - **Currently open remote file**: call `current_remote_file` to get the remote
   file open in the VS Code editor (absolute path, path relative to the remote
   root, size, and whether the editor has unsaved changes). The
@@ -229,9 +234,8 @@ as follows:
   `run_remote_command` so large files never enter the Agent context. When the
   user asks "what is the content of this remote file", get its path with
   `current_remote_file` first, then inspect it with a remote command.
-- Before an explicit selection, the router prefers the focused window and then
-  the most recently updated one. After `safs_get_remote_workspace`, it retains
-  the user's selected workspace.
+- Before selection, after binding expiry, or after Router Leader takeover,
+  workspace tools require a fresh selection and never silently fall back.
 - On the VS Code side, run `SAFS: Show Status` to see each mount's connection
   state in the output panel.
 
@@ -273,18 +277,23 @@ VS Code tools: `#safsList`,
 `#safsCurrentRemoteFile` (path and metadata of the currently open remote file).
 
 The loopback-only, token-protected MCP service exposes
-`safs_get_remote_workspace`, `list_remote_folders`, `remote_list`, `remote_write`,
+`safs_list_remote_workspaces`, `safs_select_remote_workspace`, `remote_list`, `remote_write`,
 `remote_search`, `run_remote_command`, and `current_remote_file`.
 
-Agents call `safs_get_remote_workspace` only for SAFS remote tasks, not for
+Agents list and select workspaces only for SAFS remote tasks, not for
 ordinary local workspaces. Once forwarding is enabled and a workspace is
-selected, tools bind to it automatically. Remote URIs are not
+selected, tools bind to it through the returned `bindingId`. Remote URIs are not
 local paths: agents use SFTP tools for files and SSH execution for builds, tests,
 Git, and operating-system inspection. Tools are restricted to forwarding-enabled
 remote roots. Remote file content is never returned to the Agent — inspect it
 with `run_remote_command` (`head`/`sed`/`grep`/`tail` and similar). Agent routing
 and tool guidance are managed by the fixed MCP service; the
 extension does not create or read Agent guidance files on the remote host.
+
+Provably read-only inspection commands run directly through `run_remote_command`.
+Shell commands that may change remote state require confirmation; ordinary file
+writes should use workspace-confined `remote_write`. High-risk commands are denied
+by default, or require a typed target-host phrase when confirmation mode is enabled.
 
 Tool results are throttled so large output cannot blow up model context:
 `remote_list` returns at most 500 entries by default (raise with `limit`; when
@@ -301,9 +310,10 @@ dynamically allocated port. The extension registers the same stable Streamable H
 router, hosted inside the extension process, for Codex and Claude Code. Agents no longer
 spawn a stdio router process and therefore cannot inherit a `safs` virtual cwd.
 The router resolves the target window's latest port on every call.
-`safs_get_remote_workspace` lets the user select a target and retains that binding;
-before selection, the focused, most recently updated window is used. Each window
-service remains restricted to its own mount.
+`safs_list_remote_workspaces` returns candidates to the Agent, which asks the user
+in its own UI and calls `safs_select_remote_workspace` to bind the choice. Before selection, the
+focused, most recently updated window is used. Each window service remains
+restricted to its own mount.
 
 Some Agent extensions still treat the virtual URI's POSIX path as a native cwd and call
 `lstat` or start a Git watcher during startup. When Agent forwarding is enabled, this
@@ -350,7 +360,8 @@ list, but it is not secure authentication.
 Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
 the mount reconnects. If multiple remote windows are open, call
-`safs_get_remote_workspace` to select or switch the target. Keep `safs.agentMcpPort` at its
+use `safs_list_remote_workspaces` then `safs_select_remote_workspace` to select or switch the target.
+Keep `safs.agentMcpPort` at its
 default value of `0`. `safs.agentHttpRouterPort` controls the stable Agent-facing
 port and defaults to `9848`; the extension rejects an unrelated process occupying that port.
 

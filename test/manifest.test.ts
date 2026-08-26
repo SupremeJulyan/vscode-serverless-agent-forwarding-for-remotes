@@ -73,10 +73,12 @@ test('SAFS MCP is opt-in for remote context instead of mandatory in every worksp
   assert.equal(router.includes('Before reading files, editing, searching'), false);
   assert.ok(direct.includes('Do not call SAFS tools for ordinary local workspaces'));
   assert.ok(router.includes('do not call SAFS tools for ordinary local workspaces'));
-  assert.ok(direct.includes("'safs_get_remote_workspace'"));
-  assert.ok(router.includes("'safs_get_remote_workspace'"));
-  assert.ok(direct.includes('Call safs_get_remote_workspace again'));
-  assert.ok(router.includes('Call safs_get_remote_workspace again'));
+  assert.ok(direct.includes("'safs_list_remote_workspaces'"));
+  assert.ok(router.includes("'safs_list_remote_workspaces'"));
+  assert.ok(direct.includes("'safs_select_remote_workspace'"));
+  assert.ok(router.includes("'safs_select_remote_workspace'"));
+  assert.equal(direct.includes('safs_get_remote_workspace'), false);
+  assert.equal(router.includes('safs_get_remote_workspace'), false);
   assert.equal(direct.includes('resolve_workspace_execution'), false);
   assert.equal(router.includes('resolve_workspace_execution'), false);
 });

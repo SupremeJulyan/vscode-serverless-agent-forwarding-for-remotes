@@ -33,9 +33,6 @@ export function agentTaggedMcpUrl(
 
 export interface AgentHttpRouterOptions {
   discover?: () => DiscoveredAgentWorkspace[];
-  selectWorkspace?: (
-    workspaces: DiscoveredAgentWorkspace[]
-  ) => Promise<DiscoveredAgentWorkspace | undefined>;
   log?: (message: string) => void;
   /** 转发到窗口 MCP 的 fetch 超时（毫秒），缺省 120s。 */
   forwardTimeoutMs?: number;
@@ -50,7 +47,9 @@ export class AgentHttpRouter {
   private _available = false;
   private _leader = false;
   private readonly discover: () => DiscoveredAgentWorkspace[];
-  private readonly bindings = new Map<string, { host: string; workspaceRoot: string }>();
+  private readonly bindings = new Map<string, {
+    host: string; workspaceRoot: string; owner: string;
+  }>();
 
   constructor(
     private readonly port: number,
@@ -85,21 +84,18 @@ export class AgentHttpRouter {
     return `${agentName ?? '<unknown>'}\0${agentPlatform ?? '<unknown>'}`;
   }
 
-  private workspace(
-    agentName?: string, agentPlatform?: AgentPlatformLabel
-  ): DiscoveredAgentWorkspace | undefined {
+  private workspace(bindingId: string): DiscoveredAgentWorkspace | undefined {
     const workspaces = this.workspaces();
-    const binding = this.bindings.get(this.bindingKey(agentName, agentPlatform));
-    return (binding && workspaces.find((workspace) =>
+    const binding = this.bindings.get(bindingId);
+    return binding && workspaces.find((workspace) =>
       workspace.host === binding.host && workspace.workspaceRoot === binding.workspaceRoot
-    )) || workspaces[0];
+    );
   }
 
   private publicWorkspace(workspace: DiscoveredAgentWorkspace): Record<string, unknown> {
     return {
       workspaceRoot: workspace.workspaceRoot,
-      host: workspace.host,
-      focused: workspace.focused
+      host: workspace.host
     };
   }
 
@@ -182,7 +178,7 @@ export class AgentHttpRouter {
     name: string, input: Record<string, unknown>, agentName?: string,
     agentPlatform?: AgentPlatformLabel
   ): Promise<any> {
-    if (name === 'list_remote_folders') {
+    if (name === 'safs_list_remote_workspaces') {
       return {
         content: [{
           type: 'text' as const,
@@ -191,25 +187,43 @@ export class AgentHttpRouter {
         }]
       };
     }
-    if (name === 'safs_get_remote_workspace') {
+    if (name === 'safs_select_remote_workspace') {
       const workspaces = this.workspaces();
-      const workspace = this.options.selectWorkspace
-        ? await this.options.selectWorkspace(workspaces)
-        : workspaces[0];
-      if (!workspace) {
+      if (!workspaces.length) {
         return this.toolError(
-          workspaces.length ? 'WORKSPACE_SELECTION_CANCELLED' : 'NO_ACTIVE_REMOTE',
-          workspaces.length
-            ? 'Remote workspace selection was cancelled.'
-            : 'No active Agent-forwarded Serverless Remote window was found.'
+          'NO_ACTIVE_REMOTE',
+          'No active Agent-forwarded Serverless Remote window was found.'
         );
       }
-      this.bindings.set(this.bindingKey(agentName, agentPlatform), {
-        host: workspace.host, workspaceRoot: workspace.workspaceRoot
+      const host = typeof input.host === 'string' ? input.host : undefined;
+      const workspaceRoot = typeof input.workspaceRoot === 'string'
+        ? input.workspaceRoot : undefined;
+      if (!host || !workspaceRoot) {
+        return this.toolError(
+          'INVALID_WORKSPACE_SELECTION',
+          'Both host and workspaceRoot are required to select a remote workspace.'
+        );
+      }
+      const workspace = workspaces.find((candidate) =>
+        candidate.host === host && candidate.workspaceRoot === workspaceRoot
+      );
+      if (!workspace) {
+        return this.toolError(
+          'REMOTE_WORKSPACE_NOT_FOUND',
+          `The selected remote workspace is no longer active: [${host}] : [${workspaceRoot}]`,
+          { host, workspaceRoot }
+        );
+      }
+      const bindingId = randomUUID().replace(/-/g, '').slice(0, 16);
+      this.bindings.set(bindingId, {
+        host: workspace.host,
+        workspaceRoot: workspace.workspaceRoot,
+        owner: this.bindingKey(agentName, agentPlatform)
       });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
           workspace: this.publicWorkspace(workspace),
+          bindingId,
           fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
           commandTool: 'run_remote_command',
           localFilesystemAllowed: false,
@@ -217,14 +231,30 @@ export class AgentHttpRouter {
         }) }]
       };
     }
-    const workspace = this.workspace(agentName, agentPlatform);
-    if (!workspace) {
+    const bindingId = typeof input.bindingId === 'string' ? input.bindingId : '';
+    if (!bindingId) {
       return this.toolError(
-        'NO_ACTIVE_REMOTE',
-        'No active Agent-forwarded Serverless Remote window was found. Enable Agent forwarding and open a remote folder in VS Code.'
+        'WORKSPACE_BINDING_REQUIRED',
+        'Call safs_list_remote_workspaces and safs_select_remote_workspace first, then pass the returned bindingId.'
       );
     }
-    const args = { ...input, mountName: workspace.mountName };
+    const binding = this.bindings.get(bindingId);
+    if (!binding || binding.owner !== this.bindingKey(agentName, agentPlatform)) {
+      return this.toolError(
+        'WORKSPACE_BINDING_INVALID',
+        'The workspace binding is invalid for this Agent session. Select the workspace again.'
+      );
+    }
+    const workspace = this.workspace(bindingId);
+    if (!workspace) {
+      this.bindings.delete(bindingId);
+      return this.toolError(
+        'WORKSPACE_BINDING_EXPIRED',
+        'The selected remote workspace is no longer active. List and select a workspace again.'
+      );
+    }
+    const { bindingId: _bindingId, ...publicInput } = input;
+    const args = { ...publicInput, mountName: workspace.mountName };
     try {
       return await this.forward(workspace, name, args, agentName, agentPlatform);
     } catch (error) {
@@ -246,13 +276,13 @@ export class AgentHttpRouter {
       {
         instructions: [
           'This MCP server is only for SAFS remote workspaces; do not call SAFS tools for ordinary local workspaces.',
-          'Call safs_get_remote_workspace only when the user explicitly asks to work through SAFS or the context already identifies a safs:// virtual workspace.',
-          'Call safs_get_remote_workspace again whenever the user wants to switch to another remote workspace.',
+          'Only for an explicit SAFS task or known safs:// context, call safs_list_remote_workspaces, ask the user to choose in the Agent interface, then call safs_select_remote_workspace with the exact host and workspaceRoot.',
+          'Repeat list then select whenever the user wants to switch to another remote workspace.',
           'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for that workspace.',
           'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead.',
           'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata.',
           'Never use local shell or local filesystem tools for a safs workspace because its files do not exist locally.',
-          'The workspace selected by safs_get_remote_workspace remains bound to this Agent for later tool calls.'
+          'Pass the bindingId returned by safs_select_remote_workspace to every later workspace tool call. If it expires, list and select again; never guess or silently switch workspaces.'
         ].join(' ')
       }
     );
@@ -274,48 +304,50 @@ export class AgentHttpRouter {
       )
     );
     register(
-      'safs_get_remote_workspace', 'Get the active SAFS remote workspace',
-      'Let the user select an active SAFS remote workspace. Call again when the user wants to switch remote workspaces. Do not call for an ordinary local workspace.',
-      {}, { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      'safs_select_remote_workspace', 'Select a SAFS remote workspace',
+      'Binds the exact host and workspaceRoot chosen by the user from safs_list_remote_workspaces and returns a bindingId required by every workspace tool. Select again to switch or renew an expired binding.',
+      { host: z.string().min(1), workspaceRoot: z.string().min(1) },
+      { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     );
     register(
-      'list_remote_folders', 'List SFTP remote folders',
-      'Lists active Agent-forwarded remote folders.',
+      'safs_list_remote_workspaces', 'List SAFS remote workspaces',
+      'Lists active Agent-forwarded remote workspaces in focused-first order. Ask the user to choose, then call safs_select_remote_workspace.',
       {}, { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
       'current_remote_file', 'Get the currently open remote file',
       'Returns the remote file open in the active VS Code editor of the bound window (absolute path, relative path, size, dirty), or null when none is open.',
-      {},
+      { bindingId: z.string().min(1) },
       { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
       'remote_list', 'List a remote directory',
       'Lists files directly over SFTP. Relative paths start at the current VS Code workspace root. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
       {
-        path: z.string().optional(),
+        bindingId: z.string().min(1), path: z.string().optional(),
         limit: z.number().int().min(1).max(10000).optional()
       },
       { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
       'remote_write', 'Write a remote file', 'Creates or replaces a UTF-8 file over SFTP.',
-      { path: z.string().min(1), content: z.string() },
+      { bindingId: z.string().min(1), path: z.string().min(1), content: z.string() },
       { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
     );
     register(
       'remote_search', 'Search remote files',
       'Searches file contents on the remote SSH host. Relative paths start at the current VS Code workspace root. Results are capped (200 matches, lines trimmed to 300 chars).',
       {
-        query: z.string().min(1), path: z.string().optional()
+        bindingId: z.string().min(1), query: z.string().min(1), path: z.string().optional()
       },
       { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
       'run_remote_command', 'Run a remote SSH command',
-      'Runs a command on the bound SSH host. The default working directory is the current VS Code workspace root.',
+      'Runs a command on the bound SSH host. Provably read-only inspection commands run directly; commands that may change remote state require user confirmation, and high-risk commands are denied or require typed confirmation. Prefer remote_write for ordinary file writes.',
       {
-        command: z.string().min(1), remoteCwd: z.string().optional()
+        bindingId: z.string().min(1), command: z.string().min(1),
+        remoteCwd: z.string().optional()
       },
       { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
     );
@@ -381,7 +413,8 @@ export class AgentHttpRouter {
       );
       // 这两个工具由固定路由器本地完成；其它工具只在实际执行窗口记录，避免双份日志。
       if (method === 'tools/call' && typeof tool === 'string'
-        && (tool === 'safs_get_remote_workspace' || tool === 'list_remote_folders')) {
+        && (tool === 'safs_select_remote_workspace'
+          || tool === 'safs_list_remote_workspaces')) {
         const input = request.body?.params?.arguments;
         this.options.audit?.({
           toolName: tool,

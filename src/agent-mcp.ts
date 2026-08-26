@@ -17,7 +17,6 @@ export interface RemoteFolderInfo {
 export interface AgentMcpCallbacks {
   listFolders(): Promise<RemoteFolderInfo[]>;
   currentWorkspace(): Promise<RemoteFolderInfo | null>;
-  selectWorkspace?(workspaces: RemoteFolderInfo[]): Promise<RemoteFolderInfo | undefined>;
   /** 当前打开的远程文件元数据（无活动远程文件时为 null）。 */
   currentFile(input: { mountName?: string }): Promise<unknown>;
   list(input: { mountName?: string; path?: string; limit?: number }): Promise<unknown>;
@@ -68,8 +67,7 @@ export class AgentMcpServer {
       {
         instructions:
           'This MCP server is only for SAFS remote workspaces. Do not call SAFS tools for ordinary local workspaces. '
-          + 'Call safs_get_remote_workspace only when the user explicitly asks to work through SAFS or the context already identifies a safs:// virtual workspace. Virtual remote files are NOT present in the agent host filesystem. '
-          + 'Call safs_get_remote_workspace again whenever the user wants to switch to another remote workspace. '
+          + 'Only for an explicit SAFS task or known safs:// context, call safs_list_remote_workspaces, ask the user to choose in the Agent interface, then call safs_select_remote_workspace with the exact host and workspaceRoot. Repeat list then select whenever the user wants to switch workspaces. Virtual remote files are NOT present in the agent host filesystem. '
           + 'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for workspace operations. Never substitute the local filesystem or local shell. '
           + 'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead. '
           + 'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata. '
@@ -108,20 +106,23 @@ export class AgentMcpServer {
       host: info.host
     });
     server.registerTool(
-      'safs_get_remote_workspace',
+      'safs_select_remote_workspace',
       {
-        title: 'Get the active SAFS remote workspace',
+        title: 'Select a SAFS remote workspace',
         description:
-          'Lets the user select an active SAFS remote workspace. Call again when the user wants to switch remote workspaces. Do not call for an ordinary local workspace.',
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-        inputSchema: {}
+          'Binds the exact host and workspaceRoot chosen by the user from safs_list_remote_workspaces. Call again with another listed workspace to switch.',
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        inputSchema: {
+          host: z.string().min(1),
+          workspaceRoot: z.string().min(1)
+        }
       },
-      async () => invoke(async () => {
+      async (input) => invoke(async () => {
         const current = await this.callbacks.currentWorkspace();
         const candidates = current ? [current] : await this.callbacks.listFolders();
-        const workspace = this.callbacks.selectWorkspace
-          ? await this.callbacks.selectWorkspace(candidates)
-          : current;
+        const workspace = candidates.find((candidate) =>
+          candidate.host === input.host && candidate.workspaceRoot === input.workspaceRoot
+        );
         return workspace ? {
           workspace: publicFolder(workspace),
           fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
@@ -132,10 +133,11 @@ export class AgentMcpServer {
       })
     );
     server.registerTool(
-      'list_remote_folders',
+      'safs_list_remote_workspaces',
       {
-        title: 'List SFTP remote folders',
-        description: 'Lists active Agent-forwarded remote folders.',
+        title: 'List SAFS remote workspaces',
+        description:
+          'Lists active Agent-forwarded remote workspaces in focused-first order. Ask the user to choose, then call safs_select_remote_workspace.',
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },
@@ -199,7 +201,7 @@ export class AgentMcpServer {
       'run_remote_command',
       {
         title: 'Run a remote SSH command',
-        description: 'Runs a shell command on the selected SSH host. The default working directory is the current VS Code workspace root.',
+        description: 'Runs a shell command on the selected SSH host. Provably read-only inspection commands run directly; commands that may change state require user confirmation, and high-risk commands are denied or require typed confirmation. Prefer remote_write for ordinary file writes.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           command: z.string().min(1),

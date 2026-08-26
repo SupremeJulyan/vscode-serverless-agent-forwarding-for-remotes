@@ -87,28 +87,38 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     assert.deepEqual(await client.listResourceTemplates(), { resourceTemplates: [] });
 
     workspaces = [record('old-a', first.url)];
+    const choices = await client.callTool({
+      name: 'safs_list_remote_workspaces', arguments: {}
+    });
+    const choicesValue = JSON.parse((choices.content as any[])[0].text);
+    assert.deepEqual(choicesValue, [{ workspaceRoot: '/srv/a', host: 'dev' }]);
     const route = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
+      name: 'safs_select_remote_workspace',
+      arguments: { host: 'dev', workspaceRoot: '/srv/a' }
     });
     const routeValue = JSON.parse((route.content as any[])[0].text);
+    const bindingId = routeValue.bindingId as string;
+    assert.match(bindingId, /^[a-f0-9]{16}$/);
     assert.deepEqual(routeValue.workspace, {
-      workspaceRoot: '/srv/a', host: 'dev', focused: true
+      workspaceRoot: '/srv/a', host: 'dev'
     });
-    assert.deepEqual(routerAudits, ['safs_get_remote_workspace']);
+    assert.deepEqual(routerAudits, [
+      'safs_list_remote_workspaces', 'safs_select_remote_workspace'
+    ]);
 
     const connected = await client.callTool({
-      name: 'remote_list', arguments: { path: 'README.md' }
+      name: 'remote_list', arguments: { bindingId, path: 'README.md' }
     });
     assert.equal(JSON.parse((connected.content as any[])[0].text).label, 'first');
 
     const ran = await client.callTool({
-      name: 'run_remote_command', arguments: { command: 'pwd' }
+      name: 'run_remote_command', arguments: { bindingId, command: 'pwd' }
     });
     assert.equal(JSON.parse((ran.content as any[])[0].text).input.agentName, 'Codex');
     assert.equal(JSON.parse((ran.content as any[])[0].text).input.agentPlatform, 'wsl');
 
     const rejected = await client.callTool({
-      name: 'remote_list', arguments: { path: 'forbidden' }
+      name: 'remote_list', arguments: { bindingId, path: 'forbidden' }
     });
     assert.equal(rejected.isError, true);
     assert.deepEqual(JSON.parse((rejected.content as any[])[0].text), {
@@ -118,7 +128,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     // current_remote_file is window-specific: the router forwards it to the
     // focused window's MCP server.
     const currentFile = await client.callTool({
-      name: 'current_remote_file', arguments: {}
+      name: 'current_remote_file', arguments: { bindingId }
     });
     const currentFileValue = JSON.parse((currentFile.content as any[])[0].text);
     assert.equal(currentFileValue.label, 'first');
@@ -126,19 +136,30 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
 
     workspaces = [];
     const disconnected = await client.callTool({
-      name: 'remote_list', arguments: { path: 'README.md' }
+      name: 'remote_list', arguments: { bindingId, path: 'README.md' }
     });
     assert.equal(disconnected.isError, true);
-    assert.equal(JSON.parse((disconnected.content as any[])[0].text).code, 'NO_ACTIVE_REMOTE');
+    assert.equal(
+      JSON.parse((disconnected.content as any[])[0].text).code,
+      'WORKSPACE_BINDING_EXPIRED'
+    );
     const disconnectedFile = await client.callTool({
-      name: 'current_remote_file', arguments: {}
+      name: 'current_remote_file', arguments: { bindingId }
     });
     assert.equal(disconnectedFile.isError, true);
-    assert.equal(JSON.parse((disconnectedFile.content as any[])[0].text).code, 'NO_ACTIVE_REMOTE');
+    assert.equal(
+      JSON.parse((disconnectedFile.content as any[])[0].text).code,
+      'WORKSPACE_BINDING_INVALID'
+    );
 
     workspaces = [record('new-a', second.url)];
+    const rebound = await client.callTool({
+      name: 'safs_select_remote_workspace',
+      arguments: { host: 'dev', workspaceRoot: '/srv/a' }
+    });
+    const reboundId = JSON.parse((rebound.content as any[])[0].text).bindingId;
     const reconnected = await client.callTool({
-      name: 'remote_list', arguments: { path: 'README.md' }
+      name: 'remote_list', arguments: { bindingId: reboundId, path: 'README.md' }
     });
     assert.equal(JSON.parse((reconnected.content as any[])[0].text).label, 'second');
   } finally {
@@ -147,18 +168,12 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
   }
 });
 
-test('workspace picker binds an Agent, supports switching, and preserves binding on cancel', async () => {
+test('two-stage workspace selection binds an Agent and supports switching', async () => {
   const first = new AgentMcpServer(0, 'first', callbacks('first'));
   const second = new AgentMcpServer(0, 'second', callbacks('second'));
-  let selectedIndex: number | undefined = 1;
-  let offeredLabels: string[] = [];
   let workspaces: DiscoveredAgentWorkspace[] = [];
   const router = new AgentHttpRouter(await freePort(), 'router-token', {
-    discover: () => workspaces,
-    selectWorkspace: async (offered) => {
-      offeredLabels = offered.map((item) => `[${item.host}] : [${item.workspaceRoot}]`);
-      return selectedIndex === undefined ? undefined : offered[selectedIndex];
-    }
+    discover: () => workspaces
   });
   const client = new Client({ name: 'workspace-picker-test', version: '1.0.0' });
   try {
@@ -179,34 +194,61 @@ test('workspace picker binds an Agent, supports switching, and preserves binding
     const tools = await client.listTools();
     for (const tool of tools.tools) {
       assert.equal(JSON.stringify(tool.inputSchema).includes('mountName'), false);
+      if (['current_remote_file', 'remote_list', 'remote_write', 'remote_search',
+        'run_remote_command'].includes(tool.name)) {
+        assert.ok((tool.inputSchema.required as string[] | undefined)?.includes('bindingId'));
+      }
     }
 
+    const choices = await client.callTool({
+      name: 'safs_list_remote_workspaces', arguments: {}
+    });
+    const choicesValue = JSON.parse((choices.content as any[])[0].text);
+    assert.deepEqual(choicesValue, [
+      { workspaceRoot: '/srv/a', host: 'host-a' },
+      { workspaceRoot: '/srv/b', host: 'host-b' }
+    ]);
     const selected = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
+      name: 'safs_select_remote_workspace',
+      arguments: { host: 'host-b', workspaceRoot: '/srv/b' }
     });
-    assert.deepEqual(offeredLabels, ['[host-a] : [/srv/a]', '[host-b] : [/srv/b]']);
-    assert.deepEqual(JSON.parse((selected.content as any[])[0].text).workspace, {
-      workspaceRoot: '/srv/b', host: 'host-b', focused: false
+    const selectedValue = JSON.parse((selected.content as any[])[0].text);
+    const bindingId = selectedValue.bindingId as string;
+    assert.deepEqual(selectedValue.workspace, {
+      workspaceRoot: '/srv/b', host: 'host-b'
     });
-    const bound = await client.callTool({ name: 'remote_list', arguments: { path: '.' } });
+    const bound = await client.callTool({
+      name: 'remote_list', arguments: { bindingId, path: '.' }
+    });
     assert.equal(JSON.parse((bound.content as any[])[0].text).label, 'second');
 
-    selectedIndex = undefined;
-    const cancelled = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
+    const stale = await client.callTool({
+      name: 'safs_select_remote_workspace',
+      arguments: { host: 'missing', workspaceRoot: '/missing' }
     });
-    assert.equal(cancelled.isError, true);
+    assert.equal(stale.isError, true);
     assert.equal(
-      JSON.parse((cancelled.content as any[])[0].text).code,
-      'WORKSPACE_SELECTION_CANCELLED'
+      JSON.parse((stale.content as any[])[0].text).code,
+      'REMOTE_WORKSPACE_NOT_FOUND'
     );
-    const stillBound = await client.callTool({ name: 'remote_list', arguments: { path: '.' } });
+    const stillBound = await client.callTool({
+      name: 'remote_list', arguments: { bindingId, path: '.' }
+    });
     assert.equal(JSON.parse((stillBound.content as any[])[0].text).label, 'second');
 
-    selectedIndex = 0;
-    await client.callTool({ name: 'safs_get_remote_workspace', arguments: {} });
-    const switched = await client.callTool({ name: 'remote_list', arguments: { path: '.' } });
+    const switchedSelection = await client.callTool({
+      name: 'safs_select_remote_workspace',
+      arguments: { host: 'host-a', workspaceRoot: '/srv/a' }
+    });
+    const switchedId = JSON.parse((switchedSelection.content as any[])[0].text).bindingId;
+    const switched = await client.callTool({
+      name: 'remote_list', arguments: { bindingId: switchedId, path: '.' }
+    });
     assert.equal(JSON.parse((switched.content as any[])[0].text).label, 'first');
+    const originalBinding = await client.callTool({
+      name: 'remote_list', arguments: { bindingId, path: '.' }
+    });
+    assert.equal(JSON.parse((originalBinding.content as any[])[0].text).label, 'second');
   } finally {
     await client.close();
     await Promise.allSettled([router.stop(), first.stop(), second.stop()]);
@@ -256,7 +298,14 @@ test('router refuses to forward to its own port (loop protection)', async () => 
   try {
     await router.start();
     await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
-    const result = await client.callTool({ name: 'remote_list', arguments: { path: 'x' } });
+    const selected = await client.callTool({
+      name: 'safs_select_remote_workspace',
+      arguments: { host: 'dev', workspaceRoot: '/srv/a' }
+    });
+    const bindingId = JSON.parse((selected.content as any[])[0].text).bindingId;
+    const result = await client.callTool({
+      name: 'remote_list', arguments: { bindingId, path: 'x' }
+    });
     assert.equal(result.isError, true);
     assert.equal(JSON.parse((result.content as any[])[0].text).code, 'REMOTE_UNAVAILABLE');
   } finally {
@@ -279,7 +328,7 @@ test('router rejects requests marked as forwarded by another router', async () =
       },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'tools/call',
-        params: { name: 'list_remote_folders', arguments: {} }
+        params: { name: 'safs_list_remote_workspaces', arguments: {} }
       })
     });
     assert.equal(response.status, 403);

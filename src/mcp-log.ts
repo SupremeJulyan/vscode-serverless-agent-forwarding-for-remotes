@@ -64,7 +64,9 @@ export async function appendMcpCommandLog(
 
 function safeToolInput(toolName: string, input: Record<string, unknown> = {}): string {
   const summary: Record<string, unknown> = {};
-  for (const key of ['mountName', 'path', 'limit', 'query', 'remoteCwd']) {
+  for (const key of [
+    'mountName', 'host', 'workspaceRoot', 'path', 'limit', 'query', 'remoteCwd'
+  ]) {
     const value = input[key];
     if (typeof value === 'string') summary[key] = redactSensitiveText(value).slice(0, 500);
     else if (typeof value === 'number' || typeof value === 'boolean') summary[key] = value;

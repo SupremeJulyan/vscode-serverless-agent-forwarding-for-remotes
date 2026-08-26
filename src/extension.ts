@@ -65,7 +65,7 @@ import {
 import { appendMcpCommandLog, appendMcpToolLog } from './mcp-log';
 import { redactSensitiveText } from './redact';
 import {
-  defaultHighRiskCommandPatterns, matchHighRiskCommand
+  defaultHighRiskCommandPatterns, isReadOnlyRemoteCommand, matchHighRiskCommand
 } from './high-risk-commands';
 
 const commandPrefix = 'safs';
@@ -1761,7 +1761,7 @@ function resolveRemotePath(folder: RemoteFolder, value = '.'): string {
 async function remoteList(input: {
   mountName: string; path?: string; limit?: number;
 }): Promise<unknown> {
-  const { mount, folder } = await mountAndFolder(input.mountName);
+  const { folder } = await mountAndFolder(input.mountName);
   const remotePath = resolveRemotePath(folder, input.path);
   const entries = await (await pool.get(folder.hostName)).readDirectory(remotePath);
   // 默认 500 条上限：node_modules/dist 等巨型目录的完整列表对 Agent 是纯噪音，
@@ -1769,7 +1769,6 @@ async function remoteList(input: {
   const limit = Math.min(input.limit ?? 500, 10000);
   const truncated = entries.length > limit;
   return {
-    mountName: mount.name,
     path: remotePath,
     entries: entries.slice(0, limit).map(({ name, type }) => ({ name, type })),
     ...(truncated ? { truncated, total: entries.length } : {})
@@ -1803,7 +1802,7 @@ async function remoteWrite(input: {
   const uri = vscode.Uri.parse(folderUri(folder, remotePath));
   const content = new TextEncoder().encode(input.content);
   await provider.writeFile(uri, content, { create: true, overwrite: true });
-  return { mountName: input.mountName, path: remotePath, bytes: content.length };
+  return { path: remotePath, bytes: content.length };
 }
 
 async function executeRemoteCommand(
@@ -1853,11 +1852,13 @@ async function executeRemoteCommand(
           `高危指令已被 SAFS 拦截（规则：${matched}）：${redactSensitiveText(input.command)}`
         );
       }
-      const approved = await vscode.window.showWarningMessage(
-        `Agent 请求执行高危指令，是否允许？\n\n${input.command}\n\n匹配规则：${matched}`,
-        { modal: true },
-        '允许执行'
-      ) === '允许执行';
+      const phrase = `允许 ${mount.host}`;
+      const entered = await vscode.window.showInputBox({
+        title: 'SAFS：确认高风险远程 Shell 操作',
+        prompt: `Agent：${input.agentName ?? 'unknown'} (${input.agentPlatform ?? 'unknown'})\n目标：[${mount.host}] : [${currentWorkspacePath(folder)}]\n命令：${redactSensitiveText(input.command)}\n匹配规则：${matched}\n请输入“${phrase}”确认`,
+        ignoreFocusOut: true
+      });
+      const approved = entered === phrase;
       if (!approved) {
         bridgeOutput?.appendLine(
           `[高危指令拦截] 用户拒绝：${redactSensitiveText(input.command)}（规则：${matched}）`
@@ -1869,6 +1870,15 @@ async function executeRemoteCommand(
       bridgeOutput?.appendLine(
         `[高危指令拦截] 用户已批准：${redactSensitiveText(input.command)}（规则：${matched}）`
       );
+    } else if (!isReadOnlyRemoteCommand(input.command)) {
+      const approved = await vscode.window.showWarningMessage(
+        `Agent 请求执行可能修改远端状态的 Shell 命令。普通文件写入应使用 remote_write。\n\nAgent：${input.agentName ?? 'unknown'} (${input.agentPlatform ?? 'unknown'})\n目标：[${mount.host}] : [${currentWorkspacePath(folder)}]\n命令：${redactSensitiveText(input.command)}`,
+        { modal: true },
+        '允许本次执行'
+      ) === '允许本次执行';
+      if (!approved) {
+        throw new Error('可能修改远端状态的 Shell 命令已被用户拒绝');
+      }
     }
   }
   appendMcpCommandLog({
@@ -1955,7 +1965,6 @@ async function executeRemoteCommand(
         throw new Error(`远程命令执行超时（${commandTimeoutMs}ms）`);
       }
       return {
-        mountName: mount.name,
         remoteCwd,
         ...result
       };
@@ -2343,24 +2352,6 @@ function auditMcpTool(entry: {
   });
 }
 
-async function pickAgentRemoteWorkspace<T extends { host: string; workspaceRoot: string }>(
-  workspaces: T[]
-): Promise<T | undefined> {
-  if (!workspaces.length) return undefined;
-  const picked = await vscode.window.showQuickPick(
-    workspaces.map((workspace) => ({
-      label: `[${workspace.host}] : [${workspace.workspaceRoot}]`,
-      workspace
-    })),
-    {
-      title: 'SAFS：选择 Agent 要操作的远程工作区',
-      placeHolder: '聚焦的远程窗口默认排在第一项',
-      ignoreFocusOut: true
-    }
-  );
-  return picked?.workspace;
-}
-
 async function ensureAgentHttpRouter(
   context: vscode.ExtensionContext
 ): Promise<AgentHttpRouter> {
@@ -2374,7 +2365,6 @@ async function ensureAgentHttpRouter(
           {
             log: (message) => bridgeOutput?.appendLine(`[Agent HTTP Router] ${message}`),
             audit: auditMcpTool,
-            selectWorkspace: pickAgentRemoteWorkspace,
             forwardTimeoutMs: settings().get<number>('agentMcpTimeoutMs', 120_000)
           }
         );
@@ -2455,7 +2445,6 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
             host: mount.host
           };
         },
-        selectWorkspace: pickAgentRemoteWorkspace,
         currentFile: (input) => activeRemoteFile(input.mountName),
         list: async (input) => remoteList({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)

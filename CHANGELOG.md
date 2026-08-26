@@ -2,11 +2,17 @@
 
 ## 1.6.4
 
-- SAFS MCP 改为按需使用：工作区工具更名为 `safs_get_remote_workspace`，移除无意义的
-  `execution` 字段、全局强制调用和 `alwaysLoad` 提示，普通本地工作区不再被自动探测或误判为远程。
-- 调用 `safs_get_remote_workspace` 时由用户从 `[host] : [workspaceRoot]` 列表选择
-  远程工作区，聚焦窗口排在首项；再次调用可切换，后续工具自动保持 Agent 绑定。
+- SAFS MCP 改为按需使用：移除无意义的 `execution` 字段、全局强制调用和
+  `alwaysLoad` 提示，普通本地工作区不再被自动探测或误判为远程。
+- 使用职责单一的 `safs_list_remote_workspaces` 和 `safs_select_remote_workspace`：
+  Agent 获取聚焦优先的紧凑列表，在自身界面询问用户后以 `host` 和 `workspaceRoot`
+  完成绑定；重复“列出再选择”可切换。
 - MCP 对外接口移除与 `host` 重复的 `mountName` 参数和返回字段。
+- 每次选择返回独立短 `bindingId`，后续工具必须携带；窗口失效、Router 接管或绑定
+  不匹配时明确要求重选，不再静默回退，多个同名 Agent 会话也不会互相覆盖。
+- 普通文件写入继续限制在当前工作区；任意 Shell 中无法证明只读的命令必须确认，
+  高风险命令在确认模式下需要输入目标主机确认短语。
+- 更新 MCP SDK 传递依赖补丁，`npm audit` 生产依赖漏洞归零。
 
 ## 1.6.3
 

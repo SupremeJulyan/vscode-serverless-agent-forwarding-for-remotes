@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { matchHighRiskCommand } from '../src/high-risk-commands';
+import {
+  isReadOnlyRemoteCommand, matchHighRiskCommand
+} from '../src/high-risk-commands';
 
 test('matches destructive commands', () => {
   const commands = [
@@ -139,5 +141,26 @@ test('does not flag harmless redirects to /dev/null or reads of system files', (
   ];
   for (const command of commands) {
     assert.equal(matchHighRiskCommand(command), undefined, `expected safe: ${command}`);
+  }
+});
+
+test('classifies only provably read-only remote shell commands as confirmation-free', () => {
+  const readOnly = [
+    'pwd', 'ls -la', 'rg TODO src | head -20', 'git status --short',
+    'git diff -- README.md', 'find . -maxdepth 2 -type f',
+    'cat /etc/os-release 2>/dev/null', "sed -n '1,20p' README.md"
+  ];
+  const stateChangingOrUnknown = [
+    'echo data > file.txt', 'rm -f file.txt', 'git checkout main',
+    'npm test', 'make', "sed -i 's/a/b/' file", 'python script.py',
+    "sh -c 'touch file'", 'find . -delete', 'find . -fprintf out.txt %p',
+    'env touch file', 'git remote add origin example', 'git tag -d v1',
+    'git diff --output=patch.diff', 'sort input.txt -o output.txt', 'hostname new-name'
+  ];
+  for (const command of readOnly) {
+    assert.equal(isReadOnlyRemoteCommand(command), true, `expected read-only: ${command}`);
+  }
+  for (const command of stateChangingOrUnknown) {
+    assert.equal(isReadOnlyRemoteCommand(command), false, `expected confirmation: ${command}`);
   }
 });
