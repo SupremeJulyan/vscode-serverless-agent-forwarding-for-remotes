@@ -81,6 +81,10 @@ test('SAFS MCP is opt-in for remote context instead of mandatory in every worksp
   assert.ok(router.includes('userConfirmed: z.literal(true)'));
   assert.ok(direct.includes('selecting in the same turn is forbidden'));
   assert.ok(router.includes('selecting in the same turn is forbidden'));
+  assert.ok(direct.includes('mustWaitForNewUserRequest: true'));
+  assert.ok(router.includes('mustWaitForNewUserRequest: true'));
+  assert.ok(direct.includes('stop after selection and wait for a new user request'));
+  assert.ok(router.includes('wait for a new user request'));
   assert.equal(direct.includes('safs_get_remote_workspace'), false);
   assert.equal(router.includes('safs_get_remote_workspace'), false);
   const extension = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');

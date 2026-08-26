@@ -102,6 +102,8 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     assert.deepEqual(routeValue.workspace, {
       workspaceRoot: '/srv/a', host: 'dev'
     });
+    assert.equal(routeValue.previousTaskCancelled, true);
+    assert.equal(routeValue.mustWaitForNewUserRequest, true);
     assert.deepEqual(routerAudits, [
       'safs_list_remote_workspaces', 'safs_select_remote_workspace'
     ]);
@@ -222,6 +224,8 @@ test('two-stage workspace selection binds an Agent and supports switching', asyn
     assert.deepEqual(selectedValue.workspace, {
       workspaceRoot: '/srv/b', host: 'host-b'
     });
+    assert.equal(selectedValue.previousTaskCancelled, true);
+    assert.equal(selectedValue.mustWaitForNewUserRequest, true);
     const bound = await client.callTool({
       name: 'remote_list', arguments: { bindingId, path: '.' }
     });

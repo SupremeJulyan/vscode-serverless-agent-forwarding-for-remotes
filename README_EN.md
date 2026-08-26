@@ -211,6 +211,9 @@ as follows:
 - The Agent must wait for an explicit user reply. Even with one candidate, it
   must not ask and select in the same turn or replace an expired workspace with
   another host automatically.
+- Reselection only establishes a connection and cancels the previous workspace
+  task. After selection the Agent must stop and wait for a new user request; it
+  must not carry the failed command over to the new host.
 - Each window's dynamic-port service can only access its own mount and cannot
   reach other mounts through request parameters.
 

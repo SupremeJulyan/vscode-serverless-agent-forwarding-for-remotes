@@ -70,8 +70,8 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
         workspaceRoot: '/srv/project',
         host: 'dev'
       },
-      fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
-      commandTool: 'run_remote_command',
+      previousTaskCancelled: true,
+      mustWaitForNewUserRequest: true,
       localFilesystemAllowed: false,
       localShellAllowed: false
     });

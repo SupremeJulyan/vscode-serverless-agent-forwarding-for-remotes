@@ -224,8 +224,8 @@ export class AgentHttpRouter {
         content: [{ type: 'text' as const, text: JSON.stringify({
           workspace: this.publicWorkspace(workspace),
           bindingId,
-          fileTools: ['remote_list', 'remote_write', 'remote_search', 'current_remote_file'],
-          commandTool: 'run_remote_command',
+          previousTaskCancelled: true,
+          mustWaitForNewUserRequest: true,
           localFilesystemAllowed: false,
           localShellAllowed: false
         }) }]
@@ -279,6 +279,7 @@ export class AgentHttpRouter {
           'This MCP server is only for SAFS remote workspaces; do not call SAFS tools for ordinary local workspaces.',
           'Only for an explicit SAFS task or known safs:// context, call safs_list_remote_workspaces, ask the user to choose in the Agent interface, then call safs_select_remote_workspace with the exact host and workspaceRoot.',
           'Never call safs_select_remote_workspace until the user has explicitly replied with a choice. Asking a question and selecting in the same turn is forbidden. A single available workspace is not consent, and an expired workspace must never be replaced by a different workspace automatically.',
+          'A workspace selection only establishes a new binding; it never authorizes resuming the command or file operation that failed on the previous workspace. After safs_select_remote_workspace succeeds, stop the current workflow, report the new connection, and wait for a new user request before calling any workspace tool.',
           'Repeat list then select whenever the user wants to switch to another remote workspace.',
           'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for that workspace.',
           'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead.',
@@ -307,7 +308,7 @@ export class AgentHttpRouter {
     );
     register(
       'safs_select_remote_workspace', 'Select a SAFS remote workspace',
-      'Binds the exact workspace explicitly chosen by the user and returns a bindingId. userConfirmed may be true only after a user reply; never infer consent from a single candidate or select in the same turn as asking.',
+      'Binds the exact workspace explicitly chosen by the user and returns a bindingId. This cancels the previous task: after selection, stop and wait for a new user request before using any workspace tool. userConfirmed may be true only after a user reply.',
       {
         host: z.string().min(1), workspaceRoot: z.string().min(1),
         userConfirmed: z.literal(true)
