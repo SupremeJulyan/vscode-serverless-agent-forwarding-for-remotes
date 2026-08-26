@@ -62,7 +62,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     assert.deepEqual(choicesValue, [{ workspaceRoot: '/srv/project', host: 'dev' }]);
     const route = await client.callTool({
       name: 'safs_select_remote_workspace',
-      arguments: { host: 'dev', workspaceRoot: '/srv/project' }
+      arguments: { host: 'dev', workspaceRoot: '/srv/project', userConfirmed: true }
     });
     const routeText = (route.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
     assert.deepEqual(JSON.parse(routeText), {

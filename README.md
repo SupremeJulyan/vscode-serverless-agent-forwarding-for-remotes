@@ -163,8 +163,10 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
   通过固定端口选举一个 Router Leader，Leader 关闭后其他窗口自动接管。
 - `safs_list_remote_workspaces` 返回按聚焦窗口优先、最近更新其次排列的
   候选列表；Agent 在自己的界面询问用户，再以所选项的 `host` 和 `workspaceRoot`
-  调用 `safs_select_remote_workspace` 完成绑定，并在后续每个工具调用中携带返回的
+  以及 `userConfirmed: true` 调用 `safs_select_remote_workspace` 完成绑定，并在后续每个工具调用中携带返回的
   `bindingId`。需要切换或绑定失效时重复“列出再选择”，不会自动切换到其他窗口。
+- Agent 必须等待用户明确回复后才能选择；即使仅剩一个候选，也不得在提出询问的
+  同一轮直接选择，更不能用其他主机替代已失效的工作区。
 - 每个窗口的动态端口服务只能访问自己绑定的挂载，不能通过请求参数跨窗口
   访问其他挂载。
 

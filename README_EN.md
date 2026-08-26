@@ -205,9 +205,12 @@ as follows:
 - `safs_list_remote_workspaces` returns candidates with the focused
   window first, followed by recently updated windows. The Agent asks the user in
   its own UI, then calls `safs_select_remote_workspace` with the chosen `host`
-  and `workspaceRoot`. Every later workspace tool call includes the returned
+  and `workspaceRoot` plus `userConfirmed: true`. Every later workspace tool call includes the returned
   `bindingId`. Repeat list then select to switch or renew an expired binding;
   the router never silently falls back to another window.
+- The Agent must wait for an explicit user reply. Even with one candidate, it
+  must not ask and select in the same turn or replace an expired workspace with
+  another host automatically.
 - Each window's dynamic-port service can only access its own mount and cannot
   reach other mounts through request parameters.
 

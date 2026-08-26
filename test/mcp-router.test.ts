@@ -94,7 +94,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     assert.deepEqual(choicesValue, [{ workspaceRoot: '/srv/a', host: 'dev' }]);
     const route = await client.callTool({
       name: 'safs_select_remote_workspace',
-      arguments: { host: 'dev', workspaceRoot: '/srv/a' }
+      arguments: { host: 'dev', workspaceRoot: '/srv/a', userConfirmed: true }
     });
     const routeValue = JSON.parse((route.content as any[])[0].text);
     const bindingId = routeValue.bindingId as string;
@@ -155,7 +155,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     workspaces = [record('new-a', second.url)];
     const rebound = await client.callTool({
       name: 'safs_select_remote_workspace',
-      arguments: { host: 'dev', workspaceRoot: '/srv/a' }
+      arguments: { host: 'dev', workspaceRoot: '/srv/a', userConfirmed: true }
     });
     const reboundId = JSON.parse((rebound.content as any[])[0].text).bindingId;
     const reconnected = await client.callTool({
@@ -208,9 +208,14 @@ test('two-stage workspace selection binds an Agent and supports switching', asyn
       { workspaceRoot: '/srv/a', host: 'host-a' },
       { workspaceRoot: '/srv/b', host: 'host-b' }
     ]);
-    const selected = await client.callTool({
+    const unconfirmed = await client.callTool({
       name: 'safs_select_remote_workspace',
       arguments: { host: 'host-b', workspaceRoot: '/srv/b' }
+    });
+    assert.equal(unconfirmed.isError, true);
+    const selected = await client.callTool({
+      name: 'safs_select_remote_workspace',
+      arguments: { host: 'host-b', workspaceRoot: '/srv/b', userConfirmed: true }
     });
     const selectedValue = JSON.parse((selected.content as any[])[0].text);
     const bindingId = selectedValue.bindingId as string;
@@ -224,7 +229,7 @@ test('two-stage workspace selection binds an Agent and supports switching', asyn
 
     const stale = await client.callTool({
       name: 'safs_select_remote_workspace',
-      arguments: { host: 'missing', workspaceRoot: '/missing' }
+      arguments: { host: 'missing', workspaceRoot: '/missing', userConfirmed: true }
     });
     assert.equal(stale.isError, true);
     assert.equal(
@@ -238,7 +243,7 @@ test('two-stage workspace selection binds an Agent and supports switching', asyn
 
     const switchedSelection = await client.callTool({
       name: 'safs_select_remote_workspace',
-      arguments: { host: 'host-a', workspaceRoot: '/srv/a' }
+      arguments: { host: 'host-a', workspaceRoot: '/srv/a', userConfirmed: true }
     });
     const switchedId = JSON.parse((switchedSelection.content as any[])[0].text).bindingId;
     const switched = await client.callTool({
@@ -300,7 +305,7 @@ test('router refuses to forward to its own port (loop protection)', async () => 
     await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
     const selected = await client.callTool({
       name: 'safs_select_remote_workspace',
-      arguments: { host: 'dev', workspaceRoot: '/srv/a' }
+      arguments: { host: 'dev', workspaceRoot: '/srv/a', userConfirmed: true }
     });
     const bindingId = JSON.parse((selected.content as any[])[0].text).bindingId;
     const result = await client.callTool({

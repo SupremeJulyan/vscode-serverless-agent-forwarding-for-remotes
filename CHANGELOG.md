@@ -13,6 +13,10 @@
 - 普通文件写入继续限制在当前工作区；任意 Shell 中无法证明只读的命令必须确认，
   高风险命令在确认模式下需要输入目标主机确认短语。
 - 更新 MCP SDK 传递依赖补丁，`npm audit` 生产依赖漏洞归零。
+- 兼容省略工具输入的 MCP/VS Code Agent 客户端，将缺失参数统一归一化为空对象，
+  修复偶发的 `Cannot read properties of undefined (reading 'mountName')`。
+- 远程工作区选择强制要求 `userConfirmed: true` 并标记为状态变更；提示词禁止在询问
+  用户的同一轮自动选择，也禁止将“仅剩一个候选”视为同意，避免失效后跳到其他主机。
 
 ## 1.6.3
 

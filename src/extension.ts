@@ -3386,7 +3386,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } : {}),
     invoke: async (options) => new vscode.LanguageModelToolResult([
       // 紧凑 JSON：缩进空白只会白白消耗模型 token。
-      new vscode.LanguageModelTextPart(JSON.stringify(await callback(options.input)))
+      new vscode.LanguageModelTextPart(JSON.stringify(
+        await callback((options.input ?? {}) as T)
+      ))
     ])
   }));
   tool<{ mountName?: string; path?: string }>('safs_listRemoteFiles', async (input) =>

@@ -67,7 +67,7 @@ export class AgentMcpServer {
       {
         instructions:
           'This MCP server is only for SAFS remote workspaces. Do not call SAFS tools for ordinary local workspaces. '
-          + 'Only for an explicit SAFS task or known safs:// context, call safs_list_remote_workspaces, ask the user to choose in the Agent interface, then call safs_select_remote_workspace with the exact host and workspaceRoot. Repeat list then select whenever the user wants to switch workspaces. Virtual remote files are NOT present in the agent host filesystem. '
+          + 'Only for an explicit SAFS task or known safs:// context, call safs_list_remote_workspaces and ask the user to choose in the Agent interface. Never call safs_select_remote_workspace until the user explicitly replies; asking and selecting in the same turn is forbidden, and a single candidate is not consent. Then call it with the exact host, workspaceRoot, and userConfirmed=true. Repeat this user-confirmed flow to switch workspaces. Virtual remote files are NOT present in the agent host filesystem. '
           + 'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for workspace operations. Never substitute the local filesystem or local shell. '
           + 'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead. '
           + 'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata. '
@@ -110,11 +110,12 @@ export class AgentMcpServer {
       {
         title: 'Select a SAFS remote workspace',
         description:
-          'Binds the exact host and workspaceRoot chosen by the user from safs_list_remote_workspaces. Call again with another listed workspace to switch.',
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+          'Binds the exact workspace explicitly chosen by the user. userConfirmed may be true only after a user reply; never infer consent from a single candidate or select in the same turn as asking.',
+        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         inputSchema: {
           host: z.string().min(1),
-          workspaceRoot: z.string().min(1)
+          workspaceRoot: z.string().min(1),
+          userConfirmed: z.literal(true)
         }
       },
       async (input) => invoke(async () => {
@@ -152,7 +153,7 @@ export class AgentMcpServer {
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },
-      async (input) => invoke(() => this.callbacks.currentFile(input))
+      async (input) => invoke(() => this.callbacks.currentFile(input ?? {}))
     );
     server.registerTool(
       'remote_list',
