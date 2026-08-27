@@ -33,6 +33,9 @@ export function agentTaggedMcpUrl(
 
 export interface AgentHttpRouterOptions {
   discover?: () => DiscoveredAgentWorkspace[];
+  selectWorkspace?: (
+    workspaces: DiscoveredAgentWorkspace[]
+  ) => Promise<DiscoveredAgentWorkspace | undefined>;
   log?: (message: string) => void;
   /** 转发到窗口 MCP 的 fetch 超时（毫秒），缺省 120s。 */
   forwardTimeoutMs?: number;
@@ -178,16 +181,7 @@ export class AgentHttpRouter {
     name: string, input: Record<string, unknown>, agentName?: string,
     agentPlatform?: AgentPlatformLabel
   ): Promise<any> {
-    if (name === 'safs_list_remote_workspaces') {
-      return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify(this.workspaces().map((workspace) =>
-            this.publicWorkspace(workspace)))
-        }]
-      };
-    }
-    if (name === 'safs_select_remote_workspace') {
+    if (name === 'safs_get_remote_workspace') {
       const workspaces = this.workspaces();
       if (!workspaces.length) {
         return this.toolError(
@@ -195,23 +189,13 @@ export class AgentHttpRouter {
           'No active Agent-forwarded Serverless Remote window was found.'
         );
       }
-      const host = typeof input.host === 'string' ? input.host : undefined;
-      const workspaceRoot = typeof input.workspaceRoot === 'string'
-        ? input.workspaceRoot : undefined;
-      if (!host || !workspaceRoot) {
-        return this.toolError(
-          'INVALID_WORKSPACE_SELECTION',
-          'Both host and workspaceRoot are required to select a remote workspace.'
-        );
-      }
-      const workspace = workspaces.find((candidate) =>
-        candidate.host === host && candidate.workspaceRoot === workspaceRoot
-      );
+      const workspace = this.options.selectWorkspace
+        ? await this.options.selectWorkspace(workspaces)
+        : workspaces[0];
       if (!workspace) {
         return this.toolError(
-          'REMOTE_WORKSPACE_NOT_FOUND',
-          `The selected remote workspace is no longer active: [${host}] : [${workspaceRoot}]`,
-          { host, workspaceRoot }
+          'WORKSPACE_SELECTION_CANCELLED',
+          'Remote workspace selection was cancelled in VS Code.'
         );
       }
       const bindingId = randomUUID().replace(/-/g, '').slice(0, 16);
@@ -224,8 +208,7 @@ export class AgentHttpRouter {
         content: [{ type: 'text' as const, text: JSON.stringify({
           workspace: this.publicWorkspace(workspace),
           bindingId,
-          previousTaskCancelled: true,
-          mustWaitForNewUserRequest: true,
+          selectedInVsCode: true,
           localFilesystemAllowed: false,
           localShellAllowed: false
         }) }]
@@ -235,7 +218,7 @@ export class AgentHttpRouter {
     if (!bindingId) {
       return this.toolError(
         'WORKSPACE_BINDING_REQUIRED',
-        'Call safs_list_remote_workspaces and safs_select_remote_workspace first, then pass the returned bindingId.'
+        'Call safs_get_remote_workspace first and ask the user to complete the Quick Pick in VS Code, then pass the returned bindingId.'
       );
     }
     const binding = this.bindings.get(bindingId);
@@ -246,13 +229,13 @@ export class AgentHttpRouter {
       );
     }
     const workspace = this.workspace(bindingId);
-      if (!workspace) {
-        this.bindings.delete(bindingId);
-        return this.toolError(
-          'WORKSPACE_BINDING_EXPIRED',
-          'The selected remote workspace is no longer active. Ask the user before selecting any workspace again.',
-          { host: binding.host, workspaceRoot: binding.workspaceRoot }
-        );
+    if (!workspace) {
+      this.bindings.delete(bindingId);
+      return this.toolError(
+        'WORKSPACE_BINDING_EXPIRED',
+        'The selected remote workspace is no longer active. Ask the user to choose again in VS Code.',
+        { host: binding.host, workspaceRoot: binding.workspaceRoot }
+      );
     }
     const { bindingId: _bindingId, ...publicInput } = input;
     const args = { ...publicInput, mountName: workspace.mountName };
@@ -277,15 +260,13 @@ export class AgentHttpRouter {
       {
         instructions: [
           'This MCP server is only for SAFS remote workspaces; do not call SAFS tools for ordinary local workspaces.',
-          'Only for an explicit SAFS task or known safs:// context, call safs_list_remote_workspaces, ask the user to choose in the Agent interface, then call safs_select_remote_workspace with the exact host and workspaceRoot.',
-          'Never call safs_select_remote_workspace until the user has explicitly replied with a choice. Asking a question and selecting in the same turn is forbidden. A single available workspace is not consent, and an expired workspace must never be replaced by a different workspace automatically.',
-          'A workspace selection only establishes a new binding; it never authorizes resuming the command or file operation that failed on the previous workspace. After safs_select_remote_workspace succeeds, stop the current workflow, report the new connection, and wait for a new user request before calling any workspace tool.',
-          'Repeat list then select whenever the user wants to switch to another remote workspace.',
+          'Only for an explicit SAFS task or known safs:// context, tell the user to choose the remote workspace in the VS Code Quick Pick, then call safs_get_remote_workspace. The choice and confirmation happen only in VS Code, never in the Agent conversation.',
+          'Call safs_get_remote_workspace again whenever the user wants to switch to another remote workspace or a binding expires.',
           'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for that workspace.',
           'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead.',
           'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata.',
           'Never use local shell or local filesystem tools for a safs workspace because its files do not exist locally.',
-          'Pass the bindingId returned by safs_select_remote_workspace to every later workspace tool call. If it expires, list and select again; never guess or silently switch workspaces.'
+          'Pass the bindingId returned by safs_get_remote_workspace to every later workspace tool call. If it expires, ask the user to choose again in VS Code; never guess or silently switch workspaces.'
         ].join(' ')
       }
     );
@@ -307,17 +288,8 @@ export class AgentHttpRouter {
       )
     );
     register(
-      'safs_select_remote_workspace', 'Select a SAFS remote workspace',
-      'Binds the exact workspace explicitly chosen by the user and returns a bindingId. This cancels the previous task: after selection, stop and wait for a new user request before using any workspace tool. userConfirmed may be true only after a user reply.',
-      {
-        host: z.string().min(1), workspaceRoot: z.string().min(1),
-        userConfirmed: z.literal(true)
-      },
-      { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
-    );
-    register(
-      'safs_list_remote_workspaces', 'List SAFS remote workspaces',
-      'Lists active Agent-forwarded remote workspaces in focused-first order. Ask the user to choose, then call safs_select_remote_workspace.',
+      'safs_get_remote_workspace', 'Choose a SAFS remote workspace in VS Code',
+      'Opens a VS Code Quick Pick for the user to choose and confirm the remote workspace, then returns a bindingId. Before calling, tell the user to complete the selection in VS Code. Do not ask them to choose in the Agent conversation.',
       {}, { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
@@ -417,10 +389,9 @@ export class AgentHttpRouter {
         }${agentPlatform ? `，platform=${agentPlatform}` : ''
         }`
       );
-      // 这两个工具由固定路由器本地完成；其它工具只在实际执行窗口记录，避免双份日志。
+      // 工作区选择由固定路由器本地完成；其它工具只在实际执行窗口记录，避免双份日志。
       if (method === 'tools/call' && typeof tool === 'string'
-        && (tool === 'safs_select_remote_workspace'
-          || tool === 'safs_list_remote_workspaces')) {
+        && tool === 'safs_get_remote_workspace') {
         const input = request.body?.params?.arguments;
         this.options.audit?.({
           toolName: tool,

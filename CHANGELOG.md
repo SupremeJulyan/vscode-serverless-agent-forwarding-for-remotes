@@ -4,9 +4,8 @@
 
 - SAFS MCP 改为按需使用：移除无意义的 `execution` 字段、全局强制调用和
   `alwaysLoad` 提示，普通本地工作区不再被自动探测或误判为远程。
-- 使用职责单一的 `safs_list_remote_workspaces` 和 `safs_select_remote_workspace`：
-  Agent 获取聚焦优先的紧凑列表，在自身界面询问用户后以 `host` 和 `workspaceRoot`
-  完成绑定；重复“列出再选择”可切换。
+- `safs_get_remote_workspace` 恢复 VS Code Quick Pick：Agent 提示用户前往 VS Code，
+  远程工作区的选择与确认均在 VS Code 中完成；重复调用可切换。
 - MCP 对外接口移除与 `host` 重复的 `mountName` 参数和返回字段。
 - 每次选择返回独立短 `bindingId`，后续工具必须携带；窗口失效、Router 接管或绑定
   不匹配时明确要求重选，不再静默回退，多个同名 Agent 会话也不会互相覆盖。
@@ -15,10 +14,6 @@
 - 更新 MCP SDK 传递依赖补丁，`npm audit` 生产依赖漏洞归零。
 - 兼容省略工具输入的 MCP/VS Code Agent 客户端，将缺失参数统一归一化为空对象，
   修复偶发的 `Cannot read properties of undefined (reading 'mountName')`。
-- 远程工作区选择强制要求 `userConfirmed: true` 并标记为状态变更；提示词禁止在询问
-  用户的同一轮自动选择，也禁止将“仅剩一个候选”视为同意，避免失效后跳到其他主机。
-- 工作区重选只建立新绑定并明确取消旧任务；Agent 必须停止当前流程，等待用户发出
-  新请求后才能使用新绑定，避免把原主机上的失败命令迁移到另一主机继续执行。
 
 ## 1.6.3
 

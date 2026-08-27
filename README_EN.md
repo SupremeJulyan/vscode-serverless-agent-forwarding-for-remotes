@@ -172,14 +172,14 @@ platforms.
    the new window, the extension starts the fixed HTTP router and registers
    the Agent. The new window starts its dynamic-port service, and the Agent
    for a confirmed SAFS remote task, the Agent can get the current remote
-   candidates via `safs_list_remote_workspaces`, asks the user in its own UI,
-   and calls `safs_select_remote_workspace` to bind the choice. Later tool calls
+   workspace via `safs_get_remote_workspace`, tells the user to complete the
+   VS Code Quick Pick, and binds the confirmed choice. Later tool calls
    retain that binding.
 4. Restart the Agent and start a new conversation (required after installing,
    updating, or removing MCP).
 5. The Agent can now use the remote tools directly: `#safsList`,
    `#safsWrite`, `#safsSearch`, and `#safsRun` for VS Code agents, or the MCP
-   tools `safs_list_remote_workspaces`, `safs_select_remote_workspace`, `remote_list`,
+   tools `safs_get_remote_workspace`, `remote_list`,
    `remote_write`, `remote_search`, and `run_remote_command`, plus
    `current_remote_file` to inspect the remote file currently open in VS Code.
 6. To disable: click "Disable Agent Forwarding" on the connection item. The
@@ -202,29 +202,20 @@ as follows:
 - When several remote windows are open, they all share the same fixed HTTP MCP
   entry; the windows elect one Router Leader on the fixed port, and another
   window takes over when the leader exits.
-- `safs_list_remote_workspaces` returns candidates with the focused
-  window first, followed by recently updated windows. The Agent asks the user in
-  its own UI, then calls `safs_select_remote_workspace` with the chosen `host`
-  and `workspaceRoot` plus `userConfirmed: true`. Every later workspace tool call includes the returned
-  `bindingId`. Repeat list then select to switch or renew an expired binding;
+- `safs_get_remote_workspace` opens a VS Code Quick Pick with the focused
+  window first, followed by recently updated windows. The Agent tells the user
+  to choose and confirm in VS Code. Every later workspace tool call includes the returned
+  `bindingId`. Call it again to switch or renew an expired binding;
   the router never silently falls back to another window.
-- The Agent must wait for an explicit user reply. Even with one candidate, it
-  must not ask and select in the same turn or replace an expired workspace with
-  another host automatically.
-- Reselection only establishes a connection and cancels the previous workspace
-  task. After selection the Agent must stop and wait for a new user request; it
-  must not carry the failed command over to the new host.
 - Each window's dynamic-port service can only access its own mount and cannot
   reach other mounts through request parameters.
 
 #### Determine which remote the Agent session is bound to
 
-- Call `safs_list_remote_workspaces` only when the user explicitly asks to use
+- Call `safs_get_remote_workspace` only when the user explicitly asks to use
   SAFS or the context already identifies a `safs://` virtual workspace. Do not
-  call SAFS tools for an ordinary local workspace. Its first call returns
-  compact candidates containing only `host` and `workspaceRoot`, with the focused window first. The Agent
-  asks the user in its own UI and calls `safs_select_remote_workspace` with the
-  selected `host` and `workspaceRoot`. Later tools pass the returned `bindingId`,
+  call SAFS tools for an ordinary local workspace. It opens a VS Code Quick Pick;
+  the Agent tells the user to choose and confirm there. Later tools pass the returned `bindingId`,
   which isolates concurrent sessions using the same Agent label.
 - `workspaceRoot` is the remote directory actually open in that VS Code window,
   not the configured SFTP mount root. Relative `remote_list`/`remote_search`
@@ -283,7 +274,7 @@ VS Code tools: `#safsList`,
 `#safsCurrentRemoteFile` (path and metadata of the currently open remote file).
 
 The loopback-only, token-protected MCP service exposes
-`safs_list_remote_workspaces`, `safs_select_remote_workspace`, `remote_list`, `remote_write`,
+`safs_get_remote_workspace`, `remote_list`, `remote_write`,
 `remote_search`, `run_remote_command`, and `current_remote_file`.
 
 Agents list and select workspaces only for SAFS remote tasks, not for
@@ -316,9 +307,8 @@ dynamically allocated port. The extension registers the same stable Streamable H
 router, hosted inside the extension process, for Codex and Claude Code. Agents no longer
 spawn a stdio router process and therefore cannot inherit a `safs` virtual cwd.
 The router resolves the target window's latest port on every call.
-`safs_list_remote_workspaces` returns candidates to the Agent, which asks the user
-in its own UI and calls `safs_select_remote_workspace` to bind the choice. Before selection, the
-focused, most recently updated window is used. Each window service remains
+`safs_get_remote_workspace` opens a VS Code Quick Pick, and the Agent tells the
+user to choose and confirm there. Each window service remains
 restricted to its own mount.
 
 Some Agent extensions still treat the virtual URI's POSIX path as a native cwd and call
@@ -366,7 +356,7 @@ list, but it is not secure authentication.
 Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
 the mount reconnects. If multiple remote windows are open, call
-use `safs_list_remote_workspaces` then `safs_select_remote_workspace` to select or switch the target.
+use `safs_get_remote_workspace` to select or switch the target in VS Code.
 Keep `safs.agentMcpPort` at its
 default value of `0`. `safs.agentHttpRouterPort` controls the stable Agent-facing
 port and defaults to `9848`; the extension rejects an unrelated process occupying that port.

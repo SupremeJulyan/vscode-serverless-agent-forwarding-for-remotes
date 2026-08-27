@@ -2330,6 +2330,24 @@ function auditMcpTool(entry: {
   });
 }
 
+async function pickAgentRemoteWorkspace<T extends { host: string; workspaceRoot: string }>(
+  workspaces: T[]
+): Promise<T | undefined> {
+  if (!workspaces.length) return undefined;
+  const picked = await vscode.window.showQuickPick(
+    workspaces.map((workspace) => ({
+      label: `[${workspace.host}] : [${workspace.workspaceRoot}]`,
+      workspace
+    })),
+    {
+      title: 'SAFS：选择 Agent 要操作的远程工作区',
+      placeHolder: '请在 VS Code 中选择并确认远程工作区',
+      ignoreFocusOut: true
+    }
+  );
+  return picked?.workspace;
+}
+
 async function ensureAgentHttpRouter(
   context: vscode.ExtensionContext
 ): Promise<AgentHttpRouter> {
@@ -2343,6 +2361,7 @@ async function ensureAgentHttpRouter(
           {
             log: (message) => bridgeOutput?.appendLine(`[Agent HTTP Router] ${message}`),
             audit: auditMcpTool,
+            selectWorkspace: pickAgentRemoteWorkspace,
             forwardTimeoutMs: settings().get<number>('agentMcpTimeoutMs', 120_000)
           }
         );
@@ -2423,6 +2442,7 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
             host: mount.host
           };
         },
+        selectWorkspace: pickAgentRemoteWorkspace,
         currentFile: (input) => activeRemoteFile(input.mountName),
         list: async (input) => remoteList({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
