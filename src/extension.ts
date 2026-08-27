@@ -71,6 +71,9 @@ import {
   cleanTerminalDiagnostic, decodeTerminalDiagnostic, terminalDiagnosticPlan
 } from './terminal-diagnostics';
 import { shouldUseBuiltinSshTerminal } from './terminal-routing';
+import {
+  AgentMcpSetupResult, agentForwardingInstallMessage
+} from './agent-forwarding-notification';
 
 const commandPrefix = 'safs';
 const platformAdapter = createPlatformAdapter();
@@ -2761,7 +2764,7 @@ function createMcpRunner(platform: AgentPlatformContext): AgentMcpCliRunner {
 
 async function configureDetectedAgents(
   context: vscode.ExtensionContext, shouldRegister: boolean
-): Promise<boolean> {
+): Promise<AgentMcpSetupResult> {
   const router = shouldRegister ? await ensureAgentHttpRouter(context) : httpRouter;
   const routerUrl = router?.url;
   const saved = context.globalState.get<unknown>(agentSetupCompletedKey);
@@ -2922,6 +2925,11 @@ async function configureDetectedAgents(
       state.command && (!shouldRegister || !state.enabled) && state.fixedExists
     )
   );
+  const registeredAgents = new Set(
+    states
+      .filter((state) => shouldRegister && state.enabled && state.fixedConfigured)
+      .map((state) => state.def.displayName)
+  );
   // 启用路径：清理不再匹配的记录（Agent 未启用或已不是当前 URL）；
   // 卸载路径不在此处删除记录——删除只发生在 remove 成功之后，保证
   // 探测不到的 Agent 记录保留、下次可重试。
@@ -2933,7 +2941,7 @@ async function configureDetectedAgents(
   }
   if (needsSetup.length === 0 && needsDisable.length === 0) {
     await context.globalState.update(agentSetupCompletedKey, [...configured]);
-    return true;
+    return { succeeded: true, registeredAgents: [...registeredAgents] };
   }
   bridgeOutput?.appendLine([
     shouldRegister
@@ -2998,6 +3006,7 @@ async function configureDetectedAgents(
         bridgeOutput?.appendLine(
           `[Agent MCP] ${state.def.displayName} 固定 HTTP MCP 路由注册成功`
         );
+        registeredAgents.add(state.def.displayName);
       }
     }
   }
@@ -3020,15 +3029,16 @@ async function configureDetectedAgents(
           .join('\n')
       );
     }
-    return false;
+    return { succeeded: false, registeredAgents: [...registeredAgents] };
   }
   bridgeOutput?.appendLine(
     '[Agent MCP] Agent 集成已自动配置；已检测的 Agent 使用统一固定 HTTP MCP 路由。'
   );
-  return true;
+  return { succeeded: true, registeredAgents: [...registeredAgents] };
 }
 
 async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): Promise<void> {
+  let integrationResult: AgentMcpSetupResult = { succeeded: true, registeredAgents: [] };
   await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: enabledValue
@@ -3044,7 +3054,6 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
       `挂载 ${mount.name} Agent 转发标记已设为${enabledValue ? '启用' : '关闭'}`
     );
     const current = currentRemoteLocation();
-    let integrationSucceeded = true;
     if (!enabledValue && current?.mountName === mount.name) {
       agentTrace('Preference', `当前窗口绑定 ${mount.name}，正在停止 MCP 并移除发现记录`);
       await mcp?.stop();
@@ -3054,7 +3063,7 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
       await prepareAgentCwd(mount);
       agentTrace('Preference', '先启动固定 HTTP 路由并注册 Agent，再启动当前窗口服务');
       startAgentHttpRouterLeadership(vscodeContext);
-      integrationSucceeded = await configureDetectedAgents(vscodeContext, true);
+      integrationResult = await configureDetectedAgents(vscodeContext, true);
       if (current?.mountName === mount.name) {
         const server = await ensureAgentMcpServer(vscodeContext);
         if (!server.portUnavailable) await publishAgentWorkspace(vscodeContext);
@@ -3062,24 +3071,33 @@ async function setAiForwardEnabled(mount: MountConfig, enabledValue: boolean): P
     } else if (enabled.size === 0) {
       agentTrace('Preference', '已无启用挂载，移除固定 MCP 注册');
       try {
-        integrationSucceeded = await configureDetectedAgents(vscodeContext, false);
+        integrationResult = await configureDetectedAgents(vscodeContext, false);
       } finally {
         // 无论移除是否成功/抛错，都要停掉固定路由心跳，避免残留。
         await stopAgentHttpRouterLeadership();
       }
     }
-    void vscode.window.showInformationMessage(
-      `"${mount.name}" Agent 转发已${enabledValue ? '启用' : '关闭'}。${enabledValue
-        ? integrationSucceeded
-          ? '固定 HTTP MCP 已注册；当前远程窗口可用时会立即启动转发服务。'
-          : '固定 MCP 未全部配置成功，请查看输出。'
-        : enabled.size === 0
-          ? integrationSucceeded
-            ? '所有转发均已关闭，固定 MCP 已移除。'
-            : '所有转发均已关闭，但固定 MCP 移除失败，请查看输出。'
-          : '其他已启用挂载继续共用固定 MCP。'}`
-    );
   });
+  if (enabledValue) {
+    const successMessage = agentForwardingInstallMessage(
+      integrationResult.registeredAgents, integrationResult.succeeded
+    );
+    if (successMessage) {
+      void vscode.window.showInformationMessage(successMessage);
+    } else {
+      // 配置中的 Agent 全部未检测到或注册失败时，直接进入手工 Agent 安装流程。
+      await vscode.commands.executeCommand(`${commandPrefix}.installAgentForwarding`);
+    }
+    return;
+  }
+  const enabled = new Set(vscodeContext.globalState.get<string[]>(aiForwardMountsKey, []));
+  void vscode.window.showInformationMessage(
+    `"${mount.name}" Agent 转发已关闭。${enabled.size === 0
+      ? integrationResult.succeeded
+        ? '所有转发均已关闭，固定 MCP 已移除。'
+        : '所有转发均已关闭，但固定 MCP 移除失败，请查看输出。'
+      : '其他已启用挂载继续共用固定 MCP。'}`
+  );
 }
 
 async function prepareAgentCwd(mount: MountConfig): Promise<void> {
