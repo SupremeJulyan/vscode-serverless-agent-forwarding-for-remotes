@@ -71,6 +71,8 @@ code --install-extension safs-serverless-agent-forwarding-1.6.5.vsix
 - 或在 SAFS 视图的远程目录连接项上点击“打开远程终端”按钮。
 - 终端会在当前远程目录打开：有打开的远程文件时使用其所在目录，否则使用
   挂载根目录（或上次记住的目录）。终端名称形如 `SSH: <配置名> — <相对路径>`。
+- 普通密码直连在所有平台使用内置 ssh2，主机密钥由实际终端连接确认；WSL VPN、
+  私钥以及内置 shell 不兼容时使用系统 SSH。
 - 系统 SSH 终端退出时，扩展会把退出码和捕获到的 stderr 写入输出面板的
   **SAFS Log**；即使错误只在终端短暂出现，也可在日志中追溯。异常退出遗留的
   诊断会在下次激活插件时恢复。
@@ -315,7 +317,8 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 - 目标服务器只提供旧式主机密钥（`ssh-rsa`/`ssh-dss`，OpenSSH 8.8+ 默认禁用）时，
   扩展会在所有连接路径（系统 `ssh`、WSL bridge、内置 SFTP/终端）自动重新启用这些算法。
 - 主机密钥校验：扩展维护独立的 `~/.safs/known_hosts`（TOFU），首次连接或密钥
-  变化按 `safs.hostKeyChangedAction` 处理（见「设置」）。系统 ssh 路径连接前会
+  变化按 `safs.hostKeyChangedAction` 处理（见「设置」）。普通密码直连由实际的
+  内置终端连接直接校验；必须使用系统 ssh 的路径会在连接前
   先探测主机密钥并把新密钥写入该文件；极端情况下（VPN 中继探测超时等）探测
   失败会临时降级为不校验主机密钥（`StrictHostKeyChecking=no`）以保证终端可用，
   内置 ssh2 通道仍保留完整校验。
@@ -344,8 +347,8 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   `accept`）。默认 `prompt`：首次连接与每次遇到新密钥（负载均衡 VIP 轮换后端、
   服务器重装）都弹窗确认目标 IP:端口与新密钥指纹，接受后记录到扩展独立的
   `~/.safs/known_hosts`，已确认密钥不再询问；`accept` 静默接受并记录；`reject`
-  直接拒绝密钥变化的连接。作用于所有路径：内置 ssh2（Windows 终端、SFTP、
-  命令执行）与系统 ssh（WSL/Linux/macOS 终端与命令执行）。
+  直接拒绝密钥变化的连接。作用于所有路径：内置 ssh2（普通密码终端、SFTP、
+  命令执行）与系统 ssh（WSL VPN、私钥及兼容性回退的终端与命令执行）。
 - `safs.sftp.cacheTtl`
 - `safs.sftp.watchInterval`
 - `safs.agentMcpPort`

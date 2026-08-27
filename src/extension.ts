@@ -70,6 +70,7 @@ import {
 import {
   cleanTerminalDiagnostic, decodeTerminalDiagnostic, terminalDiagnosticPlan
 } from './terminal-diagnostics';
+import { shouldUseBuiltinSshTerminal } from './terminal-routing';
 
 const commandPrefix = 'safs';
 const platformAdapter = createPlatformAdapter();
@@ -1533,28 +1534,30 @@ async function openTerminal(
   openingTerminalIds.add(terminalId);
   try {
     const resolved = resolveMount(config, mount);
-    // OpenSSH 能力探测与凭据准备相互独立，并行执行（首次 ssh -V 探测 ~100-300ms，
-    // 与主口令提示/配置写入等重叠，缩短首终端等待）。
-    const warmCapabilities = warmSshCliCapabilities();
     let credentials: AskpassCredentials | undefined;
     if (resolved.hostConfig.password) {
       resolved.hostConfig = await timedPhase(
         `${mount.name} 终端凭据准备`,
         () => resolveStoredHostPassword(context, config, resolved.hostConfig)
       );
-      if (platformUsesAskpass(platformAdapter.kind)) {
-        credentials = await createAskpassCredentials(resolved.hostConfig.password!);
-      }
     }
-    const bridgePasswordEnv = await bridgeMasterPasswordEnv(context, resolved.hostConfig);
+    // Direct password terminals use ssh2 on all platforms. The actual terminal
+    // connection performs the VS Code host-key confirmation, avoiding the race
+    // where ssh-keyscan verifies one backend and system ssh reaches another.
+    const useBuiltinSsh = shouldUseBuiltinSshTerminal(
+      platformAdapter.kind, resolved.hostConfig, forceSystemSsh
+    );
+    if (!useBuiltinSsh && resolved.hostConfig.password
+      && platformUsesAskpass(platformAdapter.kind)) {
+      credentials = await createAskpassCredentials(resolved.hostConfig.password);
+    }
+    const bridgePasswordEnv = useBuiltinSsh
+      ? {}
+      : await bridgeMasterPasswordEnv(context, resolved.hostConfig);
     // Probe the installed OpenSSH first so the legacy algorithm flags in the
     // plan match what this client understands (macOS/Linux ship a wide range
     // of OpenSSH versions, and old or new clients reject the fixed flags).
-    await warmCapabilities;
-    const useBuiltinSsh = !forceSystemSsh
-      && platformAdapter.kind === 'windows'
-      && Boolean(resolved.hostConfig.password)
-      && !resolved.hostConfig.private_key_path;
+    if (!useBuiltinSsh) await warmSshCliCapabilities();
     // 主机密钥校验：系统 ssh 路径无法弹 VS Code 对话框，由扩展在
     // 连接前 ssh-keyscan 探测当前后端密钥并与扩展 known_hosts 文件比对（仅 prompt 模式；
     // accept 走 known_hosts 空设备静默接受，reject 走系统 ssh 严格校验）。
