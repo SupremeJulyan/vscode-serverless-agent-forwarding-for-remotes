@@ -219,7 +219,8 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
     private readonly host: HostConfig,
     password: string,
     private readonly remoteCwd?: string,
-    private readonly onFailed?: (error: Error) => void
+    private readonly onFailed?: (error: Error) => void,
+    private readonly log?: (message: string) => void
   ) {
     this.password = password;
   }
@@ -239,7 +240,7 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
       keepaliveInterval: 15_000,
       keepaliveCountMax: 3,
       algorithms: { serverHostKey: serverHostKeyAlgorithms },
-      hostVerifier: hostVerifierFor(this.host)
+      hostVerifier: hostVerifierFor(this.host, this.log)
     };
     this.client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
       const replies = this.password

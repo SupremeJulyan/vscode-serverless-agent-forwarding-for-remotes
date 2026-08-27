@@ -50,7 +50,7 @@
 ### 安装
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.4.vsix
+code --install-extension safs-serverless-agent-forwarding-1.6.5.vsix
 ```
 
 ### 添加 SSH 配置并打开远程目录
@@ -71,6 +71,9 @@ code --install-extension safs-serverless-agent-forwarding-1.6.4.vsix
 - 或在 SAFS 视图的远程目录连接项上点击“打开远程终端”按钮。
 - 终端会在当前远程目录打开：有打开的远程文件时使用其所在目录，否则使用
   挂载根目录（或上次记住的目录）。终端名称形如 `SSH: <配置名> — <相对路径>`。
+- 系统 SSH 终端退出时，扩展会把退出码和捕获到的 stderr 写入输出面板的
+  **SAFS Log**；即使错误只在终端短暂出现，也可在日志中追溯。异常退出遗留的
+  诊断会在下次激活插件时恢复。
 - 配置 `remote_terminal: "open"` 时，打开远程目录后会自动连接终端。
 - 开启本地同步后打开的是本地镜像工作区：仍会按原 `remote_terminal` 设置自动
   连接原远程目录的终端；`safs.terminalFollowsActiveFile` 对镜像中的本地文件

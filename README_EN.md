@@ -60,7 +60,7 @@ intranet hosts and remote servers that forbid port forwarding.
 ### Install
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.4.vsix
+code --install-extension safs-serverless-agent-forwarding-1.6.5.vsix
 ```
 
 ### Add an SSH config and open a remote folder
@@ -87,6 +87,9 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
   active remote file when there is one, otherwise the mount root (or the last
   remembered directory). Terminal names look like
   `SSH: <name> — <relative path>`.
+- When a system SSH terminal exits, its exit code and captured stderr are written
+  to **SAFS Log** in the Output panel. Diagnostics left by an abnormal extension
+  shutdown are recovered on the next activation.
 - With `remote_terminal: "open"`, a terminal is connected automatically after
   opening the remote folder.
 - Opening a synced task opens the local mirror workspace: the terminal still

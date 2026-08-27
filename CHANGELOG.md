@@ -1,7 +1,10 @@
 # Changelog
 
-## 1.6.4
+## 1.6.5
 
+- 系统 SSH 终端现在把 stderr 镜像到临时诊断文件，并在终端退出后将退出码和错误
+  回灌到 `SAFS Log`；扩展异常退出遗留的诊断会在下次激活时恢复。内置 ssh2
+  终端、命令入口及主要后台任务的失败也统一写入日志，不再只在终端中短暂闪现。
 - SAFS MCP 改为按需使用：移除无意义的 `execution` 字段、全局强制调用和
   `alwaysLoad` 提示，普通本地工作区不再被自动探测或误判为远程。
 - `safs_get_remote_workspace` 恢复 VS Code Quick Pick：Agent 提示用户前往 VS Code，

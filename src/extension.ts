@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, readdir, stat } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import {
   BridgeConfig, deriveMounts, ensureConfigFile, expandHome, HostConfig, loadConfig, MountConfig,
@@ -67,6 +67,9 @@ import { redactSensitiveText } from './redact';
 import {
   defaultHighRiskCommandPatterns, matchHighRiskCommand
 } from './high-risk-commands';
+import {
+  cleanTerminalDiagnostic, decodeTerminalDiagnostic, terminalDiagnosticPlan
+} from './terminal-diagnostics';
 
 const commandPrefix = 'safs';
 const platformAdapter = createPlatformAdapter();
@@ -83,6 +86,7 @@ const defaultConfigPath = '~/.safs/config.json';
 const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const reconnectRemoteTerminalAction = '重连终端';
+const viewSafsLogAction = '查看 SAFS 日志';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
 const logClearIntervalMs = 24 * 60 * 60 * 1000;
 /** Agent MCP 探测结果缓存：configureDetectedAgents 的 get 探测在 TTL 内复用，
@@ -119,6 +123,7 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   retryWithSystemSsh?: boolean;
   /** 内置 ssh2 终端实例：live-sync 用它安全补发 cd（shell 就绪前入队）。 */
   pty?: import('./ssh2-terminal').Ssh2Terminal;
+  diagnostic?: { file: string; command: string };
 }>();
 
 /** 当前窗口对应挂载的活动传输通道；非远程窗口或尚未连接时返回 undefined。 */
@@ -287,6 +292,11 @@ function agentTrace(stage: string, message: string): void {
   bridgeOutput?.appendLine(
     `[${new Date().toISOString()}] [Agent trace] [${stage}] ${message}`
   );
+}
+
+function logAsyncFailure(label: string, error: unknown): void {
+  const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+  bridgeOutput?.appendLine(`[${label}] ${redactSensitiveText(detail)}`);
 }
 
 function configPath(): string {
@@ -861,8 +871,8 @@ async function syncTerminalToActiveFile(uri: vscode.Uri): Promise<void> {
     // 只有真正把终端移过去后才消费重开标志；否则（终端尚未创建等时序）
     // 保留标志，等待下一次文件激活或延迟补检。
     if (synced) restoredFileSyncPending.delete(location.mountName);
-  } catch {
-    // Transient resolution failures are ignored.
+  } catch (error) {
+    logAsyncFailure('终端目录跟随失败', error);
   }
 }
 
@@ -1337,10 +1347,109 @@ function currentRemoteLocation(): { mountName: string; remotePath: string } | un
 
 // ---- openTerminal (aligned with main) ----
 
+async function createTerminalDiagnostic(
+  context: vscode.ExtensionContext, mountName: string, command: string
+): Promise<{ file: string; command: string } | undefined> {
+  try {
+    const directory = path.join(context.globalStorageUri.fsPath, 'terminal-logs');
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const safeMount = mountName.replace(/[^a-z0-9._-]+/gi, '_').slice(0, 50) || 'remote';
+    return {
+      file: path.join(
+        directory, `${safeMount}-${Date.now()}-${randomBytes(6).toString('hex')}.stderr.log`
+      ),
+      command
+    };
+  } catch (error) {
+    bridgeOutput?.appendLine(
+      `[终端诊断] 无法创建诊断目录，终端 stderr 将无法持久化：${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return undefined;
+  }
+}
+
+async function recoverTerminalDiagnostics(context: vscode.ExtensionContext): Promise<void> {
+  const directory = path.join(context.globalStorageUri.fsPath, 'terminal-logs');
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logAsyncFailure('终端诊断恢复失败', error);
+    }
+    return;
+  }
+  for (const name of names.filter((candidate) => candidate.endsWith('.stderr.log'))) {
+    const file = path.join(directory, name);
+    try {
+      const cleaned = cleanTerminalDiagnostic(
+        redactSensitiveText(decodeTerminalDiagnostic(await readFile(file)))
+      );
+      if (cleaned.text) {
+        bridgeOutput?.appendLine(
+          `[终端 stderr] 恢复上次未正常回收的诊断 ${name}${
+            cleaned.truncated ? '（仅保留末尾 64 KiB）' : ''
+          }\n${cleaned.text}`
+        );
+      }
+      await unlink(file);
+    } catch (error) {
+      logAsyncFailure(`终端诊断恢复失败 ${name}`, error);
+    }
+  }
+}
+
+async function logManagedTerminalExit(
+  terminal: vscode.Terminal,
+  info: NonNullable<ReturnType<typeof managedRemoteTerminals.get>>
+): Promise<void> {
+  const status = terminal.exitStatus;
+  bridgeOutput?.appendLine(
+    `[终端] ${terminal.name} 已关闭；mount=${info.mount.name}；exit=${
+      status?.code ?? 'unknown'
+    }；reason=${status?.reason ?? 'unknown'}`
+  );
+  const diagnostic = info.diagnostic;
+  if (!diagnostic) return;
+  try {
+    const raw = decodeTerminalDiagnostic(await readFile(diagnostic.file));
+    const cleaned = cleanTerminalDiagnostic(redactSensitiveText(raw));
+    if (cleaned.text) {
+      bridgeOutput?.appendLine(
+        `[终端 stderr] $ ${diagnostic.command}${cleaned.truncated ? '（仅保留末尾 64 KiB）' : ''}\n${
+          cleaned.text
+        }`
+      );
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      bridgeOutput?.appendLine(
+        `[终端诊断] 读取 ${diagnostic.file} 失败：${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  } finally {
+    await unlink(diagnostic.file).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        bridgeOutput?.appendLine(
+          `[终端诊断] 清理 ${diagnostic.file} 失败：${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    });
+  }
+}
+
 async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promise<void> {
   const reopen = managedRemoteTerminals.get(terminal);
   managedRemoteTerminals.delete(terminal);
-  if (!reopen || terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
+  if (!reopen) return;
+  await logManagedTerminalExit(terminal, reopen);
+  if (terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
     return;
   }
   // Reconnect into the remote directory currently open in this window
@@ -1359,10 +1468,13 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   }
   const selected = await vscode.window.showInformationMessage(
     `远程终端“${terminal.name}”已退出。`,
-    reconnectRemoteTerminalAction
+    reconnectRemoteTerminalAction,
+    viewSafsLogAction
   );
   if (selected === reconnectRemoteTerminalAction) {
     await openTerminal(vscodeContext, reopen.mount, remoteCwd, undefined, true);
+  } else if (selected === viewSafsLogAction) {
+    bridgeOutput?.show(true);
   }
 }
 
@@ -1471,7 +1583,24 @@ async function openTerminal(
       hostKeyPolicy,
       ...(hostKeyPolicy === 'prompt' ? { userKnownHostsFile: knownHostsFilePath() } : {})
     });
-    const terminalCommand = await resolveExecutable(plan.command, plan.env);
+    const resolvedTerminalCommand = await resolveExecutable(plan.command, plan.env);
+    const diagnostic = useBuiltinSsh
+      ? undefined
+      : await createTerminalDiagnostic(
+          context, mount.name,
+          redactSensitiveText(planDisplayName({ ...plan, command: resolvedTerminalCommand }))
+        );
+    const terminalPlan = diagnostic
+      ? terminalDiagnosticPlan(
+          platformAdapter.kind, resolvedTerminalCommand, plan, diagnostic.file
+        )
+      : { ...plan, command: resolvedTerminalCommand };
+    const terminalCommand = await resolveExecutable(terminalPlan.command, terminalPlan.env);
+    bridgeOutput?.appendLine(
+      `[终端] 正在启动 ${mount.name}；cwd=${remoteCwd ?? remoteRoot}；$ ${
+        redactSensitiveText(planDisplayName({ ...plan, command: resolvedTerminalCommand }))
+      }`
+    );
     const terminalStartedAt = performance.now();
     let builtinPty: import('./ssh2-terminal').Ssh2Terminal | undefined;
     const terminal = useBuiltinSsh
@@ -1480,6 +1609,9 @@ async function openTerminal(
         const pty = new Ssh2Terminal(
           resolved.hostConfig, resolved.hostConfig.password!, remoteCwd,
           (error) => {
+            bridgeOutput?.appendLine(
+              `[终端] 内置 ssh2 终端 ${mount.name} 失败：${error.stack ?? error.message}`
+            );
             // Server rejected the pty/shell negotiation (gateway appliance):
             // mark this terminal for a system-ssh retry instead of the
             // built-in ssh2 transport.
@@ -1487,7 +1619,8 @@ async function openTerminal(
               const entry = managedRemoteTerminals.get(created);
               if (entry) entry.retryWithSystemSsh = true;
             }
-          }
+          },
+          (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`)
         );
         created = vscode.window.createTerminal({
           name: terminalName,
@@ -1500,20 +1633,22 @@ async function openTerminal(
       : vscode.window.createTerminal({
         name: terminalName,
         shellPath: terminalCommand,
-        shellArgs: plan.args,
+        shellArgs: terminalPlan.args,
         env: {
           SSH_BRIDGE_MOUNT_NAME: mount.name,
           [terminalIdentityEnv]: terminalId,
           // 主口令已通过 plan.env（WslAdapter 按 bridgeMasterPassword 注入）交给
           // ssh-bridge；这里不再重复注入，避免交互式终端环境里可被读取。
-          ...plan.env,
+          ...terminalPlan.env,
           ...credentials?.env
         },
         cwd: os.homedir(),
         isTransient: true
       });
     performanceLine(`${mount.name} SSH 终端创建（不含远端握手）`, terminalStartedAt);
-    managedRemoteTerminals.set(terminal, { mount, remoteCwd, pty: builtinPty });
+    managedRemoteTerminals.set(terminal, {
+      mount, remoteCwd, pty: builtinPty, diagnostic
+    });
     if (credentials) {
       const disposable = vscode.window.onDidCloseTerminal((closed) => {
         if (closed === terminal) {
@@ -2557,7 +2692,9 @@ function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
       dispose: () => {
         if (agentWorkspaceHeartbeat) clearInterval(agentWorkspaceHeartbeat);
         agentWorkspaceHeartbeat = undefined;
-        void agentWorkspacePublisher.remove();
+        void agentWorkspacePublisher.remove().catch((error) =>
+          logAsyncFailure('Agent discovery 清理失败', error)
+        );
       }
     }
   );
@@ -2962,6 +3099,7 @@ async function guard(action: () => Promise<unknown>): Promise<void> {
     await action();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    logAsyncFailure('命令失败', error);
     if (error instanceof ConfigActionRequiredError) {
       const selected = await vscode.window.showErrorMessage(
         `SAFS: ${message}`,
@@ -3042,6 +3180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   output = vscode.window.createOutputChannel('SAFS');
   bridgeOutput = vscode.window.createOutputChannel('SAFS Log', { log: true });
   context.subscriptions.push(output, bridgeOutput);
+  await recoverTerminalDiagnostics(context);
   // 独立、高优先级 ID：避免长焦点文案被底栏布局整项挤掉，也不复用
   // 旧匿名 SAFS 状态项可能已被用户隐藏的可见性偏好。
   forwardingFocusStatusBar = vscode.window.createStatusBarItem(
@@ -3116,7 +3255,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (idleTtlSec > 0) {
     const idleTtlMs = idleTtlSec * 1000;
     const idleTimer = setInterval(() => {
-      void pool.closeIdle(idleTtlMs);
+      void pool.closeIdle(idleTtlMs).catch((error) =>
+        logAsyncFailure('SFTP 空闲连接回收失败', error)
+      );
     }, Math.min(idleTtlMs, 60_000));
     idleTimer.unref?.();
     context.subscriptions.push({ dispose: () => clearInterval(idleTimer) });
@@ -3161,9 +3302,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   // 恢复上次的同步任务（指纹行随任务持久化，重载后继续增量同步）。
   for (const task of context.globalState.get<RemoteSyncTask[]>(syncTasksKey, [])) {
-    void syncManager.add(task);
+    void syncManager.add(task).catch((error) =>
+      logAsyncFailure(`恢复同步任务失败 ${task.mountName}:${task.remotePath}`, error)
+    );
   }
-  void updateSyncStatusBar();
+  void updateSyncStatusBar().catch((error) => logAsyncFailure('同步状态栏刷新失败', error));
   await guard(preloadRemoteWorkspaces);
   // Merge pi/vscode-pi conversation history from legacy SAFS session keys
   // (WSL, old extension folder) into the current key of the same mount so
@@ -3174,8 +3317,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await migratePiSessionKeys(config.mounts, (message) =>
         bridgeOutput?.appendLine(message)
       );
-    } catch {
-      // History migration is best-effort; never block activation.
+    } catch (error) {
+      // History migration is best-effort; never block activation, but keep diagnostics.
+      logAsyncFailure('Agent 会话历史迁移失败', error);
     }
   })();
   provider = new SftpFileSystemProvider(
@@ -3412,7 +3556,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Terminal lifecycle
   context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
-    void suggestReopeningClosedTerminal(terminal);
+    void suggestReopeningClosedTerminal(terminal).catch((error) =>
+      logAsyncFailure('终端退出处理失败', error)
+    );
   }));
 
   // Restore workspaces on startup
@@ -3425,10 +3571,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
     const uri = editor?.document.uri;
     if (!uri || (uri.scheme !== remoteFileSystemScheme && uri.scheme !== 'file')) return;
-    void syncTerminalToActiveFile(uri);
+    void syncTerminalToActiveFile(uri).catch((error) =>
+      logAsyncFailure('终端目录跟随调度失败', error)
+    );
   }));
   context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(() => void updateSyncStatusBar())
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void updateSyncStatusBar().catch((error) =>
+        logAsyncFailure('同步状态栏刷新失败', error)
+      );
+    })
   );
 
   // Agent MCP: keep one in-extension fixed HTTP router alive, then start the
