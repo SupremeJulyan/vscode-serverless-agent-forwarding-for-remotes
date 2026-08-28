@@ -68,7 +68,7 @@ export class AgentMcpServer {
       {
         instructions:
           'This MCP server is only for SAFS remote workspaces. Do not call SAFS tools for ordinary local workspaces. '
-          + 'Only for an explicit SAFS task or known safs:// context, call safs_get_remote_workspace to bind this window workspace. Virtual remote files are NOT present in the agent host filesystem. '
+          + 'Only for an explicit SAFS task or known safs:// context, tell the user to choose the remote workspace in the VS Code Quick Pick, then call safs_get_remote_workspace. The choice and confirmation happen only in VS Code, never in the Agent conversation. Call it again to switch workspaces. Virtual remote files are NOT present in the agent host filesystem. '
           + 'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for workspace operations. Never substitute the local filesystem or local shell. '
           + 'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead. '
           + 'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata. '
@@ -109,9 +109,9 @@ export class AgentMcpServer {
     server.registerTool(
       'safs_get_remote_workspace',
       {
-        title: 'Bind this SAFS remote workspace',
+        title: 'Choose a SAFS remote workspace in VS Code',
         description:
-          'Binds the SAFS workspace served by this window and returns it for later remote tool calls.',
+          'Opens a VS Code Quick Pick for the user to choose and confirm the remote workspace. Before calling, tell the user to complete the selection in VS Code. Do not ask them to choose in the Agent conversation.',
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
         inputSchema: {}
       },

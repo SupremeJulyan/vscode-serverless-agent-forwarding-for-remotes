@@ -3,9 +3,8 @@
 ## 1.6.5
 
 - `safs_get_remote_workspace` 首次调用接收 Agent 已知的当前 cwd，并与窗口发布的空占位
-  cwd 精确匹配；VS Code 内 Agent 自动绑定同一窗口，不再弹出工作区 Quick Pick。
-  OpenCode 等 cwd 固定为用户主目录的扩展会绑定唯一聚焦的 SAFS 窗口；仍有歧义时把
-  候选返回 Agent 对话，并用 `workspaceId` 完成选择或切换。
+  cwd 精确匹配；VS Code 内 Agent 自动绑定同一窗口，不再重复弹出 Quick Pick。
+  只有显式传入 `choose: true` 时才在 VS Code 中选择或切换工作区。
 - 工作区绑定固定到窗口 `instanceId`；来源窗口关闭或发现记录过期后直接失败，不会因
   只剩一个候选而静默切换到其他远程目录。
 

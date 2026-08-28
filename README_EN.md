@@ -207,9 +207,8 @@ as follows:
   window takes over when the leader exits.
 - On its first `safs_get_remote_workspace` call, an Agent passes its known current cwd.
   The fixed router matches that cwd to the window's published placeholder cwd and binds
-  automatically. Agents such as OpenCode whose cwd remains at the user home bind to the
-  one focused SAFS window. Ambiguous candidates are returned in the Agent conversation;
-  no VS Code workspace Quick Pick is used. Every later workspace tool call includes the returned
+  automatically. A Quick Pick opens only when the call explicitly sets `choose: true`.
+  Every later workspace tool call includes the returned
   `bindingId`. Call it again to switch or renew an expired binding;
   the router never silently falls back to another window.
 - Each window's dynamic-port service can only access its own mount and cannot
@@ -220,8 +219,7 @@ as follows:
 - Call `safs_get_remote_workspace` only when the user explicitly asks to use
   SAFS or the context already identifies a `safs://` virtual workspace. Do not
   call SAFS tools for an ordinary local workspace. Pass the Agent current cwd as
-  `agentCwd` when available. If candidates are returned, ask the user in the Agent conversation
-  and call again with the selected `workspaceId`. Later tools pass the returned `bindingId`,
+  `agentCwd`; use `choose: true` only for explicit selection or switching. Later tools pass the returned `bindingId`,
   which isolates concurrent sessions using the same Agent label.
 - `workspaceRoot` is the remote directory actually open in that VS Code window,
   not the configured SFTP mount root. Relative `remote_list`/`remote_search`
@@ -360,8 +358,7 @@ list, but it is not secure authentication.
 Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
 the mount reconnects. If multiple remote windows are open, `safs_get_remote_workspace`
-binds by cwd or the uniquely focused SAFS window. If ambiguous, select or switch with the
-returned `workspaceId` in the Agent conversation; no VS Code workspace Quick Pick is used.
+binds by cwd; use `choose: true` to select or switch the target in VS Code.
 Keep `safs.agentMcpPort` at its
 default value of `0`. `safs.agentHttpRouterPort` controls the stable Agent-facing
 port and defaults to `9848`; the extension rejects an unrelated process occupying that port.

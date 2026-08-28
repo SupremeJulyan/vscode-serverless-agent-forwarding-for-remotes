@@ -81,20 +81,20 @@ test('Agent cwd automatically binds its window and never falls back after it clo
   const first = new AgentMcpServer(0, 'first', callbacks('first'));
   const second = new AgentMcpServer(0, 'second', callbacks('second'));
   let workspaces: DiscoveredAgentWorkspace[] = [];
+  let pickerCalls = 0;
   const router = new AgentHttpRouter(await freePort(), 'router-token', {
-    discover: () => workspaces
+    discover: () => workspaces,
+    selectWorkspace: async () => { pickerCalls += 1; return workspaces[1]; }
   });
   const client = new Client({ name: 'window-agent', version: '1.0.0' });
   try {
     await Promise.all([first.start(), second.start()]);
     workspaces = [
       record('window-a', first.url, {
-        host: 'host-a', workspaceRoot: '/srv/a', agentCwd: 'C:\\local\\agent-cwd\\a',
-        focused: true
+        host: 'host-a', workspaceRoot: '/srv/a', agentCwd: 'C:\\local\\agent-cwd\\a'
       }),
       record('window-b', second.url, {
-        host: 'host-b', workspaceRoot: '/srv/b', agentCwd: '/local/agent-cwd/b',
-        focused: false
+        host: 'host-b', workspaceRoot: '/srv/b', agentCwd: '/local/agent-cwd/b'
       })
     ];
     await router.start();
@@ -104,17 +104,14 @@ test('Agent cwd automatically binds its window and never falls back after it clo
     const missingCwd = await client.callTool({
       name: 'safs_get_remote_workspace', arguments: {}
     });
-    assert.equal(
-      JSON.parse((missingCwd.content as any[])[0].text).workspace.workspaceRoot,
-      '/srv/a'
-    );
-    workspaces = workspaces.map((workspace) => ({
-      ...workspace, focused: workspace.instanceId === 'window-b'
-    }));
+    assert.equal(missingCwd.isError, true);
+    assert.equal(JSON.parse((missingCwd.content as any[])[0].text).code, 'AGENT_CWD_REQUIRED');
+    assert.equal(pickerCalls, 0);
     const selected = await client.callTool({
       name: 'safs_get_remote_workspace', arguments: { agentCwd: '/mnt/c/local/agent-cwd/a' }
     });
     const value = JSON.parse((selected.content as any[])[0].text);
+    assert.equal(pickerCalls, 0);
     assert.equal(value.selectedAutomatically, true);
     assert.equal(value.selectedInVsCode, false);
     assert.deepEqual(value.workspace, { host: 'host-a', workspaceRoot: '/srv/a' });
@@ -131,8 +128,9 @@ test('Agent cwd automatically binds its window and never falls back after it clo
     assert.equal(noFallback.isError, true);
     assert.equal(
       JSON.parse((noFallback.content as any[])[0].text).code,
-      'WORKSPACE_SELECTION_REQUIRED'
+      'WORKSPACE_SOURCE_NOT_FOUND'
     );
+    assert.equal(pickerCalls, 0);
   } finally {
     await client.close();
     await Promise.allSettled([router.stop(), first.stop(), second.stop()]);
@@ -166,15 +164,7 @@ test('shared placeholder cwd uses one focused match and otherwise refuses to gue
     assert.equal(ambiguous.isError, true);
     assert.equal(
       JSON.parse((ambiguous.content as any[])[0].text).code,
-      'WORKSPACE_SELECTION_REQUIRED'
-    );
-    const missingCwd = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
-    });
-    assert.equal(missingCwd.isError, true);
-    assert.equal(
-      JSON.parse((missingCwd.content as any[])[0].text).code,
-      'WORKSPACE_SELECTION_REQUIRED'
+      'WORKSPACE_SOURCE_AMBIGUOUS'
     );
   } finally {
     await client.close();
@@ -189,6 +179,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
   const routerAudits: string[] = [];
   const router = new AgentHttpRouter(await freePort(), 'router-token', {
     discover: () => workspaces,
+    selectWorkspace: async (offered) => offered[0],
     audit: (entry) => routerAudits.push(entry.toolName)
   });
   const client = new Client({ name: 'http-router-test', version: '1.0.0' });
@@ -204,7 +195,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
 
     workspaces = [record('old-a', first.url, { agentCwd: '/local/old-a' })];
     const route = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
+      name: 'safs_get_remote_workspace', arguments: { choose: true }
     });
     const routeValue = JSON.parse((route.content as any[])[0].text);
     const bindingId = routeValue.bindingId as string;
@@ -212,7 +203,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
     assert.deepEqual(routeValue.workspace, {
       workspaceRoot: '/srv/a', host: 'dev'
     });
-    assert.equal(routeValue.selectedInVsCode, false);
+    assert.equal(routeValue.selectedInVsCode, true);
     assert.deepEqual(routerAudits, ['safs_get_remote_workspace']);
 
     const connected = await client.callTool({
@@ -263,7 +254,7 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
 
     workspaces = [record('new-a', second.url, { agentCwd: '/local/new-a' })];
     const rebound = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
+      name: 'safs_get_remote_workspace', arguments: { choose: true }
     });
     const reboundId = JSON.parse((rebound.content as any[])[0].text).bindingId;
     const reconnected = await client.callTool({
@@ -276,19 +267,23 @@ test('fixed HTTP router follows a reconnected mount without changing the Agent U
   }
 });
 
-test('ambiguous routing returns Agent-conversation candidates and accepts workspaceId', async () => {
+test('VS Code workspace picker binds an Agent, supports switching, and preserves bindings', async () => {
   const first = new AgentMcpServer(0, 'first', callbacks('first'));
   const second = new AgentMcpServer(0, 'second', callbacks('second'));
   let workspaces: DiscoveredAgentWorkspace[] = [];
+  let selectedIndex: number | undefined = 1;
   const router = new AgentHttpRouter(await freePort(), 'router-token', {
-    discover: () => workspaces
+    discover: () => workspaces,
+    selectWorkspace: async (offered) => selectedIndex === undefined
+      ? undefined
+      : offered[selectedIndex]
   });
-  const client = new Client({ name: 'workspace-selection-test', version: '1.0.0' });
+  const client = new Client({ name: 'workspace-picker-test', version: '1.0.0' });
   try {
     await Promise.all([first.start(), second.start()]);
     workspaces = [
       record('focused', first.url, {
-        mountName: 'A', host: 'host-a', workspaceRoot: '/srv/a', focused: false
+        mountName: 'A', host: 'host-a', workspaceRoot: '/srv/a', focused: true
       }),
       record('other', second.url, {
         mountName: 'B', host: 'host-b', workspaceRoot: '/srv/b', focused: false
@@ -308,34 +303,37 @@ test('ambiguous routing returns Agent-conversation candidates and accepts worksp
       }
     }
 
-    const unresolved = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
-    });
-    assert.equal(unresolved.isError, true);
-    const unresolvedValue = JSON.parse((unresolved.content as any[])[0].text);
-    assert.equal(unresolvedValue.code, 'WORKSPACE_SELECTION_REQUIRED');
-    assert.deepEqual(unresolvedValue.candidates, [
-      { workspaceId: 'focused', workspaceRoot: '/srv/a', host: 'host-a' },
-      { workspaceId: 'other', workspaceRoot: '/srv/b', host: 'host-b' }
-    ]);
-
     const selected = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: { workspaceId: 'other' }
+      name: 'safs_get_remote_workspace', arguments: { choose: true }
     });
     const selectedValue = JSON.parse((selected.content as any[])[0].text);
     const bindingId = selectedValue.bindingId as string;
     assert.deepEqual(selectedValue.workspace, {
       workspaceRoot: '/srv/b', host: 'host-b'
     });
-    assert.equal(selectedValue.selectedInVsCode, false);
-    assert.equal(selectedValue.selectedAutomatically, false);
+    assert.equal(selectedValue.selectedInVsCode, true);
     const bound = await client.callTool({
       name: 'remote_list', arguments: { bindingId, path: '.' }
     });
     assert.equal(JSON.parse((bound.content as any[])[0].text).label, 'second');
 
+    selectedIndex = undefined;
+    const cancelled = await client.callTool({
+      name: 'safs_get_remote_workspace', arguments: { choose: true }
+    });
+    assert.equal(cancelled.isError, true);
+    assert.equal(
+      JSON.parse((cancelled.content as any[])[0].text).code,
+      'WORKSPACE_SELECTION_CANCELLED'
+    );
+    const stillBound = await client.callTool({
+      name: 'remote_list', arguments: { bindingId, path: '.' }
+    });
+    assert.equal(JSON.parse((stillBound.content as any[])[0].text).label, 'second');
+
+    selectedIndex = 0;
     const switchedSelection = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: { workspaceId: 'focused' }
+      name: 'safs_get_remote_workspace', arguments: { choose: true }
     });
     const switchedId = JSON.parse((switchedSelection.content as any[])[0].text).bindingId;
     const switched = await client.callTool({
@@ -389,14 +387,15 @@ test('fixed HTTP router rejects a port owned by an unrelated process', async () 
 test('router refuses to forward to its own port (loop protection)', async () => {
   const port = await freePort();
   const router = new AgentHttpRouter(port, 'router-token', {
-    discover: () => [record('self', `http://127.0.0.1:${port}/mcp?token=router-token`)]
+    discover: () => [record('self', `http://127.0.0.1:${port}/mcp?token=router-token`)],
+    selectWorkspace: async (offered) => offered[0]
   });
   const client = new Client({ name: 'http-router-test', version: '1.0.0' });
   try {
     await router.start();
     await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
     const selected = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: {}
+      name: 'safs_get_remote_workspace', arguments: { choose: true }
     });
     const bindingId = JSON.parse((selected.content as any[])[0].text).bindingId;
     const result = await client.callTool({

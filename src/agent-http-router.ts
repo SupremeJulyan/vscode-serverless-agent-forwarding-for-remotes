@@ -45,12 +45,11 @@ function cwdContains(root: string, cwd: string): boolean {
   return cwd === root || cwd.startsWith(`${root}/`);
 }
 
-function isSafsPlaceholderCwd(cwd: string): boolean {
-  return /(?:^|\/)agent-cwd(?:\/|$)/i.test(cwd);
-}
-
 export interface AgentHttpRouterOptions {
   discover?: () => DiscoveredAgentWorkspace[];
+  selectWorkspace?: (
+    workspaces: DiscoveredAgentWorkspace[]
+  ) => Promise<DiscoveredAgentWorkspace | undefined>;
   log?: (message: string) => void;
   /** 转发到窗口 MCP 的 fetch 超时（毫秒），缺省 120s。 */
   forwardTimeoutMs?: number;
@@ -112,13 +111,6 @@ export class AgentHttpRouter {
     return {
       workspaceRoot: workspace.workspaceRoot,
       host: workspace.host
-    };
-  }
-
-  private selectableWorkspace(workspace: DiscoveredAgentWorkspace): Record<string, unknown> {
-    return {
-      workspaceId: workspace.instanceId,
-      ...this.publicWorkspace(workspace)
     };
   }
 
@@ -209,24 +201,19 @@ export class AgentHttpRouter {
           'No active Agent-forwarded Serverless Remote window was found.'
         );
       }
-      const workspaceId = typeof input.workspaceId === 'string'
-        ? input.workspaceId.trim()
-        : '';
+      const choose = input.choose === true;
       const agentCwd = typeof input.agentCwd === 'string' ? input.agentCwd.trim() : '';
-      let sourceWorkspace = workspaceId
-        ? workspaces.find((candidate) => candidate.instanceId === workspaceId)
-        : undefined;
-      if (workspaceId && !sourceWorkspace) {
-        return this.toolError(
-          'REMOTE_WORKSPACE_NOT_FOUND',
-          'The selected remote workspace is no longer active.',
-          { workspaceId }
-        );
-      }
-      if (!workspaceId) {
-        const canonicalCwd = agentCwd ? canonicalAgentCwd(agentCwd) : '';
-        const matches = canonicalCwd ? workspaces.filter((candidate) => candidate.agentCwd
-          && cwdContains(canonicalAgentCwd(candidate.agentCwd), canonicalCwd)) : [];
+      let sourceWorkspace: DiscoveredAgentWorkspace | undefined;
+      if (!choose) {
+        if (!agentCwd) {
+          return this.toolError(
+            'AGENT_CWD_REQUIRED',
+            'Pass the Agent current working directory as agentCwd. Use choose=true only when the user explicitly wants to select or switch workspaces.'
+          );
+        }
+        const canonicalCwd = canonicalAgentCwd(agentCwd);
+        const matches = workspaces.filter((candidate) => candidate.agentCwd
+          && cwdContains(canonicalAgentCwd(candidate.agentCwd), canonicalCwd));
         const longest = matches.reduce(
           (length, candidate) => Math.max(length, canonicalAgentCwd(candidate.agentCwd!).length),
           0
@@ -239,28 +226,25 @@ export class AgentHttpRouter {
           : closest.filter((candidate) => candidate.focused).length === 1
             ? closest.find((candidate) => candidate.focused)
             : undefined;
-        // Some VS Code Agent extensions (for example OpenCode) keep cwd at the
-        // user home instead of the SAFS placeholder. While the Agent panel is
-        // being used, its VS Code window is the one focused discovery record.
-        // This is only an initial binding hint; later calls stay pinned to the
-        // selected instanceId and never fall back when that window disappears.
-        if (!sourceWorkspace && closest.length === 0
-          && (!canonicalCwd || !isSafsPlaceholderCwd(canonicalCwd))) {
-          const focused = workspaces.filter((candidate) => candidate.focused);
-          if (focused.length === 1) sourceWorkspace = focused[0];
-        }
         if (!sourceWorkspace) {
           return this.toolError(
-            'WORKSPACE_SELECTION_REQUIRED',
-            'Automatic routing is ambiguous. Ask the user to choose one candidate in the Agent conversation, then call safs_get_remote_workspace again with its workspaceId.',
-            {
-              agentCwd,
-              candidates: workspaces.map((candidate) => this.selectableWorkspace(candidate))
-            }
+            closest.length > 1 ? 'WORKSPACE_SOURCE_AMBIGUOUS' : 'WORKSPACE_SOURCE_NOT_FOUND',
+            closest.length > 1
+              ? 'The Agent cwd matches multiple active VS Code windows. Retry with choose=true to select explicitly.'
+              : 'The Agent cwd does not match an active SAFS VS Code window. Retry with choose=true to select explicitly.',
+            { agentCwd }
           );
         }
       }
-      const workspace = sourceWorkspace!;
+      const workspace = sourceWorkspace ?? (choose && this.options.selectWorkspace
+        ? await this.options.selectWorkspace(workspaces)
+        : undefined);
+      if (!workspace) {
+        return this.toolError(
+          'WORKSPACE_SELECTION_CANCELLED',
+          'Remote workspace selection was cancelled in VS Code.'
+        );
+      }
       const bindingId = randomUUID().replace(/-/g, '').slice(0, 16);
       this.bindings.set(bindingId, {
         instanceId: workspace.instanceId,
@@ -272,8 +256,8 @@ export class AgentHttpRouter {
         content: [{ type: 'text' as const, text: JSON.stringify({
           workspace: this.publicWorkspace(workspace),
           bindingId,
-          selectedInVsCode: false,
-          selectedAutomatically: !workspaceId,
+          selectedInVsCode: !sourceWorkspace,
+          selectedAutomatically: Boolean(sourceWorkspace),
           localFilesystemAllowed: false,
           localShellAllowed: false
         }) }]
@@ -325,8 +309,8 @@ export class AgentHttpRouter {
       {
         instructions: [
           'This MCP server is only for SAFS remote workspaces; do not call SAFS tools for ordinary local workspaces.',
-          'For an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once. Pass the Agent actual current working directory in agentCwd when available. It first matches a SAFS placeholder cwd, then falls back to the one focused SAFS VS Code window for Agent extensions whose cwd stays at the user home.',
-          'If automatic routing is ambiguous, the tool returns candidates. Ask the user to choose in the Agent conversation, then call it again with that workspaceId. No VS Code Quick Pick is used. Use workspaceId the same way for an explicit switch.',
+          'For an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once with the Agent actual current working directory in agentCwd. It binds an Agent running in a SAFS placeholder cwd to that exact VS Code window automatically.',
+          'Use choose=true only when cwd matching fails or the user explicitly asks to select or switch workspaces; it opens the VS Code Quick Pick. If a binding expires, stop and report it instead of silently rebinding.',
           'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for that workspace.',
           'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead.',
           'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata.',
@@ -353,9 +337,9 @@ export class AgentHttpRouter {
       )
     );
     register(
-      'safs_get_remote_workspace', 'Bind a SAFS remote workspace',
-      'Binds by agentCwd when available, otherwise by the one focused SAFS VS Code window. If ambiguous, returns candidates for selection in the Agent conversation; call again with workspaceId. No Quick Pick is used. The returned bindingId stays pinned to that window.',
-      { agentCwd: z.string().min(1).optional(), workspaceId: z.string().min(1).optional() },
+      'safs_get_remote_workspace', 'Choose a SAFS remote workspace in VS Code',
+      'Pass the Agent actual current working directory in agentCwd to bind its SAFS placeholder cwd automatically. Set choose=true only for explicit selection or switching in VS Code. Returns a bindingId and never falls back to another window.',
+      { agentCwd: z.string().min(1).optional(), choose: z.boolean().optional() },
       { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     );
     register(
