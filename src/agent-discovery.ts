@@ -15,6 +15,8 @@ export interface AgentWorkspaceRecord {
   workspaceUri: string;
   mountName: string;
   workspaceRoot: string;
+  /** Local empty directory used as cwd by an Agent started in this VS Code window. */
+  agentCwd?: string;
   host: string;
   mcpUrl: string;
   updatedAt: string;

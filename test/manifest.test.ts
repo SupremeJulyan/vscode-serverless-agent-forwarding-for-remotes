@@ -76,7 +76,7 @@ test('SAFS MCP is opt-in for remote context instead of mandatory in every worksp
   assert.ok(direct.includes("'safs_get_remote_workspace'"));
   assert.ok(router.includes("'safs_get_remote_workspace'"));
   assert.ok(direct.includes('choose the remote workspace in the VS Code Quick Pick'));
-  assert.ok(router.includes('choose the remote workspace in the VS Code Quick Pick'));
+  assert.ok(router.includes('actual current working directory in agentCwd'));
   assert.equal(direct.includes('userConfirmed: z.literal(true)'), false);
   assert.equal(router.includes('userConfirmed: z.literal(true)'), false);
   const extension = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
