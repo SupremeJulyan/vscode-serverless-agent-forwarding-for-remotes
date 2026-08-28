@@ -141,7 +141,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
    并注册 Agent；新窗口会
    启动该窗口的动态端口服务。对于已确认的 SAFS 远程任务，Agent 可通过
    `safs_get_remote_workspace` 把 Agent 当前 cwd 与该窗口的空占位 cwd 匹配并自动绑定；
-   只有主动切换或无法匹配时才显式打开 VS Code Quick Pick。之后工具调用自动沿用该绑定。
+   OpenCode 等 cwd 为 `~/` 的扩展使用唯一聚焦窗口。仍有歧义时在 Agent 对话中返回候选，
+   不打开 VS Code Quick Pick。之后工具调用自动沿用该绑定。
 4. 重启 Agent 并新建对话（首次安装、更新或移除 MCP 后都需要）。
 5. 之后 Agent 可直接使用远程工具：VS Code Agent 的 `#safsList`、
    `#safsWrite`、`#safsSearch`、`#safsRun`，或 MCP 工具
@@ -167,7 +168,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
   通过固定端口选举一个 Router Leader，Leader 关闭后其他窗口自动接管。
 - VS Code 工作区内启动的 Agent 首次调用 `safs_get_remote_workspace` 时传入自己已知的
   当前 cwd；固定 Router 将其与窗口发布的空占位 cwd 精确匹配并自动绑定，不再重复
-  弹出 Quick Pick。只有显式传入 `choose: true` 才显示选择器。后续工具调用携带返回的
+  弹出 Quick Pick。OpenCode 等 cwd 固定为用户主目录的扩展会绑定唯一聚焦窗口；仍有
+  歧义时工具返回 `workspaceId` 候选，由用户在 Agent 对话中选择。后续工具调用携带返回的
   `bindingId`；来源窗口失效时直接报错，绝不回退到剩余候选。
 - 每个窗口的动态端口服务只能访问自己绑定的挂载，不能通过请求参数跨窗口
   访问其他挂载。
@@ -176,8 +178,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 
 - 仅当用户明确要求操作 SAFS，或上下文已表明当前是 `safs://` 虚拟工作区时，
   调用 `safs_get_remote_workspace` 并把 Agent 当前工作目录传入 `agentCwd`；普通本地
-  工作区不要调用 SAFS 工具。cwd 无法匹配或用户主动切换时，才用 `choose: true` 在
-  VS Code Quick Pick 中选择。后续远程工具
+  工作区不要调用 SAFS 工具。无法自动确定或用户主动切换时，工具会返回候选；Agent
+  请用户选择后用对应 `workspaceId` 再次调用。后续远程工具
   必须携带返回的 `bindingId`，从而隔离同名 Agent 的并行会话。
 - `workspaceRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
   SFTP 配置的挂载根。`remote_list`、`remote_search` 的相对路径以及
@@ -304,8 +306,8 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 
 安装后重启 Agent 并新建对话。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
 不会关闭 Agent 转发偏好，重连相同挂载后 MCP 会发现新端口。如果同时打开多个远程窗口，
-VS Code 内 Agent 根据首次调用传入的 cwd 自动绑定来源窗口；外部 Agent 或主动切换时
-通过 `safs_get_remote_workspace` 的 `choose: true` 在 VS Code Quick Pick 中选择。设置
+VS Code 内 Agent 根据 cwd 或唯一聚焦窗口自动绑定来源；外部 Agent 或主动切换时在
+Agent 对话中选择工具返回的 `workspaceId`，不使用 VS Code Quick Pick。设置
 `safs.agentMcpPort` 应保持为默认值 `0`；固定入口端口由
 `safs.agentHttpRouterPort` 控制，默认是 `9848`。如果该端口被其他程序占用，
 扩展会拒绝连接并提示更换端口，不会误连到未知服务。
