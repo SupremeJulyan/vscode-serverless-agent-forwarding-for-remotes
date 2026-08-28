@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.6
+
+- 固定 HTTP Router 重新发布每个远程窗口的空占位 `agentCwd`。Agent 首次调用
+  `safs_get_remote_workspace` 时传入当前 cwd，Router 只在它与某个占位目录精确匹配时
+  自动绑定，并用该窗口的 `instanceId` 固定后续路由。
+- 移除 VS Code Quick Pick 和聚焦窗口兜底。cwd 无法精确匹配或匹配不唯一时只向
+  Agent 返回带 `workspaceId` 的候选，由用户在 Agent 对话中选择；不会根据 `~/`、
+  候选数量或窗口焦点猜测目标。
+- 已绑定窗口关闭后绑定立即失效，不会把正在执行的任务转发到剩余的唯一窗口。
+
 ## 1.6.5
 
 - 首次启用 Agent 转发后，右下角会列出已成功注册 MCP 的 Agent；配置中的 Agent

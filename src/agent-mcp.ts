@@ -67,7 +67,7 @@ export class AgentMcpServer {
       {
         instructions:
           'This MCP server is only for SAFS remote workspaces. Do not call SAFS tools for ordinary local workspaces. '
-          + 'Only for an explicit SAFS task or known safs:// context, call safs_list_remote_workspaces and ask the user to choose in the Agent interface. Never call safs_select_remote_workspace until the user explicitly replies; asking and selecting in the same turn is forbidden, and a single candidate is not consent. Then call it with the exact host, workspaceRoot, and userConfirmed=true. Selection only establishes a new binding and cancels the previous task: stop after selection and wait for a new user request before using any workspace tool. Virtual remote files are NOT present in the agent host filesystem. '
+          + 'Only for an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once to bind this window workspace. Virtual remote files are NOT present in the agent host filesystem. '
           + 'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for workspace operations. Never substitute the local filesystem or local shell. '
           + 'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead. '
           + 'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata. '
@@ -106,43 +106,22 @@ export class AgentMcpServer {
       host: info.host
     });
     server.registerTool(
-      'safs_select_remote_workspace',
+      'safs_get_remote_workspace',
       {
-        title: 'Select a SAFS remote workspace',
+        title: 'Bind this SAFS remote workspace',
         description:
-          'Binds the exact workspace explicitly chosen by the user. This cancels the previous task: stop after selection and wait for a new user request before using workspace tools. userConfirmed may be true only after a user reply.',
-        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-        inputSchema: {
-          host: z.string().min(1),
-          workspaceRoot: z.string().min(1),
-          userConfirmed: z.literal(true)
-        }
+          'Returns the SAFS workspace served by this exact VS Code window for later remote tool calls.',
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        inputSchema: {}
       },
-      async (input) => invoke(async () => {
+      async () => invoke(async () => {
         const current = await this.callbacks.currentWorkspace();
-        const candidates = current ? [current] : await this.callbacks.listFolders();
-        const workspace = candidates.find((candidate) =>
-          candidate.host === input.host && candidate.workspaceRoot === input.workspaceRoot
-        );
-        return workspace ? {
-          workspace: publicFolder(workspace),
-          previousTaskCancelled: true,
-          mustWaitForNewUserRequest: true,
+        return current ? {
+          workspace: publicFolder(current),
           localFilesystemAllowed: false,
           localShellAllowed: false
         } : { workspace: null };
       })
-    );
-    server.registerTool(
-      'safs_list_remote_workspaces',
-      {
-        title: 'List SAFS remote workspaces',
-        description:
-          'Lists active Agent-forwarded remote workspaces in focused-first order. Ask the user to choose, then call safs_select_remote_workspace.',
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-        inputSchema: {}
-      },
-      async () => invoke(async () => (await this.callbacks.listFolders()).map(publicFolder))
     );
     server.registerTool(
       'current_remote_file',

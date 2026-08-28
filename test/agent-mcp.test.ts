@@ -46,23 +46,15 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       'remote_search',
       'remote_write',
       'run_remote_command',
-      'safs_list_remote_workspaces',
-      'safs_select_remote_workspace'
+      'safs_get_remote_workspace'
     ]);
     const currentFile = await client.callTool({
       name: 'current_remote_file', arguments: {}
     });
     const currentFileText = (currentFile.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
     assert.equal(JSON.parse(currentFileText).path, '/srv/project/README.md');
-    const choices = await client.callTool({
-      name: 'safs_list_remote_workspaces', arguments: {}
-    });
-    const choicesText = (choices.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
-    const choicesValue = JSON.parse(choicesText);
-    assert.deepEqual(choicesValue, [{ workspaceRoot: '/srv/project', host: 'dev' }]);
     const route = await client.callTool({
-      name: 'safs_select_remote_workspace',
-      arguments: { host: 'dev', workspaceRoot: '/srv/project', userConfirmed: true }
+      name: 'safs_get_remote_workspace', arguments: {}
     });
     const routeText = (route.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
     assert.deepEqual(JSON.parse(routeText), {
@@ -70,8 +62,6 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
         workspaceRoot: '/srv/project',
         host: 'dev'
       },
-      previousTaskCancelled: true,
-      mustWaitForNewUserRequest: true,
       localFilesystemAllowed: false,
       localShellAllowed: false
     });
@@ -89,8 +79,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       code: 'REMOTE_TOOL_ERROR', message: '路径越界'
     });
     assert.deepEqual(audited.map((entry) => entry.toolName), [
-      'current_remote_file', 'safs_list_remote_workspaces', 'safs_select_remote_workspace',
-      'remote_list', 'remote_list'
+      'current_remote_file', 'safs_get_remote_workspace', 'remote_list', 'remote_list'
     ]);
     assert.ok(audited.every((entry) => entry.agentName === 'codex'));
   } finally {

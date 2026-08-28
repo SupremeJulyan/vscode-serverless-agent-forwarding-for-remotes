@@ -22,7 +22,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.6.5');
+  assert.equal(manifest.version, '1.6.6');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -73,20 +73,19 @@ test('SAFS MCP is opt-in for remote context instead of mandatory in every worksp
   assert.equal(router.includes('Before reading files, editing, searching'), false);
   assert.ok(direct.includes('Do not call SAFS tools for ordinary local workspaces'));
   assert.ok(router.includes('do not call SAFS tools for ordinary local workspaces'));
-  assert.ok(direct.includes("'safs_list_remote_workspaces'"));
-  assert.ok(router.includes("'safs_list_remote_workspaces'"));
-  assert.ok(direct.includes("'safs_select_remote_workspace'"));
-  assert.ok(router.includes("'safs_select_remote_workspace'"));
-  assert.ok(direct.includes('userConfirmed: z.literal(true)'));
-  assert.ok(router.includes('userConfirmed: z.literal(true)'));
-  assert.ok(direct.includes('selecting in the same turn is forbidden'));
-  assert.ok(router.includes('selecting in the same turn is forbidden'));
-  assert.ok(direct.includes('mustWaitForNewUserRequest: true'));
+  assert.ok(direct.includes("'safs_get_remote_workspace'"));
+  assert.ok(router.includes("'safs_get_remote_workspace'"));
+  assert.equal(direct.includes('safs_list_remote_workspaces'), false);
+  assert.equal(router.includes('safs_list_remote_workspaces'), false);
+  assert.equal(direct.includes('safs_select_remote_workspace'), false);
+  assert.equal(router.includes('safs_select_remote_workspace'), false);
+  assert.ok(router.includes('agentCwd'));
+  assert.ok(router.includes('workspaceId'));
+  assert.ok(router.includes('instanceId'));
+  assert.ok(router.includes('userConfirmed: z.literal(true).optional()'));
+  assert.ok(router.includes('Never select in the same turn as asking'));
   assert.ok(router.includes('mustWaitForNewUserRequest: true'));
-  assert.ok(direct.includes('stop after selection and wait for a new user request'));
-  assert.ok(router.includes('wait for a new user request'));
-  assert.equal(direct.includes('safs_get_remote_workspace'), false);
-  assert.equal(router.includes('safs_get_remote_workspace'), false);
+  assert.ok(router.includes('No VS Code Quick Pick or focused-window fallback is used'));
   const extension = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
   assert.ok(extension.includes('callback((options.input ?? {}) as T)'));
   assert.ok(direct.includes('currentFile(input ?? {})'));

@@ -2625,6 +2625,7 @@ async function publishAgentWorkspace(context: vscode.ExtensionContext): Promise<
     workspaceUri: folderUri(folder, workspacePath),
     mountName: mount.name,
     workspaceRoot: workspacePath,
+    agentCwd: vscode.Uri.parse(folderUri(folder, workspacePath)).fsPath,
     host: mount.host,
     mcpUrl: mcp.url
   });

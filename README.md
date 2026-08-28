@@ -50,7 +50,7 @@
 ### 安装
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.5.vsix
+code --install-extension safs-serverless-agent-forwarding-1.6.6.vsix
 ```
 
 ### 添加 SSH 配置并打开远程目录
@@ -139,14 +139,13 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 3. 再运行 `SAFS: 打开远程目录` 进入远程目录（或点击连接项上的“打开远程
    文件夹”按钮，即配置行内第二个按钮）。打开前扩展会先启动固定 HTTP 路由
    并注册 Agent；新窗口会
-   启动该窗口的动态端口服务。对于已确认的 SAFS 远程任务，Agent 可通过
-   `safs_list_remote_workspaces` 获取候选列表，由 Agent 询问用户后调用
-   `safs_select_remote_workspace` 完成选择，
-   之后工具调用自动沿用该绑定。
+   启动该窗口的动态端口服务。对于已确认的 SAFS 远程任务，Agent 首次调用
+   `safs_get_remote_workspace` 并传入当前 cwd；Router 将空占位 cwd 精确映射到
+   该窗口的 `instanceId` 并自动绑定，之后工具调用沿用该绑定。
 4. 重启 Agent 并新建对话（首次安装、更新或移除 MCP 后都需要）。
 5. 之后 Agent 可直接使用远程工具：VS Code Agent 的 `#safsList`、
    `#safsWrite`、`#safsSearch`、`#safsRun`，或 MCP 工具
-   `safs_list_remote_workspaces`、`safs_select_remote_workspace`、`remote_list`、
+   `safs_get_remote_workspace`、`remote_list`、
    `remote_write`、`remote_search`、`run_remote_command`，
    以及 `current_remote_file`（查看当前打开的远程文件路径与元数据）。
 6. 关闭转发：点击连接项上的“关闭 Agent 转发”。只有最后一个启用挂载也被
@@ -166,24 +165,23 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 
 - 同时打开多个远程窗口时，所有窗口共用同一个固定 HTTP MCP 入口；窗口之间
   通过固定端口选举一个 Router Leader，Leader 关闭后其他窗口自动接管。
-- `safs_list_remote_workspaces` 返回按聚焦窗口优先、最近更新其次排列的
-  候选列表；Agent 在自己的界面询问用户，再以所选项的 `host` 和 `workspaceRoot`
-  以及 `userConfirmed: true` 调用 `safs_select_remote_workspace` 完成绑定，并在后续每个工具调用中携带返回的
-  `bindingId`。需要切换或绑定失效时重复“列出再选择”，不会自动切换到其他窗口。
-- Agent 必须等待用户明确回复后才能选择；即使仅剩一个候选，也不得在提出询问的
-  同一轮直接选择，更不能用其他主机替代已失效的工作区。
-- 重新选择只建立连接并取消原工作区上的旧任务。选择成功后 Agent 必须结束当前流程，
-  等待用户发出新的操作请求，不能把旧命令带到新主机继续执行。
+- Agent 首次调用 `safs_get_remote_workspace` 时传入自己的当前 cwd；Router 只在它
+  与某个窗口发布的空占位 cwd 精确匹配时自动绑定，并把 `bindingId` 固定到该窗口的
+  `instanceId`。窗口关闭后绑定失效，绝不改投剩余窗口。
+- cwd 无法精确匹配或匹配不唯一时，工具返回带 `workspaceId` 的候选；Agent 在自身
+  对话中询问用户，收到明确回复后再用所选 `workspaceId` 和 `userConfirmed: true`
+  调用同一工具；选择成功后停止旧任务并等待新请求。不会打开 VS Code Quick Pick，
+  也不会按焦点窗口、`~/` 或唯一候选猜测目标。
 - 每个窗口的动态端口服务只能访问自己绑定的挂载，不能通过请求参数跨窗口
   访问其他挂载。
 
 #### 确认 Agent 会话绑定哪个远程
 
 - 仅当用户明确要求操作 SAFS，或上下文已表明当前是 `safs://` 虚拟工作区时，
-  调用 `safs_list_remote_workspaces`；普通本地工作区不要调用 SAFS 工具。它返回仅含
-  `host` 和 `workspaceRoot` 的紧凑候选列表，聚焦窗口排在第一项；Agent 在自身界面
-  询问用户，再以所选字段调用 `safs_select_remote_workspace` 完成绑定。后续远程工具
-  必须携带返回的 `bindingId`，从而隔离同名 Agent 的并行会话。
+  调用 `safs_get_remote_workspace` 并传入 Agent 当前工作目录 `agentCwd`；普通本地
+  工作区不要调用 SAFS 工具。精确匹配时自动绑定；否则由用户在 Agent 对话中从返回的
+  候选选择 `workspaceId`，确认后传入 `userConfirmed: true`。后续远程工具必须携带
+  返回的 `bindingId`。
 - `workspaceRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
   SFTP 配置的挂载根。`remote_list`、`remote_search` 的相对路径以及
   `run_remote_command` 的默认工作目录都以它为基准。
@@ -243,10 +241,10 @@ VS Code Agent 可使用：
 - `#safsCurrentRemoteFile`（当前打开的远程文件路径与元数据）
 
 扩展还在 `127.0.0.1` 上提供令牌保护的 Streamable HTTP MCP 服务，工具包括
-`safs_list_remote_workspaces`、`safs_select_remote_workspace`、`remote_list`、`remote_write`、
+`safs_get_remote_workspace`、`remote_list`、`remote_write`、
 `remote_search`、`run_remote_command` 和 `current_remote_file`。
 
-Agent 仅在 SAFS 远程任务中列出并选择当前 SFTP 虚拟工作区；
+Agent 仅在 SAFS 远程任务中绑定当前 SFTP 虚拟工作区；
 普通本地工作区不调用 SAFS 工具。
 开启转发并选择工作区后，文件工具通过返回的 `bindingId` 绑定当前工作区。所有远程文件访问
 都通过 SFTP 工具完成，构建、测试、Git 和系统检查通过 SSH 远程命令完成；工具被
@@ -270,9 +268,9 @@ Agent 仅在 SAFS 远程任务中列出并选择当前 SFTP 虚拟工作区；
 每个开启 Agent 转发的远程 VS Code 窗口会启动独立的动态端口 MCP。扩展为 Codex 和
 Claude Code 注册同一个由扩展进程托管的固定 Streamable HTTP MCP 路由器，并在每次工具
 调用时找到目标窗口的最新动态端口。Agent 不再启动 STDIO 路由子进程，因此不会继承
-`safs` 虚拟工作区 cwd。`safs_list_remote_workspaces` 把候选项返回给 Agent，由 Agent
-在自身界面让用户选择后调用 `safs_select_remote_workspace` 建立绑定；未选择时默认使用聚焦且状态最新的窗口。窗口服务只能
-访问其绑定挂载，不能通过请求参数跨窗口访问。
+`safs` 虚拟工作区 cwd。`safs_get_remote_workspace` 将 Agent 当前 cwd 与窗口发布的
+空占位 cwd 精确匹配，并把绑定固定到该窗口 `instanceId`。不匹配时只返回候选，不使用
+VS Code Quick Pick、焦点窗口或唯一候选兜底。窗口服务只能访问其绑定挂载。
 
 某些 Agent 扩展仍会把虚拟 URI 的 POSIX 路径当成本机 cwd 并在启动时调用
 `lstat` 或创建 Git watcher。开启 Agent 转发时，扩展会在用户级扩展存储中创建空的
@@ -310,7 +308,8 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 
 安装后重启 Agent 并新建对话。VS Code 扩展必须保持运行，并为相应挂载开启“Agent 转发”。断开 SFTP
 不会关闭 Agent 转发偏好，重连相同挂载后 MCP 会发现新端口。如果同时打开多个远程窗口，
-通过 `safs_list_remote_workspaces` 和 `safs_select_remote_workspace` 可选择或切换目标窗口。设置
+通过 `safs_get_remote_workspace` 的 `agentCwd` 自动绑定，或用返回候选的 `workspaceId`
+显式选择或切换目标窗口。设置
 `safs.agentMcpPort` 应保持为默认值 `0`；固定入口端口由
 `safs.agentHttpRouterPort` 控制，默认是 `9848`。如果该端口被其他程序占用，
 扩展会拒绝连接并提示更换端口，不会误连到未知服务。
