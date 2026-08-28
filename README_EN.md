@@ -175,8 +175,8 @@ platforms.
    the new window, the extension starts the fixed HTTP router and registers
    the Agent. The new window starts its dynamic-port service, and the Agent
    for a confirmed SAFS remote task, the Agent can get the current remote
-   workspace via `safs_get_remote_workspace`, passing its current cwd to bind
-   the matching VS Code window automatically. Later tool calls
+   workspace via `safs_get_remote_workspace`, tells the user to complete the
+   VS Code Quick Pick, and binds the confirmed choice. Later tool calls
    retain that binding.
 4. Restart the Agent and start a new conversation (required after installing,
    updating, or removing MCP).
@@ -205,10 +205,9 @@ as follows:
 - When several remote windows are open, they all share the same fixed HTTP MCP
   entry; the windows elect one Router Leader on the fixed port, and another
   window takes over when the leader exits.
-- On its first `safs_get_remote_workspace` call, an Agent passes its known current cwd.
-  The fixed router matches that cwd to the window's published placeholder cwd and binds
-  automatically. A Quick Pick opens only when the call explicitly sets `choose: true`.
-  Every later workspace tool call includes the returned
+- `safs_get_remote_workspace` opens a VS Code Quick Pick with the focused
+  window first, followed by recently updated windows. The Agent tells the user
+  to choose and confirm in VS Code. Every later workspace tool call includes the returned
   `bindingId`. Call it again to switch or renew an expired binding;
   the router never silently falls back to another window.
 - Each window's dynamic-port service can only access its own mount and cannot
@@ -218,8 +217,8 @@ as follows:
 
 - Call `safs_get_remote_workspace` only when the user explicitly asks to use
   SAFS or the context already identifies a `safs://` virtual workspace. Do not
-  call SAFS tools for an ordinary local workspace. Pass the Agent current cwd as
-  `agentCwd`; use `choose: true` only for explicit selection or switching. Later tools pass the returned `bindingId`,
+  call SAFS tools for an ordinary local workspace. It opens a VS Code Quick Pick;
+  the Agent tells the user to choose and confirm there. Later tools pass the returned `bindingId`,
   which isolates concurrent sessions using the same Agent label.
 - `workspaceRoot` is the remote directory actually open in that VS Code window,
   not the configured SFTP mount root. Relative `remote_list`/`remote_search`
@@ -308,9 +307,11 @@ Results are returned as compact JSON to avoid wasting tokens on indentation.
 
 Each Agent-forwarded remote VS Code window starts an MCP server on an independent
 dynamically allocated port. The extension registers the same stable Streamable HTTP MCP
-router for Codex and Claude Code. The first `safs_get_remote_workspace` call passes the
-Agent cwd; the router maps it to the originating window and returns a binding used by all
-later calls. Each window service remains
+router, hosted inside the extension process, for Codex and Claude Code. Agents no longer
+spawn a stdio router process and therefore cannot inherit a `safs` virtual cwd.
+The router resolves the target window's latest port on every call.
+`safs_get_remote_workspace` opens a VS Code Quick Pick, and the Agent tells the
+user to choose and confirm there. Each window service remains
 restricted to its own mount.
 
 Some Agent extensions still treat the virtual URI's POSIX path as a native cwd and call
@@ -357,8 +358,8 @@ list, but it is not secure authentication.
 
 Restart the Agent and start a new conversation. The VS Code extension must remain running with Agent forwarding enabled for the
 mount. Disconnecting SFTP preserves that preference, and MCP discovers the new port after
-the mount reconnects. If multiple remote windows are open, `safs_get_remote_workspace`
-binds by cwd; use `choose: true` to select or switch the target in VS Code.
+the mount reconnects. If multiple remote windows are open, call
+use `safs_get_remote_workspace` to select or switch the target in VS Code.
 Keep `safs.agentMcpPort` at its
 default value of `0`. `safs.agentHttpRouterPort` controls the stable Agent-facing
 port and defaults to `9848`; the extension rejects an unrelated process occupying that port.

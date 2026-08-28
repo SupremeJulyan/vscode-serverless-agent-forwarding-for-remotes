@@ -17,7 +17,6 @@ test('publishes a private, versioned remote workspace record and removes it', as
     workspaceUri: 'safs://project/srv/project',
     mountName: 'project',
     workspaceRoot: '/srv/project',
-    agentCwd: '/local/agent-cwd/project',
     host: 'dev',
     mcpUrl: 'http://127.0.0.1:9848/mcp?token=secret'
   });
@@ -27,7 +26,6 @@ test('publishes a private, versioned remote workspace record and removes it', as
   assert.equal(value.instanceId, 'window-one');
   assert.equal(value.execution, 'remote');
   assert.equal(value.mountName, 'project');
-  assert.equal(value.agentCwd, '/local/agent-cwd/project');
   assert.equal(value.mcpServerName, undefined);
   assert.equal(typeof value.updatedAt, 'string');
   await publisher.remove();

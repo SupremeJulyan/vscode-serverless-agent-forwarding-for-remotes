@@ -2,12 +2,6 @@
 
 ## 1.6.5
 
-- `safs_get_remote_workspace` 首次调用接收 Agent 已知的当前 cwd，并与窗口发布的空占位
-  cwd 精确匹配；VS Code 内 Agent 自动绑定同一窗口，不再重复弹出 Quick Pick。
-  只有显式传入 `choose: true` 时才在 VS Code 中选择或切换工作区。
-- 工作区绑定固定到窗口 `instanceId`；来源窗口关闭或发现记录过期后直接失败，不会因
-  只剩一个候选而静默切换到其他远程目录。
-
 - 首次启用 Agent 转发后，右下角会列出已成功注册 MCP 的 Agent；配置中的 Agent
   全部未能自动注册时，直接打开“为我的 Agent 安装转发功能”手工安装流程。
 - Linux、macOS、WSL（`vpn: false`）的密码终端改为优先使用内置 ssh2，与 Windows
