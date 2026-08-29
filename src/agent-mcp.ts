@@ -3,9 +3,9 @@ import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
-  ListResourcesRequestSchema, ListResourceTemplatesRequestSchema
-} from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+  configureAgentMcpResources, directAgentMcpInstructions,
+  registerAgentMcpTools
+} from './agent-mcp-tools';
 
 export interface RemoteFolderInfo {
   name: string;
@@ -64,22 +64,9 @@ export class AgentMcpServer {
   private createProtocolServer(agentName?: string, agentPlatform?: string): McpServer {
     const server = new McpServer(
       { name: 'safs', version: '1.0.0' },
-      {
-        instructions:
-          'This MCP server is only for SAFS remote workspaces. Do not call SAFS tools for ordinary local workspaces. '
-          + 'Only for an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once to bind this window workspace. Virtual remote files are NOT present in the agent host filesystem. '
-          + 'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for workspace operations. Never substitute the local filesystem or local shell. '
-          + 'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead. '
-          + 'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata. '
-          + 'The selected workspace remains bound for later tool calls.'
-      }
+      { instructions: directAgentMcpInstructions }
     );
-    server.server.registerCapabilities({ resources: {} });
-    server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
-    server.server.setRequestHandler(
-      ListResourceTemplatesRequestSchema,
-      async () => ({ resourceTemplates: [] })
-    );
+    configureAgentMcpResources(server);
     // 紧凑 JSON：结果只回传必要字段，缩进空白会白白消耗模型 token。
     const result = (value: unknown) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(value) }]
@@ -105,93 +92,38 @@ export class AgentMcpServer {
       workspaceRoot: info.workspaceRoot,
       host: info.host
     });
-    server.registerTool(
-      'safs_get_remote_workspace',
-      {
-        title: 'Bind this SAFS remote workspace',
-        description:
-          'Returns the SAFS workspace served by this exact VS Code window for later remote tool calls.',
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-        inputSchema: {}
-      },
-      async () => invoke(async () => {
-        const current = await this.callbacks.currentWorkspace();
-        return current ? {
-          workspace: publicFolder(current),
-          localFilesystemAllowed: false,
-          localShellAllowed: false
-        } : { workspace: null };
-      })
-    );
-    server.registerTool(
-      'current_remote_file',
-      {
-        title: 'Get the currently open remote file',
-        description:
-          'Returns the remote file open in the active VS Code editor of this window: absolute path, relative path, size, and dirty (unsaved changes). null when none is open.',
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-        inputSchema: {}
-      },
-      async (input) => invoke(() => this.callbacks.currentFile(input ?? {}))
-    );
-    server.registerTool(
-      'remote_list',
-      {
-        title: 'List a remote directory',
-        description:
-          'Lists files directly over SFTP. Relative paths start at the current VS Code workspace root. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-        inputSchema: {
-          path: z.string().optional(),
-          limit: z.number().int().min(1).max(10000).optional()
+    registerAgentMcpTools(server, {
+      routed: false,
+      invoke: (name, input) => {
+        switch (name) {
+          case 'safs_get_remote_workspace':
+            return invoke(async () => {
+              const current = await this.callbacks.currentWorkspace();
+              return current ? {
+                workspace: publicFolder(current),
+                localFilesystemAllowed: false,
+                localShellAllowed: false
+              } : { workspace: null };
+            });
+          case 'current_remote_file':
+            return invoke(() => this.callbacks.currentFile(input));
+          case 'remote_list':
+            return invoke(() => this.callbacks.list(input));
+          case 'remote_write':
+            return invoke(() => this.callbacks.write(input as {
+              mountName?: string; path: string; content: string;
+            }));
+          case 'remote_search':
+            return invoke(() => this.callbacks.search({
+              ...input, agentName, agentPlatform
+            } as Parameters<AgentMcpCallbacks['search']>[0]));
+          case 'run_remote_command':
+            return invoke(() => this.callbacks.run({
+              ...input, agentName, agentPlatform
+            } as Parameters<AgentMcpCallbacks['run']>[0]));
         }
-      },
-      async (input) => invoke(() => this.callbacks.list(input))
-    );
-    server.registerTool(
-      'remote_write',
-      {
-        title: 'Write a remote file',
-        description: 'Creates or replaces a UTF-8 file directly over SFTP.',
-        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-        inputSchema: {
-          path: z.string().min(1),
-          content: z.string()
-        }
-      },
-      async (input) => invoke(() => this.callbacks.write(input))
-    );
-    server.registerTool(
-      'remote_search',
-      {
-        title: 'Search remote files',
-        description:
-          'Searches file contents on the remote SSH host. Relative paths start at the current VS Code workspace root. Results are capped (200 matches, lines trimmed to 300 chars).',
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-        inputSchema: {
-          query: z.string().min(1),
-          path: z.string().optional()
-        }
-      },
-      async (input) => invoke(() => this.callbacks.search({
-        ...input, agentName, agentPlatform
-      }))
-    );
-    server.registerTool(
-      'run_remote_command',
-      {
-        title: 'Run a remote SSH command',
-        description: 'Runs a shell command on the selected SSH host. The default working directory is the current VS Code workspace root.',
-        annotations: { destructiveHint: true, openWorldHint: true },
-        inputSchema: {
-          command: z.string().min(1),
-          remoteCwd: z.string().optional()
-        }
-      },
-      async (input) => invoke(() => this.callbacks.run({
-        ...input, agentName, agentPlatform
-      }))
-    );
+      }
+    });
     return server;
   }
 

@@ -4,12 +4,11 @@ import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
-  ListResourcesRequestSchema, ListResourceTemplatesRequestSchema
-} from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
-import {
   DiscoveredAgentWorkspace, agentDiscoveryDirectories, discoverAgentWorkspaces
 } from './agent-discovery';
+import {
+  configureAgentMcpResources, registerAgentMcpTools, routedAgentMcpInstructions
+} from './agent-mcp-tools';
 
 const routerIdentity = 'safs-http-router-v1';
 
@@ -315,84 +314,13 @@ export class AgentHttpRouter {
   ): McpServer {
     const server = new McpServer(
       { name: 'safs-http-router', version: '1.0.0' },
-      {
-        instructions: [
-          'This MCP server is only for SAFS remote workspaces; do not call SAFS tools for ordinary local workspaces.',
-          'For an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once with the Agent actual current working directory in agentCwd. An exact SAFS placeholder match binds to that window instance automatically.',
-          'If the cwd does not match exactly or is ambiguous, the tool returns candidates. Ask the user to choose in the Agent conversation, then call it again with that workspaceId and userConfirmed=true. Never select in the same turn as asking, and never treat one candidate as consent. No VS Code Quick Pick is used.',
-          'A workspaceId selection or switch cancels the previous task. After it succeeds, stop the current workflow and wait for a new user request before calling workspace tools.',
-          'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for that workspace.',
-          'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead.',
-          'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata.',
-          'Never use local shell or local filesystem tools for a safs workspace because its files do not exist locally.',
-          'Pass the bindingId returned by safs_get_remote_workspace to every later workspace tool call. It stays pinned to the matched window instance. If it expires, stop and report it; never guess, rebind, or silently switch workspaces.'
-        ].join(' ')
-      }
+      { instructions: routedAgentMcpInstructions }
     );
-    server.server.registerCapabilities({ resources: {} });
-    server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
-    server.server.setRequestHandler(
-      ListResourceTemplatesRequestSchema,
-      async () => ({ resourceTemplates: [] })
-    );
-    const register = (
-      name: string, title: string, description: string,
-      inputSchema: Record<string, z.ZodTypeAny>,
-      annotations: { readOnlyHint: boolean; destructiveHint: boolean; openWorldHint: boolean }
-    ) => server.registerTool(
-      name,
-      { title, description, inputSchema, annotations },
-      async (input) => this.callTool(
-        name, (input ?? {}) as Record<string, unknown>, agentName, agentPlatform
-      )
-    );
-    register(
-      'safs_get_remote_workspace', 'Bind a SAFS remote workspace',
-      'Pass the Agent actual current working directory in agentCwd to bind an exact SAFS placeholder automatically. If no exact match exists, ask the user to choose one returned candidate, then call again with workspaceId and userConfirmed=true. No VS Code Quick Pick or focused-window fallback is used. The returned bindingId stays pinned to that window instance.',
-      {
-        agentCwd: z.string().min(1).optional(),
-        workspaceId: z.string().min(1).optional(),
-        userConfirmed: z.literal(true).optional()
-      },
-      { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-    );
-    register(
-      'current_remote_file', 'Get the currently open remote file',
-      'Returns the remote file open in the active VS Code editor of the bound window (absolute path, relative path, size, dirty), or null when none is open.',
-      { bindingId: z.string().min(1) },
-      { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-    );
-    register(
-      'remote_list', 'List a remote directory',
-      'Lists files directly over SFTP. Relative paths start at the current VS Code workspace root. Entries are capped at 500 (raise limit if needed); large directories return truncated with total.',
-      {
-        bindingId: z.string().min(1), path: z.string().optional(),
-        limit: z.number().int().min(1).max(10000).optional()
-      },
-      { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-    );
-    register(
-      'remote_write', 'Write a remote file', 'Creates or replaces a UTF-8 file over SFTP.',
-      { bindingId: z.string().min(1), path: z.string().min(1), content: z.string() },
-      { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
-    );
-    register(
-      'remote_search', 'Search remote files',
-      'Searches file contents on the remote SSH host. Relative paths start at the current VS Code workspace root. Results are capped (200 matches, lines trimmed to 300 chars).',
-      {
-        bindingId: z.string().min(1), query: z.string().min(1), path: z.string().optional()
-      },
-      { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-    );
-    register(
-      'run_remote_command', 'Run a remote SSH command',
-      'Runs a command on the bound SSH host. The default working directory is the current VS Code workspace root.',
-      {
-        bindingId: z.string().min(1), command: z.string().min(1),
-        remoteCwd: z.string().optional()
-      },
-      { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
-    );
+    configureAgentMcpResources(server);
+    registerAgentMcpTools(server, {
+      routed: true,
+      invoke: (name, input) => this.callTool(name, input, agentName, agentPlatform)
+    });
     return server;
   }
 
