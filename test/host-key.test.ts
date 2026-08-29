@@ -54,7 +54,7 @@ test('changed-key prompt shows old/new fingerprints and the highlighted host IP'
   assert.ok(message.includes('SHA256:old2'));
   assert.ok(message.includes('新密钥：SHA256:new1'));
   assert.ok(message.includes(
-    '请选择替换旧密钥（SSH主机重装），或追加新密钥（SSH主机为负载节点）。'
+    '请选择替换旧密钥（SSH主机重装）/ 追加新密钥（SSH主机为负载节点） / 拒绝（不信任该主机）。'
   ));
 });
 
@@ -69,6 +69,7 @@ test('dialog decisions: closing with X/Esc (undefined) refuses, never accepts', 
   assert.equal(firstConnectionDecision(undefined), 'refuse');
   assert.equal(changedKeyDecision('替换旧密钥'), 'replace');
   assert.equal(changedKeyDecision('追加新密钥'), 'accept');
+  assert.equal(changedKeyDecision('拒绝'), 'refuse');
   assert.equal(changedKeyDecision('拒绝新密钥并中止连接'), 'refuse');
   // 安全回归：X / Esc 关闭弹窗绝不能默认接受新密钥。
   assert.equal(changedKeyDecision(undefined), 'refuse');
