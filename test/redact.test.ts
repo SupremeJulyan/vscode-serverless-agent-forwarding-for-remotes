@@ -23,6 +23,18 @@ test('redacts secret-key flags and KEY=value assignments', () => {
   assert.match(redacted, /--token <hidden>/);
 });
 
+test('redacts quoted assignments, URL credentials, and curl basic auth', () => {
+  const text = `export API_KEY='secret one'; TOKEN="secret two"; `
+    + 'psql postgres://alice:db-password@db/prod; curl -u alice:web-password https://x';
+  const redacted = redactSensitiveText(text);
+  for (const secret of ['secret one', 'secret two', 'db-password', 'alice:web-password']) {
+    assert.equal(redacted.includes(secret), false);
+  }
+  assert.match(redacted, /API_KEY='<hidden>'/);
+  assert.match(redacted, /postgres:\/\/alice:<hidden>@db/);
+  assert.match(redacted, /curl -u <hidden>/);
+});
+
 test('leaves ordinary commands and safe URLs intact', () => {
   const text = 'git status && curl "http://127.0.0.1:9848/health" && ls -la /srv/project';
   assert.equal(redactSensitiveText(text), text);

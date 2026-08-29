@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { redactSensitiveText } from './redact';
 
@@ -36,16 +37,15 @@ export function mcpLogFilePath(
 export function formatMcpCommandLogLine(
   entry: McpCommandLogEntry, now = new Date()
 ): string {
-  const redacted = redactSensitiveText(entry.command);
-  const escaped = redacted
-    .replace(/\\/g, '\\\\')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
   const agent = entry.agentName?.trim().slice(0, 100)
     .replace(/[\]\r\n\t]/g, '_');
   const platform = entry.agentPlatform?.trim().replace(/[^a-z]/gi, '').slice(0, 10);
-  return `${now.toISOString()} [${entry.source}]${agent ? ` [agent=${agent}]` : ''}${platform ? ` [platform=${platform}]` : ''} [mount=${entry.mountName}] [cwd=${entry.remoteCwd}] $ ${escaped}`;
+  // Shell syntax is too expressive for a deny-list redactor to prove that a
+  // command contains no credentials. Persist only stable audit metadata; the
+  // full command remains visible transiently in the VS Code output channel.
+  const commandBytes = Buffer.byteLength(entry.command, 'utf8');
+  const commandSha256 = createHash('sha256').update(entry.command).digest('hex');
+  return `${now.toISOString()} [${entry.source}]${agent ? ` [agent=${agent}]` : ''}${platform ? ` [platform=${platform}]` : ''} [mount=${entry.mountName}] [cwd=${entry.remoteCwd}] command_bytes=${commandBytes} command_sha256=${commandSha256}`;
 }
 
 export async function appendMcpCommandLog(

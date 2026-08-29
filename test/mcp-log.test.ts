@@ -8,7 +8,7 @@ import {
   formatMcpToolLogLine, mcpLogDirectory, mcpLogFilePath
 } from '../src/mcp-log';
 
-test('writes one escaped command line per entry under the per-day log file', async () => {
+test('writes command hashes without persisting command content', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'safs-mcp-log-'));
   const now = new Date('2026-08-04T08:00:00.000Z');
   const first = await appendMcpCommandLog({
@@ -30,24 +30,21 @@ test('writes one escaped command line per entry under the per-day log file', asy
   assert.equal(first, path.join(directory, 'mcp-2026-08-04.log'));
   assert.equal(second, first);
   const content = await readFile(first, 'utf8');
-  assert.match(
-    content,
-    /^2026-08-04T08:00:00\.000Z \[mcp\] \[agent=MyAgent\] \[platform=linux\] \[mount=prod\] \[cwd=\/srv\/project\] \$ git status\n/m
-  );
-  assert.match(
-    content,
-    /\[remote_search\].*\$ grep -rn "line one\\nline two" \.\n$/m
-  );
+  assert.match(content, /\[mcp\].*command_bytes=10 command_sha256=[0-9a-f]{64}/);
+  assert.match(content, /\[remote_search\].*command_bytes=30 command_sha256=[0-9a-f]{64}/);
+  assert.equal(content.includes('git status'), false);
+  assert.equal(content.includes('line one'), false);
 });
 
-test('redacts token query values in logged commands', () => {
+test('never persists token-bearing command text', () => {
   const line = formatMcpCommandLogLine({
     source: 'mcp',
     mountName: 'prod',
     remoteCwd: '/srv/project',
     command: 'curl "http://127.0.0.1:1234/mcp?token=secret&x=1"'
   }, new Date('2026-08-04T08:00:00.000Z'));
-  assert.match(line, /token=<hidden>/);
+  assert.match(line, /command_sha256=[0-9a-f]{64}/);
+  assert.equal(line.includes('token='), false);
   assert.ok(!line.includes('secret'));
 });
 

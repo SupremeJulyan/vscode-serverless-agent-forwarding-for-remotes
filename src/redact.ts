@@ -17,17 +17,30 @@ export function redactSensitiveText(value: string): string {
       '$1<hidden>'
     )
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<hidden>')
+    // URI userinfo（postgres://user:password@host、https://user:password@host）。
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s/'"@:]+:)[^\s/'"@]+(@)/gi, '$1<hidden>$2')
     .replace(
       /([?&](?:token|key|secret|password|apikey|api_key|signature)=)[^&\s'"\\]+/gi,
       '$1<hidden>'
     )
     // 密钥命令行标志（--token tok、--api-key=abc；标志前是空白或命令分隔符）
     .replace(
+      /((?:^|[;&|\s])--?(?:token|api[-_]?key|secret|password|passwd|passphrase)\b\s*=?\s*)(['"])(.*?)\2/gi,
+      '$1$2<hidden>$2'
+    )
+    .replace(
       /((?:^|[;&|\s])--?(?:token|api[-_]?key|secret|password|passwd|passphrase)\b\s*=?\s*)[^\s'",;]+/gi,
       '$1<hidden>'
     )
     .replace(
+      /(\b(?:api[_-]?key|secret|token|passwd|password|passphrase)\s*=\s*)(['"])(.*?)\2/gi,
+      '$1$2<hidden>$2'
+    )
+    .replace(
       /(\b(?:api[_-]?key|secret|token|passwd|password|passphrase)\s*=\s*)[^\s'",;&|]+/gi,
       '$1<hidden>'
-    );
+    )
+    // curl/basic-auth 风格的显式用户凭据。
+    .replace(/((?:^|\s)(?:curl\s+)?(?:-u|--user)\s+)(['"])(.*?)\2/gi, '$1$2<hidden>$2')
+    .replace(/((?:^|\s)(?:curl\s+)?(?:-u|--user)\s+)[^\s'";|]+/gi, '$1<hidden>');
 }
