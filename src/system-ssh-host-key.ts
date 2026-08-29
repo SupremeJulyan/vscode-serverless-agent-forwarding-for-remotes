@@ -182,14 +182,6 @@ export async function probeHostKey(
 export interface HostKeyVerification {
   ok: boolean;
   reason?: string;
-  /**
-   * 探测失败时的降级标记：密钥探测（ssh-keyscan/中继）失败意味着新密钥无法
-   * 写入 known_hosts，若继续用 StrictHostKeyChecking=yes 会让 OpenSSH 对
-   * 密钥变化直接硬失败（"主机密钥已变更"）。调用方应据此改用 accept 策略
-   * （no + 空 known_hosts）保证终端/命令仍能连接，主机密钥校验由内置 ssh2
-   * 通道的 TOFU（hostVerifierFor）继续兜底。
-   */
-  degraded?: boolean;
 }
 
 /**
@@ -218,13 +210,15 @@ export async function verifySystemSshHostKey(
   }
   const result = await probe(host, platformKind, log, env);
   if (!result.probed) {
-    // 探测失败：跳过扩展校验继续连接，由系统 ssh 用扩展 known_hosts 文件
-    // （StrictHostKeyChecking=yes）兜底——文件里没有的密钥会被 OpenSSH 拒绝。
-    // 同时标记 degraded：让调用方把连接降级为 accept（no + 空 known_hosts），
-    // 否则 OpenSSH 对已换密钥的已知主机会直接拒绝（"主机密钥已变更"），
-    // 终端/命令将完全无法连接（密钥校验由内置 ssh2 通道 TOFU 继续兜底）。
-    log?.(`主机密钥探测失败（${host.name}）：${result.error ?? '未知错误'} — 降级为静默接受，由内置 ssh2 通道 TOFU 校验兜底`);
-    return { ok: true, degraded: true };
+    // 系统 SSH 不经过内置 ssh2 的 hostVerifier。若在探测失败后改用
+    // StrictHostKeyChecking=no，攻击者只需阻断 ssh-keyscan 就能让后续连接
+    // 失去主机身份校验，因此这里必须 fail closed。
+    const detail = result.error ?? '未知错误';
+    log?.(`主机密钥探测失败（${host.name}）：${detail} — 已中止连接`);
+    return {
+      ok: false,
+      reason: `无法验证主机"${host.name}"的 SSH 主机密钥（${detail}），已中止连接`
+    };
   }
   const allowed = await verifyHostKeyWithPrompt(host, result.fingerprints, log, prompts);
   if (!allowed) {

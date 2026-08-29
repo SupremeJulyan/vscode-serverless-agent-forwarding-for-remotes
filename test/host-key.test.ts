@@ -233,12 +233,13 @@ test('verifySystemSshHostKey skips verification for accept and reject modes', as
   );
 });
 
-test('verifySystemSshHostKey falls back to proceed when probing fails', async () => {
+test('verifySystemSshHostKey fails closed when probing fails', async () => {
   const probe = async (): Promise<HostKeyProbeResult> => ({
     probed: false, fingerprints: [], error: 'ENOENT'
   });
   const result = await verifySystemSshHostKey('prompt', hostAt(3006), 'linux', undefined, probe);
-  assert.deepEqual(result, { ok: true, degraded: true });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? '', /无法验证.*SSH 主机密钥/);
 });
 
 test('verifySystemSshHostKey passes when a probed fingerprint is already in the file', async () => {

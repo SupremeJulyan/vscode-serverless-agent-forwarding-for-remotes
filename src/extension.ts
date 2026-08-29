@@ -1578,9 +1578,6 @@ async function openTerminal(
         void vscode.window.showErrorMessage(verification.reason!);
         return undefined;
       }
-      // 探测失败时降级为 accept：系统 ssh 用 StrictHostKeyChecking=yes 会对
-      // 已换密钥的已知主机直接拒绝（"主机密钥已变更"），导致终端无法打开。
-      if (verification.degraded) hostKeyPolicy = 'accept';
     }
     const plan = platformAdapter.terminal(resolved.hostConfig, remoteCwd, {
       reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
@@ -2064,8 +2061,6 @@ async function executeRemoteCommand(
           if (!verification.ok) {
             throw new Error(verification.reason);
           }
-          // 探测失败时降级为 accept，避免系统 ssh 对密钥变化的已知主机硬失败。
-          if (verification.degraded) hostKeyPolicy = 'accept';
         }
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
