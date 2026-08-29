@@ -67,6 +67,16 @@ test('scanRemote rejects a malicious server directory entry with traversal separ
   await assert.rejects(() => scanRemote(session, '/srv/root'), /Unsafe remote directory entry/);
 });
 
+test('scanRemote skips symbolic links instead of following them as files', async () => {
+  const session = {
+    stat: async () => ({ type: 'directory', size: 0, mtime: 1, ctime: 1 }),
+    readDirectory: async () => [{
+      name: 'secret-link', type: 'symbolic-link', size: 10, mtime: 1, ctime: 1
+    }]
+  } as unknown as SftpSession;
+  assert.deepEqual(await scanRemote(session, '/srv/root'), []);
+});
+
 test('diffFingerprints reports adds, removes and content changes', () => {
   const previous = linesToMap([
     line('a.txt', 'f', 5, 2),

@@ -9,6 +9,7 @@ import { writeStreamToFile } from './stream-file';
 import { DownloadEchoGuard } from './sync-echo';
 import { TrailingOperationQueue } from './trailing-operation-queue';
 import { deleteRemoteTree, ensureRemoteDir } from './remote-tree';
+import { assertLocalSyncPath, localPathForRemote } from './sync-path';
 
 export { ensureRemoteDir } from './remote-tree';
 
@@ -61,18 +62,6 @@ export type RemoteMutationKind = 'write' | 'delete' | 'rename' | 'mkdir';
 
 function taskKey(mountName: string, remotePath: string): string {
   return `${mountName}\0${remotePath}`;
-}
-
-function joinLocal(base: string, relativePosix: string): string {
-  const root = path.resolve(base);
-  const candidate = relativePosix
-    ? path.resolve(root, ...relativePosix.split('/'))
-    : root;
-  const relative = path.relative(root, candidate);
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error(`Remote path escapes the local sync root: ${relativePosix}`);
-  }
-  return candidate;
 }
 
 const baselineRetryBaseMs = 1_000;
@@ -266,18 +255,20 @@ export class RemoteSyncManager {
     task: RemoteSyncTask, remotePath: string, kind: Exclude<RemoteMutationKind, 'rename'>
   ): Promise<void> {
     const rel = path.posix.relative(task.remotePath, remotePath);
-    const localFull = joinLocal(task.localDir, rel);
+    const localFull = localPathForRemote(task.localDir, rel);
     try {
       if (kind === 'write') {
         const session = await this.getSession(task.mountName);
-        await this.downloadOne(session, remotePath, localFull);
+        await this.downloadOne(session, remotePath, task.localDir, localFull);
         this.log(`已同步到本地: ${remotePath} -> ${localFull}`);
       } else if (kind === 'mkdir') {
         await this.withDownload(localFull, async () => {
+          await assertLocalSyncPath(task.localDir, localFull);
           await fs.mkdir(localFull, { recursive: true });
           this.downloadEchoes.record(localFull, await fs.stat(localFull));
         });
       } else if (kind === 'delete') {
+        await assertLocalSyncPath(task.localDir, localFull);
         await fs.rm(localFull, { recursive: true, force: true });
         this.downloadEchoes.recordMissing(localFull);
         this.log(`已删除本地: ${localFull}`);
@@ -291,19 +282,23 @@ export class RemoteSyncManager {
     task: RemoteSyncTask, sourcePath: string, targetPath: string,
     sourceInside: boolean, targetInside: boolean
   ): Promise<void> {
-    const localSource = joinLocal(task.localDir, path.posix.relative(task.remotePath, sourcePath));
+    const localSource = localPathForRemote(
+      task.localDir, path.posix.relative(task.remotePath, sourcePath)
+    );
     try {
+      await assertLocalSyncPath(task.localDir, localSource);
       if (sourceInside && !targetInside) {
         await fs.rm(localSource, { recursive: true, force: true });
         this.downloadEchoes.recordMissing(localSource);
         return;
       }
-      const localTarget = joinLocal(
+      const localTarget = localPathForRemote(
         task.localDir, path.posix.relative(task.remotePath, targetPath)
       );
+      await assertLocalSyncPath(task.localDir, localTarget);
       if (!sourceInside && targetInside) {
         const session = await this.getSession(task.mountName);
-        await this.downloadTree(session, targetPath, localTarget);
+        await this.downloadTree(session, targetPath, task.localDir, localTarget);
         return;
       }
       await fs.mkdir(path.dirname(localTarget), { recursive: true });
@@ -319,7 +314,7 @@ export class RemoteSyncManager {
       } catch {
         // 本地源已被其它事件移走时，以远端目标为准恢复，而不是假报成功。
         const session = await this.getSession(task.mountName);
-        await this.downloadTree(session, targetPath, localTarget);
+        await this.downloadTree(session, targetPath, task.localDir, localTarget);
         await fs.rm(localSource, { recursive: true, force: true });
       }
       this.downloadEchoes.recordMissing(localSource);
@@ -359,7 +354,7 @@ export class RemoteSyncManager {
           transferredBytes: 0, totalBytes
         };
         await this.downloadTree(
-          session, task.remotePath, task.localDir, isFile, options, progressState
+          session, task.remotePath, task.localDir, task.localDir, isFile, options, progressState
         );
         task.resetLocalOnFirstSync = false;
         this.log(`首次同步完成: ${task.remotePath} -> ${task.localDir}（${lines.length} 项）`);
@@ -370,7 +365,8 @@ export class RemoteSyncManager {
         if (diff.changed) {
           // 先删（含类型互换的旧类型），再创建/更新，避免 mkdir/writeFile 撞类型。
           for (const rel of diff.remove) {
-            const localFull = joinLocal(task.localDir, rel);
+            const localFull = localPathForRemote(task.localDir, rel);
+            await assertLocalSyncPath(task.localDir, localFull);
             await fs.rm(localFull, { recursive: true, force: true });
             this.downloadEchoes.recordMissing(localFull);
           }
@@ -380,13 +376,14 @@ export class RemoteSyncManager {
             this.downloadEchoes.record(task.localDir, await fs.stat(task.localDir));
           }
           for (const [rel, line] of diff.create) {
-            const localFull = joinLocal(task.localDir, rel);
+            const localFull = localPathForRemote(task.localDir, rel);
+            await assertLocalSyncPath(task.localDir, localFull);
             if (line.startsWith('d:')) {
               await fs.mkdir(localFull, { recursive: true });
               this.downloadEchoes.record(localFull, await fs.stat(localFull));
             } else {
               await this.downloadOne(
-                session, path.posix.join(task.remotePath, rel), localFull
+                session, path.posix.join(task.remotePath, rel), task.localDir, localFull
               );
             }
           }
@@ -459,10 +456,11 @@ export class RemoteSyncManager {
 
   /** 下载单个远程文件到本地（流式落盘）；覆盖前检测下载窗口内的本地改动，避免覆盖用户编辑。 */
   private async downloadOne(
-    session: SftpSession, remotePath: string, localFull: string,
+    session: SftpSession, remotePath: string, localRoot: string, localFull: string,
     options: RemoteSyncStartOptions = {}, onDelta?: (delta: number) => void
   ): Promise<void> {
     await this.withDownload(localFull, async () => {
+      await assertLocalSyncPath(localRoot, localFull);
       if ((this.localDirtyPaths.get(localFull) ?? 0) > 0) {
         this.log(`跳过覆盖（本地修改正在等待上传）: ${localFull}`);
         return;
@@ -495,6 +493,7 @@ export class RemoteSyncManager {
         this.log(`跳过覆盖（下载期间本地被修改/删除）: ${localFull}`);
         return;
       }
+      await assertLocalSyncPath(localRoot, localFull);
       // 已验证下载期间本地未被改动：删除旧文件后原子替换（Windows rename 不覆盖）。
       await fs.rm(localFull, { recursive: true, force: true });
       await fs.rename(temporaryPath, localFull);
@@ -521,12 +520,14 @@ export class RemoteSyncManager {
   }
 
   private async downloadTree(
-    session: SftpSession, remotePath: string, localTarget: string, isFile?: boolean,
+    session: SftpSession, remotePath: string, localRoot: string,
+    localTarget: string, isFile?: boolean,
     options: RemoteSyncStartOptions = {},
     progressState?: {
       completedFiles: number; totalFiles: number; transferredBytes: number; totalBytes: number;
     }
   ): Promise<void> {
+    await assertLocalSyncPath(localRoot, localTarget);
     if (isFile) {
       options.onProgress?.({
         phase: 'downloading', currentFile: remotePath,
@@ -534,7 +535,7 @@ export class RemoteSyncManager {
           completedFiles: 0, totalFiles: 1, transferredBytes: 0, totalBytes: 0
         })
       });
-      await this.downloadOne(session, remotePath, localTarget, {
+      await this.downloadOne(session, remotePath, localRoot, localTarget, {
         ...options,
         onProgress: undefined
       }, (delta) => {
@@ -561,16 +562,18 @@ export class RemoteSyncManager {
       });
       const entries = await session.readDirectory(remotePath, options.signal);
       for (const entry of entries) {
+        if (entry.type === 'symbolic-link') continue;
         await this.downloadTree(
           session,
           path.posix.join(remotePath, entry.name),
+          localRoot,
           path.join(localTarget, entry.name),
           entry.type !== 'directory', options, progressState
         );
       }
       this.downloadEchoes.record(localTarget, await fs.stat(localTarget));
     } else {
-      await this.downloadOne(session, remotePath, localTarget);
+      await this.downloadOne(session, remotePath, localRoot, localTarget);
     }
   }
 
@@ -642,9 +645,15 @@ export class RemoteSyncManager {
     const active = this.activeDownloads.get(localPath);
     if (active) await active;
     const remoteFull = this.remoteTargetFor(task, localPath);
-    const stat = await fs.stat(localPath).catch(() => undefined);
+    await assertLocalSyncPath(task.localDir, localPath, true);
+    const stat = await fs.lstat(localPath).catch(() => undefined);
     if (this.downloadEchoes.matches(localPath, stat)) return;
     if (!stat) {
+      await this.performRemoteDelete(task, remoteFull);
+      return;
+    }
+    if (stat.isSymbolicLink()) {
+      this.log(`跳过本地符号链接并删除远端旧镜像: ${localPath}`);
       await this.performRemoteDelete(task, remoteFull);
       return;
     }
@@ -656,6 +665,7 @@ export class RemoteSyncManager {
       if (stat.isDirectory()) {
         await ensureRemoteDir(session, remoteFull);
       } else {
+        await assertLocalSyncPath(task.localDir, localPath);
         await ensureRemoteDir(session, path.posix.dirname(remoteFull));
         const remoteStat = await session.stat(remoteFull).catch(() => undefined);
         if (remoteStat?.type === 'directory') await deleteRemoteTree(session, remoteFull);

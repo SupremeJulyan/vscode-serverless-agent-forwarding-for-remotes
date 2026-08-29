@@ -25,6 +25,9 @@ export async function scanRemote(
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       assertSafeRemoteEntryName(entry.name);
+      // The sync protocol does not preserve links. Treating one as a regular
+      // file would make readFile follow it outside the selected remote root.
+      if (entry.type === 'symbolic-link') continue;
       const full = path.posix.join(dir, entry.name);
       const rel = path.posix.relative(remotePath, full);
       if (entry.type === 'directory') {
