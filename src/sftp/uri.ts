@@ -39,6 +39,19 @@ export function normalizeRemotePath(remotePath: string): string {
   return path.posix.normalize(remotePath);
 }
 
+/**
+ * Validate one filename returned by a remote directory listing before it is
+ * joined to either a remote or local parent. SFTP servers control this string;
+ * a malicious implementation may return separators even though POSIX
+ * filenames cannot contain '/'. Backslashes are rejected as well because they
+ * become separators when the same name is materialized on Windows.
+ */
+export function assertSafeRemoteEntryName(name: string): void {
+  if (!name || name === '.' || name === '..' || /[\0/\\]/.test(name)) {
+    throw new Error(`Unsafe remote directory entry name: ${JSON.stringify(name)}`);
+  }
+}
+
 function encodeRemotePath(remotePath: string): string {
   return normalizeRemotePath(remotePath)
     .split('/')

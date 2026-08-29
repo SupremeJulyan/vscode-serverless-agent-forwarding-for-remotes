@@ -4,6 +4,7 @@ import { Client } from 'ssh2';
 import {
   SftpDirectoryEntry, SftpFileStat, SftpFileType, SftpSession, SftpWriteOptions
 } from './session';
+import { assertSafeRemoteEntryName } from './uri';
 
 /**
  * Exec/SCP-backed session used when the server has no SFTP subsystem
@@ -468,14 +469,17 @@ export class ScpSession implements SftpSession {
       if (lsMode) {
         const parsed = parseLsLongEntry(line);
         if (!parsed || parsed.name === '.' || parsed.name === '..') continue;
+        assertSafeRemoteEntryName(parsed.name);
         entries.push(parsed);
         continue;
       }
       const parts = line.split('|');
       if (parts.length < 5) continue;
       const mtime = Math.floor(parseFloat(parts[4]) * 1000);
+      const name = parts[0];
+      assertSafeRemoteEntryName(name);
       entries.push({
-        name: parts[0],
+        name,
         type: typeFromFindLetter(parts[1]),
         size: Number(parts[2]),
         permissions: parseInt(parts[3], 8),

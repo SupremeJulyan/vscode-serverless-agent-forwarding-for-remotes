@@ -64,7 +64,15 @@ function taskKey(mountName: string, remotePath: string): string {
 }
 
 function joinLocal(base: string, relativePosix: string): string {
-  return relativePosix ? path.join(base, ...relativePosix.split('/')) : base;
+  const root = path.resolve(base);
+  const candidate = relativePosix
+    ? path.resolve(root, ...relativePosix.split('/'))
+    : root;
+  const relative = path.relative(root, candidate);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Remote path escapes the local sync root: ${relativePosix}`);
+  }
+  return candidate;
 }
 
 const baselineRetryBaseMs = 1_000;

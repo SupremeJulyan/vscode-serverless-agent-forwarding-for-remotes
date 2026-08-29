@@ -11,6 +11,7 @@ import { ScpSession } from './scp-session';
 import {
   SftpDirectoryEntry, SftpFileStat, SftpFileType, SftpSession, SftpWriteOptions
 } from './session';
+import { assertSafeRemoteEntryName } from './uri';
 
 const execFileAsync = promisify(execFile);
 
@@ -130,10 +131,10 @@ export class Ssh2SftpSession implements SftpSession {
       signal,
       sftpControlTimeoutMs
     );
-    return entries.map((entry) => ({
-      name: entry.filename,
-      ...fileStat(entry.attrs)
-    }));
+    return entries.map((entry) => {
+      assertSafeRemoteEntryName(entry.filename);
+      return { name: entry.filename, ...fileStat(entry.attrs) };
+    });
   }
 
   async readDirectoryResolved(

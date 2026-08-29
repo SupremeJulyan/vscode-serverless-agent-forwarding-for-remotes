@@ -57,6 +57,16 @@ test('scanRemote fingerprints a file root and a directory tree', async () => {
   ]);
 });
 
+test('scanRemote rejects a malicious server directory entry with traversal separators', async () => {
+  const session = {
+    stat: async () => ({ type: 'directory', size: 0, mtime: 1, ctime: 1 }),
+    readDirectory: async () => [{
+      name: '../../escape.txt', type: 'file', size: 1, mtime: 1, ctime: 1
+    }]
+  } as unknown as SftpSession;
+  await assert.rejects(() => scanRemote(session, '/srv/root'), /Unsafe remote directory entry/);
+});
+
 test('diffFingerprints reports adds, removes and content changes', () => {
   const previous = linesToMap([
     line('a.txt', 'f', 5, 2),

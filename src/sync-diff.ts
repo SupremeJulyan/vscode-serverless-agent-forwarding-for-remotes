@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { SftpSession } from './sftp/session';
+import { assertSafeRemoteEntryName } from './sftp/uri';
 
 /**
  * 远程同步的指纹引擎（纯函数，无 vscode 依赖，可单测）。
@@ -23,6 +24,7 @@ export async function scanRemote(
     const entries = await session.readDirectory(dir, signal);
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
+      assertSafeRemoteEntryName(entry.name);
       const full = path.posix.join(dir, entry.name);
       const rel = path.posix.relative(remotePath, full);
       if (entry.type === 'directory') {
