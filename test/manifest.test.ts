@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { defaultHighRiskCommandPatterns } from '../src/high-risk-commands';
 
 interface ExtensionManifest {
   version: string;
@@ -187,6 +188,16 @@ test('handles high-risk Agent commands without per-command prompts', async () =>
   assert.equal(extensionSource.includes('SAFS：确认高风险远程 Shell 操作'), false);
   assert.equal(extensionSource.includes('允许本次执行'), false);
   assert.ok(extensionSource.includes("configuredAction === 'allow' ? 'allow' : 'deny'"));
+});
+
+test('manifest high-risk defaults are generated from the runtime rule set', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  ) as ExtensionManifest;
+  assert.deepEqual(
+    manifest.contributes?.configuration?.properties?.['safs.highRiskCommandPatterns']?.default,
+    defaultHighRiskCommandPatterns
+  );
 });
 
 test('declares the visual download command and the renamed sync command', async () => {
