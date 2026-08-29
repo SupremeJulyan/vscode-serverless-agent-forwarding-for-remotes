@@ -187,9 +187,13 @@ test('handles high-risk Agent commands without per-command prompts', async () =>
   assert.equal(property?.default, 'deny');
 
   const extensionSource = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
+  const policySource = await readFile(
+    new URL('../src/mcp-command-policy.ts', import.meta.url), 'utf8'
+  );
   assert.equal(extensionSource.includes('SAFS：确认高风险远程 Shell 操作'), false);
   assert.equal(extensionSource.includes('允许本次执行'), false);
-  assert.ok(extensionSource.includes("configuredAction === 'allow' ? 'allow' : 'deny'"));
+  assert.ok(policySource.includes("configuredAction === 'allow' ? 'allow' : 'deny'"));
+  assert.ok(extensionSource.includes('evaluateMcpCommandPolicy'));
 });
 
 test('manifest high-risk defaults are generated from the runtime rule set', async () => {

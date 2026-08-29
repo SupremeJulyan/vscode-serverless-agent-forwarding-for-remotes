@@ -66,8 +66,8 @@ import { appendMcpCommandLog, appendMcpToolLog } from './mcp-log';
 import { redactSensitiveText } from './redact';
 import { shellQuote } from './shell-quote';
 import {
-  defaultHighRiskCommandPatterns, matchHighRiskCommand
-} from './high-risk-commands';
+  evaluateMcpCommandPolicy, readMcpCommandPolicySettings
+} from './mcp-command-policy';
 import {
   cleanTerminalDiagnostic, decodeTerminalDiagnostic, terminalDiagnosticPlan
 } from './terminal-diagnostics';
@@ -348,20 +348,6 @@ function planDisplayName(plan: CommandPlan): string {
 
 function redactAgentMcpText(value: string): string {
   return redactSensitiveText(value);
-}
-
-function highRiskSettings(): {
-  patterns: string[];
-  action: 'deny' | 'allow';
-} {
-  const configuredAction = settings().get<string>('highRiskCommandAction', 'deny');
-  return {
-    patterns: settings().get<string[]>(
-      'highRiskCommandPatterns', defaultHighRiskCommandPatterns
-    ),
-    // 旧版的 confirm 配置不再弹窗，按安全默认值 deny 处理。
-    action: configuredAction === 'allow' ? 'allow' : 'deny'
-  };
 }
 
 async function executeAgentMcpCommand(
@@ -1969,39 +1955,30 @@ async function executeRemoteCommand(
       `[MCP 命令日志] 写入失败：${error instanceof Error ? error.message : String(error)}`
     );
   };
-  if (source === 'mcp') {
-    const { patterns, action } = highRiskSettings();
-    const matched = matchHighRiskCommand(input.command, patterns);
-    if (matched) {
-      void appendMcpCommandLog({
-        source: 'high_risk',
-        agentName: input.agentName,
-        agentPlatform: input.agentPlatform,
-        mountName: mount.name,
-        remoteCwd,
-        command: input.command
-      }).catch(logFailure);
-      if (action !== 'allow') {
-        bridgeOutput?.appendLine(
-          `[高危指令拦截] 拒绝执行：${redactSensitiveText(input.command)}（规则：${matched}）`
-        );
-        throw new Error(
-          `高危指令已被 SAFS 拦截（规则：${matched}）：${redactSensitiveText(input.command)}`
-        );
-      }
-      bridgeOutput?.appendLine(
-        `[高危指令放行] 已按配置执行：${redactSensitiveText(input.command)}（规则：${matched}）`
-      );
-    }
-  }
+  const policy = evaluateMcpCommandPolicy(
+    input.command, source, readMcpCommandPolicySettings(settings())
+  );
   appendMcpCommandLog({
-    source,
+    source: policy.auditSource,
     agentName: input.agentName,
     agentPlatform: input.agentPlatform,
     mountName: mount.name,
     remoteCwd,
     command: input.command
   }).catch(logFailure);
+  if (!policy.allowed) {
+    bridgeOutput?.appendLine(
+      `[高危指令拦截] 拒绝执行：${policy.redactedCommand}（规则：${policy.matched}）`
+    );
+    throw new Error(
+      `高危指令已被 SAFS 拦截（规则：${policy.matched}）：${policy.redactedCommand}`
+    );
+  }
+  if (policy.matched) {
+    bridgeOutput?.appendLine(
+      `[高危指令放行] 已按配置执行：${policy.redactedCommand}（规则：${policy.matched}）`
+    );
+  }
   const resolved = resolveMount(await readConfig(), mount);
   let credentials: AskpassCredentials | undefined;
   try {
