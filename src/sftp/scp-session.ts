@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { Client } from 'ssh2';
+import { shellQuote } from '../shell-quote';
 import {
   SftpDirectoryEntry, SftpFileStat, SftpFileType, SftpSession, SftpWriteOptions
 } from './session';
@@ -20,10 +21,6 @@ interface ExecResult {
   code: number;
   stdout: Buffer;
   stderr: Buffer;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function abortError(): Error {

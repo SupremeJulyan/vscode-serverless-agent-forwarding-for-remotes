@@ -64,6 +64,7 @@ import {
 } from './dependency-installer';
 import { appendMcpCommandLog, appendMcpToolLog } from './mcp-log';
 import { redactSensitiveText } from './redact';
+import { shellQuote } from './shell-quote';
 import {
   defaultHighRiskCommandPatterns, matchHighRiskCommand
 } from './high-risk-commands';
@@ -1819,10 +1820,6 @@ async function addSshConfig(context: vscode.ExtensionContext): Promise<void> {
 }
 
 // ---- MCP / Remote Ops ----
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
-}
 
 async function mountAndFolder(mountName: string): Promise<{
   mount: MountConfig;

@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import { HostConfig } from './config';
+import { shellQuote } from './shell-quote';
 import { kexAlgorithmsArgs, legacySshAlgorithmArgs } from './ssh-algorithms';
 import { sshBridgePath } from './wsl-bridge';
 
@@ -79,10 +80,6 @@ export interface PlatformAdapter {
   readonly kind: PlatformKind;
   terminal(host: HostConfig, remoteCwd?: string, options?: ConnectionOptions): CommandPlan;
   exec(host: HostConfig, remoteCwd: string, command: string, options?: ConnectionOptions): CommandPlan;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 function connectionReuseArgs(options?: ConnectionOptions): string[] {

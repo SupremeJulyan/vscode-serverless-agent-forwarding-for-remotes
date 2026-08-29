@@ -4,12 +4,9 @@ import * as vscode from 'vscode';
 import { expandHome, HostConfig } from './config';
 import { hostVerifierFor } from './host-key';
 import { keyboardInteractivePasswordReplies } from './authentication';
+import { shellQuote } from './shell-quote';
 import { defaultSshClientIdent, serverHostKeyAlgorithms } from './ssh-algorithms';
 import { ssh2RemoteCommand } from './ssh-command';
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
 
 async function connectConfig(
   host: HostConfig, password?: string
