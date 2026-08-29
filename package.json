@@ -636,7 +636,7 @@
     "compile": "npm run check-types && node esbuild.js",
     "package": "npm run check-types && node esbuild.js --production",
     "vscode:prepublish": "npm run package",
-    "test": "npm run check-types && tsx --test test/*.test.ts",
+    "test": "npm run check-types && tsx --test --require ./test/vscode-register.cjs test/*.test.ts",
     "vsix": "npx @vscode/vsce package --no-dependencies --baseContentUrl https://github.com/SupremeJulyan/vscode-serverless-agent-forwarding-for-remotes/blob/main --baseImagesUrl https://raw.githubusercontent.com/SupremeJulyan/vscode-serverless-agent-forwarding-for-remotes/main"
   },
   "devDependencies": {
