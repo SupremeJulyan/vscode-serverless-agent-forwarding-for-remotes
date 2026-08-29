@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, chmod, readFile } from 'node:fs/promises';
+import { appendFile, chmod, readFile, writeFile } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import type { HostVerifier } from 'ssh2';
 import { HostConfig } from './config';
@@ -19,8 +19,9 @@ import { HostConfig } from './config';
 
 export type HostKeyChangedAction = 'prompt' | 'reject' | 'accept';
 
-/** 用户对主机密钥弹窗的决策：接受 / 拒绝。 */
-export type HostKeyDecision = 'accept' | 'refuse';
+/** 用户对主机密钥弹窗的决策：追加、替换或拒绝。 */
+export type HostKeyDecision = 'accept' | 'replace' | 'refuse';
+export type HostKeyTrustResult = 'trusted' | HostKeyDecision;
 
 let knownHostsFilePath = '';
 
@@ -56,7 +57,7 @@ export function hostEntryName(host: HostConfig): string {
 export function hostEntryNames(host: HostConfig): string[] {
   const port = host.port ?? 22;
   const bracketed = `[${host.ip}]`;
-  return [host.ip, bracketed, ...(port !== 22 ? [`${bracketed}:${port}`] : [])];
+  return [host.ip, bracketed, `${bracketed}:${port}`];
 }
 
 /** 从 OpenSSH 密钥 blob 提取类型字符串（blob 前 4 字节为类型名长度）。 */
@@ -105,6 +106,37 @@ export async function appendKnownHostsFile(
 }
 
 /**
+ * 移除该主机已有的普通 known_hosts 条目，并写入当前探测到的密钥。
+ * 注释、空行及其他主机条目保持不变。
+ */
+export async function replaceKnownHostsForHost(
+  filePath: string, host: HostConfig, keys: ProbedHostKey[],
+  log?: (message: string) => void
+): Promise<void> {
+  const names = new Set(hostEntryNames(host));
+  let existing = '';
+  try {
+    existing = await readFile(filePath, 'utf8');
+  } catch {
+    // 文件不存在时等价于首次写入。
+  }
+  const kept = existing.split(/\r?\n/).filter((line) => {
+    const match = /^(\S+)\s+/.exec(line.trim());
+    return !match || !names.has(match[1]);
+  });
+  while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
+
+  const entry = hostEntryName(host);
+  const replacements = [...new Set(
+    keys.map((key) => `${entry} ${key.type} ${key.blob}`)
+  )];
+  const content = [...kept, ...replacements].join('\n') + '\n';
+  await writeFile(filePath, content, { mode: 0o600 });
+  await chmod(filePath, 0o600).catch(() => undefined);
+  log?.(`已替换主机密钥记录（${replacements.length} 条）：${filePath}`);
+}
+
+/**
  * 读取文件中某主机的已确认密钥指纹集合（按 host 字段过滤）。
  */
 export async function readTrustedFingerprints(
@@ -148,25 +180,33 @@ export async function recordTrustedHostKey(
   await appendKnownHostsFile(knownHostsFilePath, keys, log);
 }
 
+/** 用当前密钥替换扩展 known_hosts 中该主机的所有旧条目。 */
+export async function replaceTrustedHostKeys(
+  host: HostConfig, keys: ProbedHostKey[], log?: (message: string) => void
+): Promise<void> {
+  if (!knownHostsFilePath) return;
+  await replaceKnownHostsForHost(knownHostsFilePath, host, keys, log);
+}
+
 /** 首次连接弹窗文案（目标主机 IP 单独成行突出，便于用户确认连的是否正确的机器）。 */
 export function firstConnectionPromptMessage(
-  host: HostConfig, fingerprint: string
+  host: HostConfig, fingerprints: string[]
 ): string {
   const port = host.port ?? 22;
   const login = host.user ? `（登录用户 ${host.user}）` : '';
   return `首次连接主机"${host.name}"。\n\n` +
     `⚠️ 请确认目标主机：${host.ip}:${port} ${login}\n` +
-    `SSH 主机密钥指纹：${fingerprint}\n\n` +
-    `是否信任此密钥并继续连接？`;
+    `SSH 主机密钥指纹：\n${fingerprints.join('\n')}\n\n` +
+    `是否信任这些密钥并继续连接？`;
 }
 
 /** 首次连接弹窗（每主机首次确认）。 */
 export async function promptFirstConnection(
-  host: HostConfig, fingerprint: string
+  host: HostConfig, fingerprints: string[]
 ): Promise<HostKeyDecision> {
   // 只保留一个确认按钮：modal 弹窗自带的 X / Esc 即隐式取消（返回 undefined → 拒绝）。
   const choice = await vscode.window.showWarningMessage(
-    firstConnectionPromptMessage(host, fingerprint),
+    firstConnectionPromptMessage(host, fingerprints),
     { modal: true }, '信任并连接'
   );
   return firstConnectionDecision(choice);
@@ -192,28 +232,30 @@ export function changedKeyPromptMessage(
     `服务器身份自上次连接后已改变：这可能是服务器主机密钥已更换（重新安装或升级），` +
     `或者你实际上连接到了一台伪装成该服务器的计算机。\n\n` +
     `旧密钥：${shownOld.join('\n')}\n新密钥：${newFingerprints.join('\n')}\n\n` +
-    `是否接受新密钥并继续连接？`;
+    `请选择替换旧密钥，或仅在确认该地址对应多个合法后端时将其追加。`;
 }
 
-/** 密钥变化弹窗（只保留一个接受按钮，X / Esc 即拒绝）。 */
+/** 密钥变化弹窗：明确选择替换或追加，X / Esc 即拒绝。 */
 export async function promptHostKeyChanged(
   host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
 ): Promise<HostKeyDecision> {
   const choice = await vscode.window.showWarningMessage(
     changedKeyPromptMessage(host, oldFingerprints, newFingerprints),
-    { modal: true }, '接受新密钥并继续连接'
+    { modal: true }, '替换旧密钥并继续连接', '作为额外后端加入并继续连接'
   );
   return changedKeyDecision(choice);
 }
 
 /** 弹窗选项 → 决策：X / Esc 关闭（undefined）视为拒绝，绝不默认接受。 */
 export function changedKeyDecision(choice: string | undefined): HostKeyDecision {
-  return choice === '接受新密钥并继续连接' ? 'accept' : 'refuse';
+  if (choice === '替换旧密钥并继续连接') return 'replace';
+  if (choice === '作为额外后端加入并继续连接') return 'accept';
+  return 'refuse';
 }
 
 /** 弹窗实现（可注入以便测试）。 */
 export interface HostKeyPrompts {
-  firstConnection(host: HostConfig, fingerprint: string): Promise<HostKeyDecision>;
+  firstConnection(host: HostConfig, fingerprints: string[]): Promise<HostKeyDecision>;
   changed(
     host: HostConfig, oldFingerprints: string[], newFingerprints: string[]
   ): Promise<HostKeyDecision>;
@@ -235,26 +277,26 @@ export { defaultPrompts };
  * 3. 文件非空但出现新密钥（后端轮换/重装）→ 弹窗确认。
  * 确认后的写入由调用方完成（hostVerifierFor / verifySystemSshHostKey）。
  *
- * @returns 是否放行连接。
+ * @returns 已信任、追加、替换或拒绝；调用方据此更新信任库。
  */
 export async function verifyHostKeyWithPrompt(
   host: HostConfig, fingerprints: string[],
   log?: (message: string) => void, prompts: HostKeyPrompts = defaultPrompts
-): Promise<boolean> {
+): Promise<HostKeyTrustResult> {
   const trusted = await trustedFingerprintsFor(host);
   if (fingerprints.some((fingerprint) => trusted.includes(fingerprint))) {
-    return true;
+    return 'trusted';
   }
   const decision = trusted.length === 0
-    ? prompts.firstConnection(host, fingerprints[0])
+    ? prompts.firstConnection(host, fingerprints)
     : prompts.changed(host, trusted, fingerprints);
   const choice = await decision;
   if (choice === 'refuse') {
     log?.(`用户拒绝信任主机"${host.name}"的新密钥，已中止连接`);
-    return false;
+    return 'refuse';
   }
   log?.(`已确认主机"${host.name}"的密钥：${fingerprints.join(', ')}`);
-  return true;
+  return choice;
 }
 
 /**
@@ -307,10 +349,17 @@ export function hostVerifierFor(
         return;
       }
       // prompt：文件比对 + 弹窗确认，确认后写入文件。
-      const allowed = await verifyHostKeyWithPrompt(host, [fingerprint], log);
-      if (allowed) {
+      const decision = await verifyHostKeyWithPrompt(host, [fingerprint], log);
+      const allowed = decision !== 'refuse';
+      if (decision === 'accept') {
         try {
           await recordTrustedHostKey([entry(key)]);
+        } catch (error) {
+          warnStoreFailure(error);
+        }
+      } else if (decision === 'replace') {
+        try {
+          await replaceTrustedHostKeys(host, [entry(key)]);
         } catch (error) {
           warnStoreFailure(error);
         }

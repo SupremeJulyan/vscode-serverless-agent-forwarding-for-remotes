@@ -4,7 +4,7 @@ import { HostConfig } from './config';
 import {
   appendKnownHostsFile, defaultPrompts, getKnownHostsFilePath,
   HostKeyChangedAction, HostKeyPrompts, ProbedHostKey,
-  sha256Fingerprint, verifyHostKeyWithPrompt
+  replaceKnownHostsForHost, sha256Fingerprint, verifyHostKeyWithPrompt
 } from './host-key';
 import { PlatformKind } from './platform';
 import { resolveExecutable } from './process';
@@ -220,8 +220,8 @@ export async function verifySystemSshHostKey(
       reason: `无法验证主机"${host.name}"的 SSH 主机密钥（${detail}），已中止连接`
     };
   }
-  const allowed = await verifyHostKeyWithPrompt(host, result.fingerprints, log, prompts);
-  if (!allowed) {
+  const decision = await verifyHostKeyWithPrompt(host, result.fingerprints, log, prompts);
+  if (decision === 'refuse') {
     return {
       ok: false,
       reason: `已拒绝接受主机"${host.name}"的新 SSH 主机密钥（指纹：${result.fingerprints.join(', ')}）`
@@ -230,7 +230,11 @@ export async function verifySystemSshHostKey(
   const knownHostsFile = getKnownHostsFilePath();
   if (knownHostsFile && result.keys && result.keys.length > 0) {
     try {
-      await appendKnownHostsFile(knownHostsFile, result.keys, log);
+      if (decision === 'replace') {
+        await replaceKnownHostsForHost(knownHostsFile, host, result.keys, log);
+      } else if (decision === 'accept') {
+        await appendKnownHostsFile(knownHostsFile, result.keys, log);
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       log?.(`写入主机密钥记录失败（${host.name}）：${detail}`);

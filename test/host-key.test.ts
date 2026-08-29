@@ -9,7 +9,8 @@ import {
   appendKnownHostsFile, changedKeyDecision, changedKeyPromptMessage,
   firstConnectionDecision, firstConnectionPromptMessage,
   hostEntryName, hostEntryNames, keyTypeFromBlob, readTrustedFingerprints,
-  setKnownHostsFilePath, sha256Fingerprint, verifyHostKeyWithPrompt
+  replaceKnownHostsForHost, setKnownHostsFilePath, sha256Fingerprint,
+  verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
   parseKeyscanLines, parseKeyscanOutput, verifySystemSshHostKey,
@@ -36,11 +37,12 @@ const blobB = 'QUFBQUNOemFoQzFsWkRJMU5URTVBQUFBSWZha2VC';
 const blobC = 'QUFBQUNOemFoQzFsWkRJMU5URTVBQUFBSWZha2VD';
 
 test('first-connection prompt highlights the target host IP, port and user', () => {
-  const message = firstConnectionPromptMessage(hostAt(2222), 'SHA256:abc');
+  const message = firstConnectionPromptMessage(hostAt(2222), ['SHA256:abc', 'SHA256:def']);
   assert.ok(message.includes('⚠️ 请确认目标主机：10.0.0.2:2222'));
   assert.ok(message.includes('登录用户 alice'));
   assert.ok(message.includes('SHA256:abc'));
-  assert.ok(message.includes('是否信任此密钥并继续连接？'));
+  assert.ok(message.includes('SHA256:def'));
+  assert.ok(message.includes('是否信任这些密钥并继续连接？'));
 });
 
 test('changed-key prompt shows old/new fingerprints and the highlighted host IP', () => {
@@ -51,7 +53,7 @@ test('changed-key prompt shows old/new fingerprints and the highlighted host IP'
   assert.ok(message.includes('旧密钥：SHA256:old1'));
   assert.ok(message.includes('SHA256:old2'));
   assert.ok(message.includes('新密钥：SHA256:new1'));
-  assert.ok(message.includes('是否接受新密钥并继续连接？'));
+  assert.ok(message.includes('请选择替换旧密钥'));
 });
 
 test('changed-key prompt collapses long trusted key lists', () => {
@@ -63,7 +65,8 @@ test('changed-key prompt collapses long trusted key lists', () => {
 test('dialog decisions: closing with X/Esc (undefined) refuses, never accepts', () => {
   assert.equal(firstConnectionDecision('信任并连接'), 'accept');
   assert.equal(firstConnectionDecision(undefined), 'refuse');
-  assert.equal(changedKeyDecision('接受新密钥并继续连接'), 'accept');
+  assert.equal(changedKeyDecision('替换旧密钥并继续连接'), 'replace');
+  assert.equal(changedKeyDecision('作为额外后端加入并继续连接'), 'accept');
   assert.equal(changedKeyDecision('拒绝新密钥并中止连接'), 'refuse');
   // 安全回归：X / Esc 关闭弹窗绝不能默认接受新密钥。
   assert.equal(changedKeyDecision(undefined), 'refuse');
@@ -120,6 +123,30 @@ test('readTrustedFingerprints filters entries by host', async () => {
   );
 });
 
+test('replaceKnownHostsForHost removes stale keys but preserves other hosts', async () => {
+  const { file } = tempKnownHosts();
+  const hostA = hostAt(2222);
+  const hostB = hostAt(2223);
+  await writeFile(file, [
+    '# retained comment',
+    lineFor(hostA, 'ssh-ed25519', blobA),
+    lineFor(hostA, 'ssh-rsa', blobB),
+    lineFor(hostB, 'ssh-ed25519', blobC)
+  ].join('\n') + '\n');
+
+  await replaceKnownHostsForHost(file, hostA, [
+    { host: 'ignored-scan-name', type: 'ssh-ed25519', blob: blobC }
+  ]);
+
+  const content = await readFile(file, 'utf8');
+  assert.ok(content.includes('# retained comment'));
+  assert.ok(content.includes(lineFor(hostB, 'ssh-ed25519', blobC)));
+  assert.ok(content.includes(lineFor(hostA, 'ssh-ed25519', blobC)));
+  assert.ok(!content.includes(lineFor(hostA, 'ssh-ed25519', blobA)));
+  assert.ok(!content.includes(lineFor(hostA, 'ssh-rsa', blobB)));
+  assert.equal((statSync(file).mode & 0o777), 0o600);
+});
+
 test('verifyHostKeyWithPrompt passes when the fingerprint is already in the file', async () => {
   const { file } = tempKnownHosts();
   setKnownHostsFilePath(file);
@@ -131,7 +158,7 @@ test('verifyHostKeyWithPrompt passes when the fingerprint is already in the file
   };
   const fps = sha256Fingerprint(Buffer.from(blobA, 'base64'));
   assert.equal(
-    await verifyHostKeyWithPrompt(host, [fps], undefined, prompts), true
+    await verifyHostKeyWithPrompt(host, [fps], undefined, prompts), 'trusted'
   );
 });
 
@@ -145,7 +172,7 @@ test('verifyHostKeyWithPrompt first connection prompts once and allows', async (
     changed: async () => { throw new Error('must not prompt changed'); }
   };
   const fps = sha256Fingerprint(Buffer.from(blobA, 'base64'));
-  assert.equal(await verifyHostKeyWithPrompt(host, [fps], undefined, injected), true);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fps], undefined, injected), 'accept');
   assert.equal(prompts, 1);
 });
 
@@ -158,7 +185,7 @@ test('verifyHostKeyWithPrompt first connection: refuse blocks', async () => {
     changed: async () => { throw new Error('must not prompt changed'); }
   };
   const fps = sha256Fingerprint(Buffer.from(blobA, 'base64'));
-  assert.equal(await verifyHostKeyWithPrompt(host, [fps], undefined, injected), false);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fps], undefined, injected), 'refuse');
 });
 
 test('every new backend key prompts once and is then remembered', async () => {
@@ -173,20 +200,20 @@ test('every new backend key prompts once and is then remembered', async () => {
   };
   // 首次连接：首次弹窗（确认后由调用方写文件——这里模拟写入）。
   const fpsA = sha256Fingerprint(Buffer.from(blobA, 'base64'));
-  assert.equal(await verifyHostKeyWithPrompt(host, [fpsA], undefined, injected), true);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fpsA], undefined, injected), 'accept');
   await appendKnownHostsFile(file, [{ host: hostEntryName(host), type: 'ssh-ed25519', blob: blobA }]);
   // 新后端：变化弹窗（每次新密钥都确认）。
   const fpsB = sha256Fingerprint(Buffer.from(blobB, 'base64'));
-  assert.equal(await verifyHostKeyWithPrompt(host, [fpsB], undefined, injected), true);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fpsB], undefined, injected), 'accept');
   await appendKnownHostsFile(file, [{ host: hostEntryName(host), type: 'ssh-ed25519', blob: blobB }]);
   assert.equal(firstPrompts, 1);
   assert.equal(changedPrompts, 1);
   // 已确认过的后端再次出现：文件命中，不弹窗。
-  assert.equal(await verifyHostKeyWithPrompt(host, [fpsA], undefined, injected), true);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fpsA], undefined, injected), 'trusted');
   assert.equal(changedPrompts, 1);
   // 另一个新后端：再次弹窗。
   const fpsC = sha256Fingerprint(Buffer.from(blobC, 'base64'));
-  assert.equal(await verifyHostKeyWithPrompt(host, [fpsC], undefined, injected), true);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fpsC], undefined, injected), 'accept');
   assert.equal(changedPrompts, 2);
 });
 
@@ -273,6 +300,30 @@ test('verifySystemSshHostKey first connection: trust stores the key and allows',
   assert.deepEqual(result, { ok: true });
   const content = await readFile(file, 'utf8');
   assert.ok(content.includes(lineFor(host, 'ssh-ed25519', blobA)));
+});
+
+test('verifySystemSshHostKey replaces stale keys when the user chooses replacement', async () => {
+  const { file } = tempKnownHosts();
+  const host = hostAt(3010);
+  await writeFile(file, lineFor(host, 'ssh-ed25519', blobA) + '\n');
+  const prompts = {
+    firstConnection: async () => { throw new Error('must prompt changed'); },
+    changed: async () => 'replace' as const
+  };
+  const probe = async (): Promise<HostKeyProbeResult> => ({
+    probed: true,
+    fingerprints: [sha256Fingerprint(Buffer.from(blobB, 'base64'))],
+    keys: [{ host: hostEntryName(host), type: 'ssh-ed25519', blob: blobB }]
+  });
+  setKnownHostsFilePath(file);
+
+  assert.deepEqual(
+    await verifySystemSshHostKey('prompt', host, 'linux', undefined, probe, prompts),
+    { ok: true }
+  );
+  const content = await readFile(file, 'utf8');
+  assert.ok(content.includes(lineFor(host, 'ssh-ed25519', blobB)));
+  assert.ok(!content.includes(lineFor(host, 'ssh-ed25519', blobA)));
 });
 
 test('verifySystemSshHostKey does not write the file when the key is refused', async () => {
