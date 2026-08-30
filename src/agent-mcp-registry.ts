@@ -511,6 +511,16 @@ export function agentSupportsMcpFor(
 }
 
 /**
+ * 文件式 handler 在卸载时可不依赖 Agent CLI，以便 Agent 已卸载后仍能清理
+ * SAFS 残留配置；启用时绝不能用该回退冒充“已安装”。
+ */
+export function handlerFallbackCommand(
+  def: AgentDefinition, shouldRegister: boolean
+): string | undefined {
+  return !shouldRegister && def.mcp.handler ? def.cliName : undefined;
+}
+
+/**
  * 执行一次 MCP 注册操作：优先使用内置 handler，否则回退到 CLI 命令。
  * 返回与 executeCaptured 一致的形状，调用方只关心 exitCode/stdout/stderr。
  */

@@ -29,8 +29,8 @@ import { AgentMcpServer } from './agent-mcp';import {
 import { AgentWorkspacePublisher, discoverAgentWorkspaces } from './agent-discovery';
 import {
   AgentDefinition, AgentMcpCliRunner, agentSupportsMcpFor,
-  defaultForwardingAgents, resolveAgentDefinitions, resolveUnloadAgentNames,
-  runAgentMcpOperation
+  defaultForwardingAgents, handlerFallbackCommand, resolveAgentDefinitions,
+  resolveUnloadAgentNames, runAgentMcpOperation
 } from './agent-mcp-registry';
 import {
   AgentPlatformContext, resolveAgentPlatform, wslBashInvocation, wslBundledCli, wslCommandExists
@@ -2692,12 +2692,12 @@ function startAgentWorkspacePublishing(context: vscode.ExtensionContext): void {
 // genericAgentDefinition、resolveAgentDefinitions、agentSupportsMcpFor、runAgentMcpOperation）。
 
 async function detectAgentCommand(
-  def: AgentDefinition, platform: AgentPlatformContext
+  def: AgentDefinition, platform: AgentPlatformContext, shouldRegister: boolean
 ): Promise<string | undefined> {
-  // 纯 handler 的 Agent（如 pi、dsh）不需要 CLI：MCP 注册由 handler 直接写
-  // 配置文件完成（~/.pi/agent/mcp.json、$DSH_HOME/cordis.patch.yml），
-  // 跳过 PATH 与扩展内置 CLI 检测。
-  if (def.mcp.handler) return def.cliName;
+  // Pi / DSH 的 handler 虽然直接写配置文件，启用时仍必须检测到 Agent CLI，
+  // 否则残留 home 目录会被误报为已安装。卸载时允许无 CLI 清理残留配置。
+  const handlerFallback = handlerFallbackCommand(def, shouldRegister);
+  if (handlerFallback) return handlerFallback;
   if (platform.wsl) {
     // Agent 在 WSL 中：CLI 从 WSL 的 PATH 解析；PATH 没有时再扫描 WSL 的
     // VS Code Server 扩展内置 CLI（Windows 端 getExtension 看不到 WSL 里
@@ -2803,7 +2803,7 @@ async function configureDetectedAgents(
     const enabled = forwardingAgents.some(
       (name) => name === def.cliName || def.legacyIds?.includes(name)
     );
-    const command = await detectAgentCommand(def, agentPlatform);
+    const command = await detectAgentCommand(def, agentPlatform, shouldRegister);
     if (!command) {
       bridgeOutput?.appendLine(
         `[Agent MCP] Agent 检测：${def.displayName} 未找到 CLI${

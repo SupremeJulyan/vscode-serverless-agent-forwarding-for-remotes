@@ -6,8 +6,9 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import {
   AgentDefinition, AgentMcpCliRunner, builtinAgentDefinitions,
   agentSupportsMcp, agentSupportsMcpFor, dshAgentMcpHandler,
-  dshHomeDirectory, dshPatchFilePath, findDshEntryBlock, piAgentMcpHandler,
-  piMcpExtensionInstalled, readPiMcpConfig, resolveAgentDefinitions,
+  dshHomeDirectory, dshPatchFilePath, findDshEntryBlock,
+  handlerFallbackCommand, piAgentMcpHandler, piMcpExtensionInstalled,
+  readPiMcpConfig, resolveAgentDefinitions,
   resolveUnloadAgentNames, runAgentMcpOperation, upsertDshEntry
 } from '../src/agent-mcp-registry.js';
 import type { CapturedProcessResult } from '../src/process.js';
@@ -30,6 +31,19 @@ test('builtin definitions cover codex, claude, pi and dsh', () => {
   assert.equal(pi.mcp.handler!.supportsMcp, true);
   assert.ok(dsh.mcp.handler);
   assert.equal(dsh.mcp.handler!.supportsMcp, true);
+});
+
+test('file handlers cannot make an uninstalled Agent look installed', () => {
+  const pi = builtinAgentDefinitions.find((def) => def.cliName === 'pi')!;
+  const dsh = builtinAgentDefinitions.find((def) => def.cliName === 'dsh')!;
+  const codex = builtinAgentDefinitions.find((def) => def.cliName === 'codex')!;
+
+  assert.equal(handlerFallbackCommand(pi, true), undefined);
+  assert.equal(handlerFallbackCommand(dsh, true), undefined);
+  // 卸载路径仍可在 CLI 已被删除后清理 SAFS 写入的配置。
+  assert.equal(handlerFallbackCommand(pi, false), 'pi');
+  assert.equal(handlerFallbackCommand(dsh, false), 'dsh');
+  assert.equal(handlerFallbackCommand(codex, false), undefined);
 });
 
 test('claude add uses its own arg style, codex uses codex style', () => {
