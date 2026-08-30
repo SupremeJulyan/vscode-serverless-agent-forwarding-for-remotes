@@ -8,6 +8,16 @@ export interface RemoteTerminalPathMatch {
   column?: number;
 }
 
+export interface RemotePathSearchEntry {
+  name: string;
+  type: string;
+}
+
+export interface RemotePathSearchResult {
+  matches: string[];
+  truncated: boolean;
+}
+
 const terminalTokenPattern = /"[^"\r\n]+"(?::\d+(?::\d+)?)?|'[^'\r\n]+'(?::\d+(?::\d+)?)?|[^\s"']+/gu;
 const locationSuffixPattern = /^(.*?)(?::([1-9]\d*)(?::([1-9]\d*))?)?$/u;
 
@@ -76,4 +86,73 @@ export function resolveRemoteTerminalPath(candidate: string, remoteCwd: string):
   return candidate.startsWith('/')
     ? path.posix.normalize(candidate)
     : path.posix.resolve(remoteCwd, candidate);
+}
+
+/**
+ * Find a relative terminal path below the current SAFS workspace. This is a
+ * bounded breadth-first fallback for commands such as `ls subdir`, whose
+ * output contains only basenames and therefore omits the directory argument.
+ */
+export async function findRemotePathCandidates(
+  searchRoot: string,
+  candidate: string,
+  readDirectory: (directory: string) => Promise<RemotePathSearchEntry[]>,
+  options: {
+    maxEntries?: number;
+    maxDepth?: number;
+    maxMatches?: number;
+    cancelled?: () => boolean;
+  } = {}
+): Promise<RemotePathSearchResult> {
+  if (!path.posix.isAbsolute(searchRoot) || path.posix.isAbsolute(candidate)) {
+    return { matches: [], truncated: false };
+  }
+  const suffix = path.posix.normalize(candidate.replace(/^(?:\.\/)+/u, ''));
+  if (!suffix || suffix === '.' || suffix === '..' || suffix.startsWith('../')) {
+    return { matches: [], truncated: false };
+  }
+  const maxEntries = options.maxEntries ?? 5000;
+  const maxDepth = options.maxDepth ?? 12;
+  const maxMatches = options.maxMatches ?? 20;
+  const queue: Array<{ directory: string; depth: number }> = [
+    { directory: path.posix.normalize(searchRoot), depth: 0 }
+  ];
+  const matches: string[] = [];
+  let scanned = 0;
+  while (queue.length > 0) {
+    if (options.cancelled?.()) return { matches, truncated: true };
+    const depth = queue[0].depth;
+    const depthBoundary = queue.findIndex((item) => item.depth !== depth);
+    const level = queue.splice(0, depthBoundary === -1 ? queue.length : depthBoundary);
+    const nextLevel: Array<{ directory: string; depth: number }> = [];
+    for (const current of level) {
+      if (options.cancelled?.()) return { matches, truncated: true };
+      const entries = (await readDirectory(current.directory)).filter(
+        (entry) => entry.name && entry.name !== '.' && entry.name !== '..'
+          && !/[\0/\\]/u.test(entry.name)
+      ).sort((left, right) => {
+        const hidden = Number(left.name.startsWith('.')) - Number(right.name.startsWith('.'));
+        return hidden || left.name.localeCompare(right.name);
+      });
+      for (const entry of entries) {
+        scanned++;
+        if (scanned > maxEntries) return { matches, truncated: true };
+        const candidatePath = path.posix.join(current.directory, entry.name);
+        const relative = path.posix.relative(searchRoot, candidatePath);
+        if (entry.type !== 'directory'
+          && (relative === suffix || relative.endsWith(`/${suffix}`))) {
+          matches.push(candidatePath);
+          if (matches.length >= maxMatches) return { matches, truncated: true };
+        }
+        if (entry.type === 'directory' && current.depth < maxDepth) {
+          nextLevel.push({ directory: candidatePath, depth: current.depth + 1 });
+        }
+      }
+    }
+    // Prefer the closest matches. Once the complete current depth has been
+    // checked there is no reason to traverse potentially huge deeper trees.
+    if (matches.length > 0) return { matches, truncated: false };
+    queue.push(...nextLevel);
+  }
+  return { matches, truncated: false };
 }

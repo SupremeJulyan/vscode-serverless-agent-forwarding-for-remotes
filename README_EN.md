@@ -94,7 +94,10 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
   absolute paths, relative paths, and `file:line:column` references. A file may
   be outside the directory currently shown in Explorer, but it must remain
   inside the configured mount root; out-of-range paths prompt for another SSH
-  config and cannot bypass mount or symbolic-link boundaries.
+  config and cannot bypass mount or symbolic-link boundaries. If a command such
+  as `ls subdirectory` prints only a basename, a missing direct path triggers a
+  bounded search inside the current remote workspace: one match opens directly,
+  while multiple matches require a selection.
 - With `remote_terminal: "open"`, a terminal is connected automatically after
   opening the remote folder.
 - Opening a synced task opens the local mirror workspace: the terminal still

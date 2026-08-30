@@ -79,7 +79,7 @@ import {
   AgentMcpSetupResult, agentForwardingInstallMessage
 } from './agent-forwarding-notification';
 import {
-  findRemoteTerminalPaths, resolveRemoteTerminalPath
+  findRemotePathCandidates, findRemoteTerminalPaths, resolveRemoteTerminalPath
 } from './terminal-links';
 
 const commandPrefix = 'safs';
@@ -142,8 +142,10 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
 
 interface SafsTerminalLink extends vscode.TerminalLink {
   mountName: string;
+  rawPath: string;
   remotePath: string;
   remoteRoot: string;
+  searchRoot: string;
   line?: number;
   column?: number;
 }
@@ -561,6 +563,13 @@ function provideSafsTerminalLinks(
   const folder = registry.get(info.mount.name);
   if (!folder) return [];
   const remoteCwd = reportedRemoteTerminalCwd(context.terminal, info.remoteCwd);
+  const location = currentRemoteLocation();
+  const searchRoot = location?.mountName === info.mount.name
+    && isRemotePathInsideRoot(folder.remoteRoot, location.remotePath)
+    ? location.remotePath
+    : isRemotePathInsideRoot(folder.remoteRoot, remoteCwd)
+      ? remoteCwd
+      : folder.remoteRoot;
   return findRemoteTerminalPaths(context.line).map((match) => {
     const remotePath = resolveRemoteTerminalPath(match.path, remoteCwd);
     const insideRoot = isRemotePathInsideRoot(folder.remoteRoot, remotePath);
@@ -570,15 +579,46 @@ function provideSafsTerminalLinks(
       tooltip: insideRoot
         ? `打开远程文件 ${remotePath}${match.line ? `:${match.line}${
           match.column ? `:${match.column}` : ''
-        }` : ''}`
+      }` : ''}`
         : `路径超出挂载范围 ${folder.remoteRoot}，点击配置新的 SSH 挂载`,
       mountName: info.mount.name,
+      rawPath: match.path,
       remotePath,
       remoteRoot: folder.remoteRoot,
+      searchRoot,
       ...(match.line ? { line: match.line } : {}),
       ...(match.column ? { column: match.column } : {})
     };
   });
+}
+
+function isRemoteFileNotFound(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { code?: string; name?: string };
+  return value.code === 'FileNotFound' || value.code === 'ENOENT'
+    || value.name === 'EntryNotFound';
+}
+
+async function openSafsTerminalRemotePath(
+  folder: RemoteFolder, remotePath: string, line?: number, column?: number
+): Promise<void> {
+  const uri = vscode.Uri.parse(folderUri(folder, remotePath));
+  const fileStat = await vscode.workspace.fs.stat(uri);
+  if ((fileStat.type & vscode.FileType.Directory) !== 0) {
+    await vscode.commands.executeCommand('revealInExplorer', uri);
+    return;
+  }
+  const document = await vscode.workspace.openTextDocument(uri);
+  let selection: vscode.Range | undefined;
+  if (line) {
+    const targetLine = Math.min(line - 1, Math.max(document.lineCount - 1, 0));
+    const targetColumn = Math.min(
+      Math.max((column ?? 1) - 1, 0), document.lineAt(targetLine).text.length
+    );
+    const position = new vscode.Position(targetLine, targetColumn);
+    selection = new vscode.Range(position, position);
+  }
+  await vscode.window.showTextDocument(document, { preview: true, selection });
 }
 
 async function handleSafsTerminalLink(link: SafsTerminalLink): Promise<void> {
@@ -609,23 +649,65 @@ async function handleSafsTerminalLink(link: SafsTerminalLink): Promise<void> {
   if (!isRemotePathInsideRoot(folder.remoteRoot, link.remotePath)) {
     throw new Error(`远程路径已超出挂载范围：${link.remotePath}`);
   }
-  const uri = vscode.Uri.parse(folderUri(folder, link.remotePath));
-  const fileStat = await vscode.workspace.fs.stat(uri);
-  if ((fileStat.type & vscode.FileType.Directory) !== 0) {
-    await vscode.commands.executeCommand('revealInExplorer', uri);
+  try {
+    await openSafsTerminalRemotePath(folder, link.remotePath, link.line, link.column);
     return;
+  } catch (error) {
+    if (!isRemoteFileNotFound(error) || path.posix.isAbsolute(link.rawPath)) throw error;
   }
-  const document = await vscode.workspace.openTextDocument(uri);
-  let selection: vscode.Range | undefined;
-  if (link.line) {
-    const line = Math.min(link.line - 1, Math.max(document.lineCount - 1, 0));
-    const column = Math.min(
-      Math.max((link.column ?? 1) - 1, 0), document.lineAt(line).text.length
+
+  const session = await pool.get(folder.hostName);
+  const { search, cancelled } = await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: `正在当前远程工作区查找 ${path.posix.basename(link.rawPath)}…`,
+    cancellable: true
+  }, async (_progress, token) => {
+    const search = await findRemotePathCandidates(
+      link.searchRoot,
+      link.rawPath,
+      async (directory) => {
+        try {
+          return await session.readDirectory(directory);
+        } catch (error) {
+          const code = (error as { code?: number | string }).code;
+          if (code === 3 || code === 'EACCES' || code === 'EPERM') return [];
+          throw error;
+        }
+      },
+      { cancelled: () => token.isCancellationRequested }
     );
-    const position = new vscode.Position(line, column);
-    selection = new vscode.Range(position, position);
+    return { search, cancelled: token.isCancellationRequested };
+  });
+  if (cancelled) return;
+  if (search.matches.length === 0) {
+    if (search.truncated) {
+      void vscode.window.showWarningMessage(
+        `未在前 5000 个远程条目中找到 ${link.rawPath}，请在终端输出完整路径。`
+      );
+      return;
+    }
+    throw new Error(
+      `远程文件不存在：${link.remotePath}；当前工作区内也没有同名路径。`
+    );
   }
-  await vscode.window.showTextDocument(document, { preview: true, selection });
+  const selected = search.matches.length === 1
+    ? search.matches[0]
+    : (await vscode.window.showQuickPick(
+      search.matches.map((remotePath) => ({
+        label: path.posix.relative(link.searchRoot, remotePath),
+        description: remotePath,
+        remotePath
+      })),
+      {
+        title: `选择要打开的远程文件：${path.posix.basename(link.rawPath)}`,
+        placeHolder: `找到 ${search.matches.length} 个匹配项`
+      }
+    ))?.remotePath;
+  if (!selected) return;
+  bridgeOutput?.appendLine(
+    `[终端链接] ${link.remotePath} 不存在，已解析到工作区内的 ${selected}`
+  );
+  await openSafsTerminalRemotePath(folder, selected, link.line, link.column);
 }
 
 function localRootForFolder(folder: RemoteFolder): string {

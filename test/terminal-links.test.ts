@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  findRemoteTerminalPaths, resolveRemoteTerminalPath
+  findRemotePathCandidates, findRemoteTerminalPaths, resolveRemoteTerminalPath
 } from '../src/terminal-links';
 
 test('finds absolute and relative compiler paths with locations', () => {
@@ -43,4 +43,84 @@ test('resolves paths against the remote terminal cwd', () => {
   );
   assert.equal(resolveRemoteTerminalPath('/etc/hosts', '/srv/project'), '/etc/hosts');
   assert.throws(() => resolveRemoteTerminalPath('a.ts', 'relative/cwd'), /must be absolute/);
+});
+
+test('finds a basename omitted by a subdirectory listing without leaving the workspace', async () => {
+  const directories = new Map<string, Array<{ name: string; type: string }>>([
+    ['/workspace', [
+      { name: 'batch_1', type: 'directory' },
+      { name: 'batch_2', type: 'directory' }
+    ]],
+    ['/workspace/batch_1', [
+      { name: '第一批应用测试记录-朱源.md', type: 'file' }
+    ]],
+    ['/workspace/batch_2', [{ name: 'other.md', type: 'file' }]]
+  ]);
+  const result = await findRemotePathCandidates(
+    '/workspace', '第一批应用测试记录-朱源.md',
+    async (directory) => directories.get(directory) ?? []
+  );
+  assert.deepEqual(result, {
+    matches: ['/workspace/batch_1/第一批应用测试记录-朱源.md'],
+    truncated: false
+  });
+});
+
+test('refuses absolute and parent-traversing fallback searches', async () => {
+  let reads = 0;
+  const readDirectory = async () => {
+    reads++;
+    return [];
+  };
+  assert.deepEqual(
+    await findRemotePathCandidates('/workspace', '/etc/passwd', readDirectory),
+    { matches: [], truncated: false }
+  );
+  assert.deepEqual(
+    await findRemotePathCandidates('/workspace', '../secret.txt', readDirectory),
+    { matches: [], truncated: false }
+  );
+  assert.equal(reads, 0);
+});
+
+test('bounds recursive fallback searches', async () => {
+  const result = await findRemotePathCandidates(
+    '/workspace', 'missing.md',
+    async (directory) => directory === '/workspace'
+      ? [
+        { name: 'a', type: 'directory' },
+        { name: 'b', type: 'directory' },
+        { name: 'c', type: 'directory' }
+      ]
+      : [],
+    { maxEntries: 2 }
+  );
+  assert.deepEqual(result, { matches: [], truncated: true });
+});
+
+test('stops below the nearest matching depth and keeps same-depth choices', async () => {
+  const reads: string[] = [];
+  const entries = new Map<string, Array<{ name: string; type: string }>>([
+    ['/workspace', [
+      { name: 'a', type: 'directory' },
+      { name: 'b', type: 'directory' }
+    ]],
+    ['/workspace/a', [
+      { name: 'target.md', type: 'file' },
+      { name: 'deep', type: 'directory' }
+    ]],
+    ['/workspace/b', [{ name: 'target.md', type: 'file' }]],
+    ['/workspace/a/deep', [{ name: 'target.md', type: 'file' }]]
+  ]);
+  const result = await findRemotePathCandidates(
+    '/workspace', 'target.md', async (directory) => {
+      reads.push(directory);
+      return entries.get(directory) ?? [];
+    }
+  );
+  assert.deepEqual(result, {
+    matches: ['/workspace/a/target.md', '/workspace/b/target.md'],
+    truncated: false
+  });
+  assert.equal(reads.includes('/workspace/a/deep'), false);
 });
