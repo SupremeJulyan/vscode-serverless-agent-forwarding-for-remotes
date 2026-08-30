@@ -47,17 +47,22 @@ export interface ProbedHostKey {
 /** 该主机在 known_hosts 中的规范条目名（写入用）：port 22 → `ip`，否则 `[ip]:port`。 */
 export function hostEntryName(host: HostConfig): string {
   const port = host.port ?? 22;
-  if (port === 22) {
-    return host.ip.includes(':') ? `[${host.ip}]` : host.ip;
-  }
+  if (port === 22) return host.ip;
   return `[${host.ip}]:${port}`;
 }
 
-/** 该主机的候选条目名集合（匹配用：兼容裸 IP / [IP] / [IP]:port 三种写法）。 */
+/** OpenSSH 对该连接实际会匹配的条目名。非标准端口也会回退检查裸主机名。 */
 export function hostEntryNames(host: HostConfig): string[] {
   const port = host.port ?? 22;
-  const bracketed = `[${host.ip}]`;
-  return [host.ip, bracketed, `${bracketed}:${port}`];
+  return port === 22 ? [host.ip] : [`[${host.ip}]:${port}`, host.ip];
+}
+
+/** 替换时额外清理旧版本写入、但 OpenSSH 不会匹配的方括号格式。 */
+function removableHostEntryNames(host: HostConfig): string[] {
+  const port = host.port ?? 22;
+  return [...new Set([
+    ...hostEntryNames(host), `[${host.ip}]`, `[${host.ip}]:${port}`
+  ])];
 }
 
 /** 从 OpenSSH 密钥 blob 提取类型字符串（blob 前 4 字节为类型名长度）。 */
@@ -113,7 +118,7 @@ export async function replaceKnownHostsForHost(
   filePath: string, host: HostConfig, keys: ProbedHostKey[],
   log?: (message: string) => void
 ): Promise<void> {
-  const names = new Set(hostEntryNames(host));
+  const names = new Set(removableHostEntryNames(host));
   let existing = '';
   try {
     existing = await readFile(filePath, 'utf8');

@@ -78,9 +78,10 @@ test('dialog decisions: closing with X/Esc (undefined) refuses, never accepts', 
 test('host entry names follow OpenSSH conventions for port 22 and custom ports', () => {
   assert.equal(hostEntryName(hostAt(22)), '10.0.0.2');
   assert.equal(hostEntryName(hostAt(2222)), '[10.0.0.2]:2222');
-  assert.deepEqual(hostEntryNames(hostAt(2222)), ['10.0.0.2', '[10.0.0.2]', '[10.0.0.2]:2222']);
+  assert.deepEqual(hostEntryNames(hostAt(2222)), ['[10.0.0.2]:2222', '10.0.0.2']);
   const ipv6: HostConfig = { name: 'v6', ip: '2001:db8::1', user: 'a', port: 22 };
-  assert.equal(hostEntryName(ipv6), '[2001:db8::1]');
+  assert.equal(hostEntryName(ipv6), '2001:db8::1');
+  assert.deepEqual(hostEntryNames(ipv6), ['2001:db8::1']);
   assert.equal(hostEntryName({ ...ipv6, port: 2222 }), '[2001:db8::1]:2222');
 });
 
@@ -126,6 +127,15 @@ test('readTrustedFingerprints filters entries by host', async () => {
   );
 });
 
+test('readTrustedFingerprints ignores legacy bracketed IPv6 at the default port', async () => {
+  const { file } = tempKnownHosts();
+  const host: HostConfig = {
+    name: 'v6', ip: '2001:db8::1', user: 'alice', port: 22
+  };
+  await writeFile(file, `[2001:db8::1] ssh-ed25519 ${blobA}\n`);
+  assert.deepEqual(await readTrustedFingerprints(file, host), []);
+});
+
 test('replaceKnownHostsForHost removes stale keys but preserves other hosts', async () => {
   const { file } = tempKnownHosts();
   const hostA = hostAt(2222);
@@ -148,6 +158,22 @@ test('replaceKnownHostsForHost removes stale keys but preserves other hosts', as
   assert.ok(!content.includes(lineFor(hostA, 'ssh-ed25519', blobA)));
   assert.ok(!content.includes(lineFor(hostA, 'ssh-rsa', blobB)));
   assert.equal((statSync(file).mode & 0o777), 0o600);
+});
+
+test('replaceKnownHostsForHost migrates legacy bracketed IPv6 at port 22', async () => {
+  const { file } = tempKnownHosts();
+  const host: HostConfig = {
+    name: 'v6', ip: '2001:db8::1', user: 'alice', port: 22
+  };
+  await writeFile(file, `[2001:db8::1] ssh-ed25519 ${blobA}\n`);
+
+  await replaceKnownHostsForHost(file, host, [
+    { host: host.ip, type: 'ssh-ed25519', blob: blobB }
+  ]);
+
+  const content = await readFile(file, 'utf8');
+  assert.ok(!content.includes(`[2001:db8::1] ssh-ed25519 ${blobA}`));
+  assert.ok(content.includes(`2001:db8::1 ssh-ed25519 ${blobB}`));
 });
 
 test('verifyHostKeyWithPrompt passes when the fingerprint is already in the file', async () => {
