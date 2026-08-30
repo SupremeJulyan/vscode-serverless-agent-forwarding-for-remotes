@@ -438,11 +438,6 @@
     "configuration": {
       "title": "SAFS",
       "properties": {
-        "safs.configPath": {
-          "type": "string",
-          "default": "~/.safs/config.json",
-          "description": "Configuration file path. Defaults to ~/.safs/config.json on all platforms."
-        },
         "safs.sshClientIdent": {
           "type": "string",
           "default": "OpenSSH_9.6",

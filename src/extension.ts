@@ -305,11 +305,6 @@ function logAsyncFailure(label: string, error: unknown): void {
 }
 
 function configPath(): string {
-  const inspected = settings().inspect<string>('configPath');
-  const configured = inspected?.workspaceFolderValue
-    ?? inspected?.workspaceValue
-    ?? inspected?.globalValue;
-  if (configured) return expandHome(configured);
   return expandHome(defaultConfigPath);
 }
 

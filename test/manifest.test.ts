@@ -136,9 +136,12 @@ test('uses only the unified cross-platform config path', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
   assert.equal(
-    manifest.contributes?.configuration?.properties?.['safs.configPath']?.default,
-    '~/.safs/config.json'
+    manifest.contributes?.configuration?.properties?.['safs.configPath'],
+    undefined
   );
+  const extensionSource = await readFile(new URL('../src/extension.ts', import.meta.url), 'utf8');
+  assert.equal(extensionSource.includes("inspect<string>('configPath')"), false);
+  assert.ok(extensionSource.includes("const defaultConfigPath = '~/.safs/config.json'"));
   assert.deepEqual(
     manifest.contributes?.configuration?.properties?.[
       'safs.agentForwardingAgents'
