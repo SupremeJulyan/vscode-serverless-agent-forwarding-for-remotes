@@ -123,10 +123,10 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
 
 ### Keyboard Shortcuts
 
-| Shortcut | Action |
-|---|---|
-| `Ctrl+Alt+R` / `Cmd+Alt+R` | Open Remote Directory |
-| `Ctrl+Alt+T` / `Cmd+Alt+T` | Open Remote Terminal |
+| Action | Windows | Linux | macOS |
+|---|---|---|---|
+| Open Remote Directory | `Ctrl+Alt+R` | `Ctrl+Alt+O` | `Cmd+Ctrl+R` |
+| Open Remote Terminal | `Ctrl+Alt+T` | `Ctrl+Alt+X` | `Cmd+Ctrl+T` |
 
 ### Visual download / upload / sync
 

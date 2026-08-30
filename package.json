@@ -615,12 +615,16 @@
       },
       {
         "key": "ctrl+alt+r",
-        "mac": "cmd+alt+r",
+        "win": "ctrl+alt+r",
+        "linux": "ctrl+alt+o",
+        "mac": "cmd+ctrl+r",
         "command": "safs.openFolder"
       },
       {
         "key": "ctrl+alt+t",
-        "mac": "cmd+alt+t",
+        "win": "ctrl+alt+t",
+        "linux": "ctrl+alt+x",
+        "mac": "cmd+ctrl+t",
         "command": "safs.openTerminal"
       }
     ]

@@ -100,10 +100,10 @@ code --install-extension safs-serverless-agent-forwarding-1.6.7.vsix
 
 ### 快捷键
 
-| 快捷键 | 功能 |
-|---|---|
-| `Ctrl+Alt+R` / `Cmd+Alt+R` | 打开远程目录 |
-| `Ctrl+Alt+T` / `Cmd+Alt+T` | 打开远程终端 |
+| 功能 | Windows | Linux | macOS |
+|---|---|---|---|
+| 打开远程目录 | `Ctrl+Alt+R` | `Ctrl+Alt+O` | `Cmd+Ctrl+R` |
+| 打开远程终端 | `Ctrl+Alt+T` | `Ctrl+Alt+X` | `Cmd+Ctrl+T` |
 
 ### 可视化下载 / 上传 / 同步
 

@@ -17,6 +17,13 @@ interface ExtensionManifest {
       properties?: Record<string, { default?: unknown; markdownDescription?: string }>
     };
     jsonValidation?: Array<{ fileMatch?: string[] }>;
+    keybindings?: Array<{
+      command: string;
+      key: string;
+      win?: string;
+      linux?: string;
+      mac?: string;
+    }>;
   };
 }
 
@@ -38,6 +45,30 @@ test('contributes a remote-directory switch command instead of relying on the lo
   ) as ExtensionManifest;
   const commands = manifest.contributes?.commands ?? [];
   assert.ok(commands.some((item) => item.command === 'safs.switchRemoteDirectory'));
+});
+
+test('uses distinct conflict-resistant shortcuts on each desktop platform', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  ) as ExtensionManifest;
+  const keybindings = manifest.contributes?.keybindings ?? [];
+  const openFolder = keybindings.find((item) => item.command === 'safs.openFolder');
+  const openTerminal = keybindings.find((item) => item.command === 'safs.openTerminal');
+
+  assert.deepEqual(openFolder, {
+    key: 'ctrl+alt+r',
+    win: 'ctrl+alt+r',
+    linux: 'ctrl+alt+o',
+    mac: 'cmd+ctrl+r',
+    command: 'safs.openFolder'
+  });
+  assert.deepEqual(openTerminal, {
+    key: 'ctrl+alt+t',
+    win: 'ctrl+alt+t',
+    linux: 'ctrl+alt+x',
+    mac: 'cmd+ctrl+t',
+    command: 'safs.openTerminal'
+  });
 });
 
 test('shows separate Agent forwarding actions for enabled and disabled mounts', async () => {
