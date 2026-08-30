@@ -1815,7 +1815,11 @@ async function openTerminal(
               if (entry) entry.retryWithSystemSsh = true;
             }
           },
-          (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`)
+          (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
+          (reportedCwd) => {
+            const entry = managedRemoteTerminals.get(created);
+            if (entry) entry.remoteCwd = reportedCwd;
+          }
         );
         created = vscode.window.createTerminal({
           name: terminalName,

@@ -81,7 +81,8 @@ code --install-extension safs-serverless-agent-forwarding-1.6.8.vsix
   管理器目录之外，但必须仍在该配置的挂载根目录内；超出范围时会提示添加 SSH
   配置，不会绕过挂载边界或符号链接校验。若 `ls 子目录` 等命令只输出文件名，
   直接路径不存在时会在当前远程工作区内受限搜索：唯一结果直接打开，多项结果
-  由用户选择。
+  由用户选择。内置 ssh2 的 Bash 终端会在当前会话内上报 `$PWD`（不修改远端
+  `.bashrc`），因此执行 `cd` 后，相对路径会立即按新目录打开。
 - 配置 `remote_terminal: "open"` 时，打开远程目录后会自动连接终端。
 - 开启本地同步后打开的是本地镜像工作区：仍会按原 `remote_terminal` 设置自动
   连接原远程目录的终端；`safs.terminalFollowsActiveFile` 对镜像中的本地文件
