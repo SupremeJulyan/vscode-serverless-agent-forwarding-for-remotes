@@ -1,4 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { StringDecoder } from 'node:string_decoder';
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import * as vscode from 'vscode';
 import { expandHome, HostConfig } from './config';
@@ -6,7 +8,11 @@ import { hostVerifierFor } from './host-key';
 import { keyboardInteractivePasswordReplies } from './authentication';
 import { defaultSshClientIdent, serverHostKeyAlgorithms } from './ssh-algorithms';
 import {
-  RemoteCwdOscTracker, ssh2InteractiveLoginCommand, ssh2RemoteCommand
+  loadRemoteShellIntegrationScripts, normalizeRemoteShellPath,
+  RemoteCwdOscTracker, remoteIntegratedLoginCommand, remoteShellProbeCommand
+} from './remote-shell-integration';
+import {
+  ssh2RemoteCommand
 } from './ssh-command';
 
 async function connectConfig(
@@ -211,6 +217,9 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
   private password?: string;
   private closed = false;
   private readonly cwdTracker = new RemoteCwdOscTracker();
+  private readonly outputDecoder = new StringDecoder('utf8');
+  private readonly stderrDecoder = new StringDecoder('utf8');
+  private readonly integrationSessionId = randomBytes(12).toString('hex');
   /** 待 shell 通道就绪后补发的输入（live-sync 的 cd 可能早于连接完成）。 */
   private pendingInput = '';
 
@@ -250,38 +259,92 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
     });
     this.client.once('ready', () => {
       this.password = undefined;
-      // Run the initial cd inside the remote command and add a session-only
-      // Bash prompt hook that reports $PWD after every command. No remote
-      // startup file is modified.
-      const loginCommand = ssh2InteractiveLoginCommand(this.remoteCwd);
-      this.client.exec(loginCommand, {
-        pty: {
-          term: 'xterm-256color',
-          cols: this.dimensions.columns,
-          rows: this.dimensions.rows
-        }
-      }, (error, stream) => {
-        if (error) {
-          this.fail(error);
-          return;
-        }
-        this.stream = stream;
-        stream.on('data', (chunk: Buffer) => {
-          const data = chunk.toString();
-          for (const remoteCwd of this.cwdTracker.push(data)) this.onCwd?.(remoteCwd);
-          this.writeEmitter.fire(data);
-        });
-        stream.stderr.on('data', (chunk: Buffer) => this.writeEmitter.fire(chunk.toString()));
-        stream.once('close', () => this.finish(0));
-        // 补发连接建立期间排队（live-sync）的输入，避免 cd 被丢弃。
-        if (this.pendingInput) {
-          stream.write(this.pendingInput);
-          this.pendingInput = '';
-        }
-      });
+      void this.openRemoteShell();
     });
     this.client.once('error', (error) => this.fail(error));
     this.client.connect(config);
+  }
+
+  private async openRemoteShell(): Promise<void> {
+    const shellPath = await this.probeRemoteShell();
+    let scripts;
+    try {
+      scripts = await loadRemoteShellIntegrationScripts();
+    } catch (error) {
+      this.log?.(`会话级 Shell Integration 加载失败，使用普通登录 Shell：${
+        error instanceof Error ? error.message : String(error)
+      }`);
+    }
+    if (this.closed) return;
+    const loginCommand = remoteIntegratedLoginCommand(
+      shellPath, this.remoteCwd, scripts, this.integrationSessionId
+    );
+    this.client.exec(loginCommand, {
+      pty: {
+        term: 'xterm-256color',
+        cols: this.dimensions.columns,
+        rows: this.dimensions.rows
+      }
+    }, (error, stream) => {
+      if (error) {
+        this.fail(error);
+        return;
+      }
+      this.stream = stream;
+      stream.on('data', (chunk: Buffer) => {
+        this.handleOutput(this.outputDecoder.write(chunk));
+      });
+      stream.stderr.on('data', (chunk: Buffer) => {
+        const data = this.stderrDecoder.write(chunk);
+        if (data) this.writeEmitter.fire(data);
+      });
+      stream.once('close', (code: number | undefined) => {
+        this.handleOutput(this.outputDecoder.end());
+        const stderr = this.stderrDecoder.end();
+        if (stderr) this.writeEmitter.fire(stderr);
+        this.finish(code ?? 0);
+      });
+      // 补发连接建立期间排队（live-sync）的输入，避免 cd 被丢弃。
+      if (this.pendingInput) {
+        stream.write(this.pendingInput);
+        this.pendingInput = '';
+      }
+    });
+  }
+
+  private handleOutput(data: string): void {
+    if (!data) return;
+    for (const remoteCwd of this.cwdTracker.push(data)) this.onCwd?.(remoteCwd);
+    this.writeEmitter.fire(data);
+  }
+
+  private probeRemoteShell(): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let output = '';
+      let stream: ClientChannel | undefined;
+      const finish = (value?: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(normalizeRemoteShellPath(value ?? output));
+      };
+      const timer = setTimeout(() => {
+        stream?.close();
+        finish();
+      }, 3000);
+      this.client.exec(remoteShellProbeCommand(), (error, channel) => {
+        if (error) {
+          finish();
+          return;
+        }
+        stream = channel;
+        channel.on('data', (chunk: Buffer) => {
+          if (output.length <= 4096) output += chunk.toString();
+        });
+        channel.once('close', () => finish(output));
+      });
+    });
   }
 
   handleInput(data: string): void {

@@ -57,6 +57,7 @@ import {
   isRemotePathInsideRoot, parseRemoteUri, remoteFileSystemScheme, remoteUri
 } from './sftp/uri';
 import { ensureWslBridgeExecutable, setWslBundlePath } from './wsl-bridge';
+import { setRemoteShellIntegrationBundlePath } from './remote-shell-integration';
 import { hostVerifierFor, setKnownHostsFilePath } from './host-key';
 import {
   isOpenSshHostKeyVerificationFailure, maxOpenSshHostKeyRetries,
@@ -3408,6 +3409,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // strip the executable bit from ssh-bridge (Windows builds store 0666), so
   // re-assert it before any terminal spawns the bridge.
   setWslBundlePath(vscode.Uri.joinPath(context.extensionUri, 'resources', 'wsl').fsPath);
+  setRemoteShellIntegrationBundlePath(
+    vscode.Uri.joinPath(context.extensionUri, 'resources', 'shell-integration').fsPath
+  );
   setKnownHostsFilePath(knownHostsFilePath());
   await ensureWslBridgeExecutable();
   // 依赖安装后台执行，不阻塞窗口激活（apt install 可能耗时数分钟）；

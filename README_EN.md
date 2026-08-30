@@ -97,9 +97,12 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
   config and cannot bypass mount or symbolic-link boundaries. If a command such
   as `ls subdirectory` prints only a basename, a missing direct path triggers a
   bounded search inside the current remote workspace: one match opens directly,
-  while multiple matches require a selection. Built-in ssh2 Bash terminals
-  report `$PWD` for the current session without modifying remote `.bashrc`, so
-  relative links follow the new directory immediately after `cd`.
+  while multiple matches require a selection. Built-in ssh2 terminals detect
+  Bash, Zsh, and Fish and report `$PWD` through an independent session-level
+  shell integration, so relative links follow the new directory immediately
+  after `cd`. It does not modify `.bashrc`, `.zshrc`, or Fish configuration;
+  Bash/Fish use session file descriptors, while Zsh removes its private
+  temporary startup directory immediately after loading the user's config.
 - With `remote_terminal: "open"`, a terminal is connected automatically after
   opening the remote folder.
 - Opening a synced task opens the local mirror workspace: the terminal still

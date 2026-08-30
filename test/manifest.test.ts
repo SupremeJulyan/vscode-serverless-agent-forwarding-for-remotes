@@ -99,6 +99,14 @@ test('packages Agent integration without a spawned stdio router or Codex plugin'
   )));
 });
 
+test('packages session-only remote shell integration scripts', async () => {
+  for (const file of [
+    'bash.sh', 'fish.fish', 'zsh-env.zsh', 'zsh-profile.zsh', 'zsh-rc.zsh'
+  ]) {
+    await access(new URL(`../resources/shell-integration/${file}`, import.meta.url));
+  }
+});
+
 test('SAFS MCP is opt-in for remote context instead of mandatory in every workspace', async () => {
   const direct = await readFile(new URL('../src/agent-mcp.ts', import.meta.url), 'utf8');
   const router = await readFile(new URL('../src/agent-http-router.ts', import.meta.url), 'utf8');
