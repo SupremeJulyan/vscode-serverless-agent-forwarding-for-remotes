@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
@@ -48,6 +48,20 @@ test('native remote execution supports OpenSSH connection reuse', () => {
   assert.match(plan.args.at(-1) ?? '', /npm test/);
 });
 
+test('native SSH pins the probed destination and known_hosts identity', () => {
+  const plan = createPlatformAdapter('linux').exec(host, '/srv/project', 'pwd');
+  assert.ok(plan.args.includes(`HostName=${host.ip}`));
+  assert.ok(plan.args.includes('HostKeyAlias=[10.0.0.2]:2222'));
+  assert.ok(plan.args.includes('CanonicalizeHostname=no'));
+  assert.ok(plan.args.includes('CheckHostIP=no'));
+
+  const ipv6 = createPlatformAdapter('linux').terminal({
+    ...host, ip: '2001:db8::1', port: 22
+  });
+  assert.ok(ipv6.args.includes('HostName=2001:db8::1'));
+  assert.ok(ipv6.args.includes('HostKeyAlias=2001:db8::1'));
+});
+
 test('WSL uses bundled ssh-bridge for terminals and command execution', () => {
   const adapter = createPlatformAdapter('wsl');
   const terminal = adapter.terminal(host, '/srv/project');
@@ -58,6 +72,17 @@ test('WSL uses bundled ssh-bridge for terminals and command execution', () => {
   assert.equal(terminal.args.includes('--tty'), true);
   assert.equal(terminal.env?.WSL_VPN_SSH_CONNECTION_REUSE, '1');
   assert.match(execution.args.at(-1) ?? '', /git status/);
+});
+
+test('WSL bridge pins direct and relayed SSH identities', () => {
+  const source = readFileSync(
+    path.resolve(__dirname, '..', 'resources', 'wsl', 'ssh-bridge'), 'utf8'
+  );
+  assert.match(source, /-o "HostName=\$target_host"/);
+  assert.match(source, /-o HostName=127\.0\.0\.1/);
+  assert.match(source, /-o "HostKeyAlias=\$host_key_alias"/);
+  assert.match(source, /-o CanonicalizeHostname=no/);
+  assert.match(source, /-o CheckHostIP=no/);
 });
 
 test('WSL enables connection reuse for terminals and background commands', () => {

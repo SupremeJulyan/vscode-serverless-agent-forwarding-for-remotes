@@ -283,10 +283,24 @@ fi
 
 ssh_command=(ssh)
 
+# 把实际连接地址与 known_hosts 身份固定为扩展刚刚探测的目标，避免用户
+# ~/.ssh/config 中的 HostName / HostKeyAlias / CanonicalizeHostname 把连接改到
+# 另一台服务器，导致预检对象和 OpenSSH 严格校验对象不一致。
+host_key_alias="$target_host"
+if [[ "$target_port" != 22 ]]; then
+  host_key_alias="[$target_host]:$target_port"
+fi
+
 # ── Direct connection (no VPN) ───────────────────────────────────────────────
 if [[ "$use_vpn" != true ]]; then
   bridge_performance_log "SSH 连接派发前准备总计" "$bridge_started_at"
-  exec "${ssh_command[@]}" "${ssh_options[@]}" -p "$target_port" -- "$local_destination" "${remote_args[@]}"
+  exec "${ssh_command[@]}" "${ssh_options[@]}" \
+    -p "$target_port" \
+    -o "HostName=$target_host" \
+    -o "HostKeyAlias=$host_key_alias" \
+    -o CanonicalizeHostname=no \
+    -o CheckHostIP=no \
+    -- "$local_destination" "${remote_args[@]}"
 fi
 
 # ── VPN relay path ───────────────────────────────────────────────────────────
@@ -308,15 +322,12 @@ trap cleanup EXIT INT TERM
 printf 'VPN 中继(%s): 127.0.0.1:%s -> %s:%s (Windows PID %s)\n' \
   "$relay_status" "$local_port" "$target_host" "$target_port" "$relay_pid" >&2
 
-host_key_alias="$target_host"
-if [[ "$target_port" != 22 ]]; then
-  host_key_alias="[$target_host]:$target_port"
-fi
-
 bridge_performance_log "SSH 连接派发前准备总计" "$bridge_started_at"
 "${ssh_command[@]}" \
   "${ssh_options[@]}" \
   -p "$local_port" \
+  -o HostName=127.0.0.1 \
   -o "HostKeyAlias=$host_key_alias" \
+  -o CanonicalizeHostname=no \
   -o CheckHostIP=no \
   -- "$tunnel_destination" "${remote_args[@]}"

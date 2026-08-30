@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import { HostConfig } from './config';
+import { hostEntryName } from './host-key';
 import { shellQuote } from './shell-quote';
 import { kexAlgorithmsArgs, legacySshAlgorithmArgs } from './ssh-algorithms';
 import { sshBridgePath } from './wsl-bridge';
@@ -102,6 +103,13 @@ function sshArgs(
   // StrictHostKeyChecking=no。
   const args = [
     '-p', String(host.port ?? 22),
+    // Pin the actual destination and known_hosts identity to the endpoint
+    // verified by the extension. Command-line options take precedence over
+    // ~/.ssh/config HostName / HostKeyAlias / canonicalization directives.
+    '-o', `HostName=${host.ip}`,
+    '-o', `HostKeyAlias=${hostEntryName(host)}`,
+    '-o', 'CanonicalizeHostname=no',
+    '-o', 'CheckHostIP=no',
     ...hostKeyArgs(kind, options)
   ];
   // Some servers only offer legacy host keys (ssh-rsa/ssh-dss); OpenSSH 8.8+
