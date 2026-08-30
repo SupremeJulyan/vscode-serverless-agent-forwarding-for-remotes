@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, statSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
@@ -107,6 +107,35 @@ test('appendKnownHostsFile writes standard known_hosts lines idempotently with 0
   assert.ok(content.includes(lineFor(host, 'ssh-ed25519', blobA)));
   assert.ok(content.includes(lineFor(host, 'ssh-rsa', blobB)));
   assert.equal((statSync(file).mode & 0o777), 0o600);
+});
+
+test('concurrent known_hosts updates preserve every writer and leave no lock artifacts', async () => {
+  const { file, dir } = tempKnownHosts();
+  const keys = Array.from({ length: 12 }, (_, index) => ({
+    host: hostEntryName(hostAt(2222)),
+    type: 'ssh-ed25519',
+    blob: Buffer.from(`backend-${index}`).toString('base64')
+  }));
+  await Promise.all(keys.map((key) => appendKnownHostsFile(file, [key])));
+
+  const content = await readFile(file, 'utf8');
+  for (const key of keys) assert.ok(content.includes(key.blob));
+  assert.equal(content.trim().split(/\r?\n/).length, keys.length);
+  assert.deepEqual((await readdir(dir)).sort(), ['known_hosts']);
+});
+
+test('atomic known_hosts writes replace a symlink without modifying its target', async () => {
+  const { file, dir } = tempKnownHosts();
+  const target = path.join(dir, 'do-not-modify');
+  await writeFile(target, 'original\n');
+  await symlink(target, file);
+
+  await appendKnownHostsFile(file, [{
+    host: hostEntryName(hostAt(22)), type: 'ssh-ed25519', blob: blobA
+  }]);
+
+  assert.equal(await readFile(target, 'utf8'), 'original\n');
+  assert.match(await readFile(file, 'utf8'), /ssh-ed25519/);
 });
 
 test('readTrustedFingerprints filters entries by host', async () => {

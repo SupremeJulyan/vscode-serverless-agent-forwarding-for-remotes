@@ -1,5 +1,8 @@
-import { createHash } from 'node:crypto';
-import { appendFile, chmod, readFile, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  chmod, mkdir, readFile, rename, rmdir, stat, unlink, writeFile
+} from 'node:fs/promises';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { HostVerifier } from 'ssh2';
 import { HostConfig } from './config';
@@ -24,6 +27,118 @@ export type HostKeyDecision = 'accept' | 'replace' | 'refuse';
 export type HostKeyTrustResult = 'trusted' | HostKeyDecision;
 
 let knownHostsFilePath = '';
+
+const knownHostsLockTimeoutMs = 5_000;
+const knownHostsStaleLockMs = 120_000;
+
+function isFileError(error: unknown, code: string): boolean {
+  return (error as NodeJS.ErrnoException).code === code;
+}
+
+async function readKnownHostsOrEmpty(filePath: string): Promise<string> {
+  try {
+    return await readFile(filePath, 'utf8');
+  } catch (error) {
+    if (isFileError(error, 'ENOENT')) return '';
+    throw error;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isFileError(error, 'EPERM');
+  }
+}
+
+async function removeStaleKnownHostsLock(lockPath: string): Promise<boolean> {
+  const ownerPath = path.join(lockPath, 'owner.json');
+  try {
+    const lockStat = await stat(lockPath);
+    let owner: { pid?: unknown } = {};
+    let hasOwner = false;
+    try {
+      owner = JSON.parse(await readFile(ownerPath, 'utf8')) as { pid?: unknown };
+      hasOwner = true;
+    } catch {
+      // 损坏或缺失的 owner 记录只能按目录年龄判断。
+    }
+    if (typeof owner.pid === 'number' && processIsAlive(owner.pid)) return false;
+    if (!hasOwner && Date.now() - lockStat.mtimeMs < knownHostsStaleLockMs) return false;
+    await unlink(ownerPath).catch((error) => {
+      if (!isFileError(error, 'ENOENT')) throw error;
+    });
+    await rmdir(lockPath);
+    return true;
+  } catch (error) {
+    if (isFileError(error, 'ENOENT') || isFileError(error, 'ENOTEMPTY')) return false;
+    throw error;
+  }
+}
+
+async function withKnownHostsLock<T>(filePath: string, action: () => Promise<T>): Promise<T> {
+  const parent = path.dirname(filePath);
+  const lockPath = `${filePath}.lock`;
+  const ownerPath = path.join(lockPath, 'owner.json');
+  const token = randomBytes(16).toString('hex');
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const deadline = Date.now() + knownHostsLockTimeoutMs;
+  while (true) {
+    let created = false;
+    try {
+      await mkdir(lockPath, { mode: 0o700 });
+      created = true;
+      await writeFile(ownerPath, JSON.stringify({ pid: process.pid, token }), {
+        encoding: 'utf8', mode: 0o600, flag: 'wx'
+      });
+      break;
+    } catch (error) {
+      if (created) {
+        await unlink(ownerPath).catch(() => undefined);
+        await rmdir(lockPath).catch(() => undefined);
+      }
+      if (!isFileError(error, 'EEXIST')) throw error;
+      if (await removeStaleKnownHostsLock(lockPath)) continue;
+      if (Date.now() >= deadline) {
+        throw new Error(`等待主机密钥文件锁超时：${filePath}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20 + Math.floor(Math.random() * 30)));
+    }
+  }
+  try {
+    return await action();
+  } finally {
+    try {
+      const owner = JSON.parse(await readFile(ownerPath, 'utf8')) as { token?: unknown };
+      if (owner.token === token) {
+        await unlink(ownerPath);
+        await rmdir(lockPath);
+      }
+    } catch (error) {
+      if (!isFileError(error, 'ENOENT')) throw error;
+    }
+  }
+}
+
+async function writeKnownHostsAtomically(filePath: string, content: string): Promise<void> {
+  const temporary = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`
+  );
+  try {
+    await writeFile(temporary, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    await chmod(temporary, 0o600).catch(() => undefined);
+    await rename(temporary, filePath);
+    await chmod(filePath, 0o600).catch(() => undefined);
+  } finally {
+    await unlink(temporary).catch((error) => {
+      if (!isFileError(error, 'ENOENT')) throw error;
+    });
+  }
+}
 
 /** 注入扩展独立 known_hosts 文件路径（extension.ts 激活时调用一次）。 */
 export function setKnownHostsFilePath(filePath: string): void {
@@ -95,19 +210,21 @@ export async function appendKnownHostsFile(
   filePath: string, keys: ProbedHostKey[], log?: (message: string) => void
 ): Promise<void> {
   const lines = keys.map((key) => `${key.host} ${key.type} ${key.blob}`);
-  let existing = '';
-  try {
-    existing = await readFile(filePath, 'utf8');
-  } catch {
-    // 文件不存在：首次写入。
-  }
-  const existingLines = new Set(existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
-  const missing = lines.filter((line) => !existingLines.has(line));
-  if (missing.length === 0) return;
-  const content = `${existing.endsWith('\n') || existing === '' ? '' : '\n'}${missing.join('\n')}\n`;
-  await appendFile(filePath, content, { mode: 0o600 });
-  await chmod(filePath, 0o600).catch(() => undefined);
-  log?.(`已写入主机密钥记录（${missing.length} 条）：${filePath}`);
+  let added = 0;
+  await withKnownHostsLock(filePath, async () => {
+    const existing = await readKnownHostsOrEmpty(filePath);
+    const existingLines = new Set(
+      existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    );
+    const missing = lines.filter((line) => !existingLines.has(line));
+    added = missing.length;
+    if (added === 0) return;
+    const separator = existing.endsWith('\n') || existing === '' ? '' : '\n';
+    await writeKnownHostsAtomically(
+      filePath, `${existing}${separator}${missing.join('\n')}\n`
+    );
+  });
+  if (added > 0) log?.(`已写入主机密钥记录（${added} 条）：${filePath}`);
 }
 
 /**
@@ -119,25 +236,21 @@ export async function replaceKnownHostsForHost(
   log?: (message: string) => void
 ): Promise<void> {
   const names = new Set(removableHostEntryNames(host));
-  let existing = '';
-  try {
-    existing = await readFile(filePath, 'utf8');
-  } catch {
-    // 文件不存在时等价于首次写入。
-  }
-  const kept = existing.split(/\r?\n/).filter((line) => {
-    const match = /^(\S+)\s+/.exec(line.trim());
-    return !match || !names.has(match[1]);
-  });
-  while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
-
   const entry = hostEntryName(host);
   const replacements = [...new Set(
     keys.map((key) => `${entry} ${key.type} ${key.blob}`)
   )];
-  const content = [...kept, ...replacements].join('\n') + '\n';
-  await writeFile(filePath, content, { mode: 0o600 });
-  await chmod(filePath, 0o600).catch(() => undefined);
+  await withKnownHostsLock(filePath, async () => {
+    const existing = await readKnownHostsOrEmpty(filePath);
+    const kept = existing.split(/\r?\n/).filter((line) => {
+      const match = /^(\S+)\s+/.exec(line.trim());
+      return !match || !names.has(match[1]);
+    });
+    while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
+    await writeKnownHostsAtomically(
+      filePath, [...kept, ...replacements].join('\n') + '\n'
+    );
+  });
   log?.(`已替换主机密钥记录（${replacements.length} 条）：${filePath}`);
 }
 
@@ -148,12 +261,7 @@ export async function readTrustedFingerprints(
   filePath: string, host: HostConfig
 ): Promise<string[]> {
   const names = new Set(hostEntryNames(host));
-  let content: string;
-  try {
-    content = await readFile(filePath, 'utf8');
-  } catch {
-    return [];
-  }
+  const content = await readKnownHostsOrEmpty(filePath);
   const fingerprints = new Set<string>();
   for (const line of content.split(/\r?\n/)) {
     const match = /^(\S+)\s+(\S+)\s+(\S+)\s*$/.exec(line.trim());
