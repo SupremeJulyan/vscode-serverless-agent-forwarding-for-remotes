@@ -13,7 +13,9 @@ interface ExtensionManifest {
       'view/item/context'?: Array<{ command: string; when?: string }>;
       'explorer/context'?: Array<{ command: string; when?: string }>;
     };
-    configuration?: { properties?: Record<string, { default?: unknown }> };
+    configuration?: {
+      properties?: Record<string, { default?: unknown; markdownDescription?: string }>
+    };
     jsonValidation?: Array<{ fileMatch?: string[] }>;
   };
 }
@@ -147,6 +149,12 @@ test('uses only the unified cross-platform config path', async () => {
       'safs.agentForwardingAgents'
     ]?.default,
     ['codex', 'claude', 'pi', 'dsh']
+  );
+  assert.match(
+    manifest.contributes?.configuration?.properties?.[
+      'safs.agentForwardingAgents'
+    ]?.markdownDescription ?? '',
+    /不在上述四项中.*SAFS: 为我的Agent安装转发功能/
   );
   assert.equal(
     manifest.contributes?.configuration?.properties?.['safs.agentPlatform']?.default,
