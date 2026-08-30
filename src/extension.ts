@@ -79,7 +79,8 @@ import {
   AgentMcpSetupResult, agentForwardingInstallMessage
 } from './agent-forwarding-notification';
 import {
-  findRemotePathCandidates, findRemoteTerminalPaths, resolveRemoteTerminalPath
+  findRemotePathCandidates, findRemoteTerminalPaths, resolveRemoteTerminalCwdReport,
+  resolveRemoteTerminalPath
 } from './terminal-links';
 
 const commandPrefix = 'safs';
@@ -537,22 +538,16 @@ function folderUri(folder: RemoteFolder, remotePath = folder.remoteRoot): string
 }
 
 function reportedRemoteTerminalCwd(
-  terminal: vscode.Terminal, fallback: string
+  terminal: vscode.Terminal,
+  info: NonNullable<ReturnType<typeof managedRemoteTerminals.get>>
 ): string {
-  const cwd = terminal.shellIntegration?.cwd;
-  if (!cwd || !path.posix.isAbsolute(cwd.path)) return fallback;
-  // A system-SSH terminal starts from a local process. Ignore a local cwd
-  // report and accept only a URI that identifies another host (or another
-  // remote scheme), otherwise relative links could silently open the wrong
-  // remote file before SSH shell integration has activated.
-  if (cwd.scheme === 'file') {
-    const authority = cwd.authority.toLowerCase();
-    const localAuthorities = new Set([
-      '', 'localhost', '127.0.0.1', '::1', os.hostname().toLowerCase()
-    ]);
-    if (localAuthorities.has(authority)) return fallback;
-  }
-  return path.posix.normalize(cwd.path);
+  // VS Code explicitly allows this URI to refer to another machine. In
+  // particular, a remote shell may report `file:///remote/path` without a
+  // hostname, so rejecting empty/local-looking authorities leaves the cwd
+  // permanently stuck at the SSH terminal's startup directory after `cd`.
+  const cwd = resolveRemoteTerminalCwdReport(terminal.shellIntegration?.cwd, info.remoteCwd);
+  info.remoteCwd = cwd;
+  return cwd;
 }
 
 function provideSafsTerminalLinks(
@@ -562,7 +557,7 @@ function provideSafsTerminalLinks(
   if (!info) return [];
   const folder = registry.get(info.mount.name);
   if (!folder) return [];
-  const remoteCwd = reportedRemoteTerminalCwd(context.terminal, info.remoteCwd);
+  const remoteCwd = reportedRemoteTerminalCwd(context.terminal, info);
   const location = currentRemoteLocation();
   const searchRoot = location?.mountName === info.mount.name
     && isRemotePathInsideRoot(folder.remoteRoot, location.remotePath)

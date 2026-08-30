@@ -18,6 +18,10 @@ export interface RemotePathSearchResult {
   truncated: boolean;
 }
 
+export interface TerminalCwdReport {
+  path: string;
+}
+
 const terminalTokenPattern = /"[^"\r\n]+"(?::\d+(?::\d+)?)?|'[^'\r\n]+'(?::\d+(?::\d+)?)?|[^\s"']+/gu;
 const locationSuffixPattern = /^(.*?)(?::([1-9]\d*)(?::([1-9]\d*))?)?$/u;
 
@@ -86,6 +90,19 @@ export function resolveRemoteTerminalPath(candidate: string, remoteCwd: string):
   return candidate.startsWith('/')
     ? path.posix.normalize(candidate)
     : path.posix.resolve(remoteCwd, candidate);
+}
+
+/**
+ * Prefer VS Code's live shell-integration cwd over the directory recorded
+ * when the SSH terminal was opened. Remote shells commonly report this as a
+ * `file:///...` URI with an empty authority, so the URI scheme/authority
+ * cannot be used to decide whether the path belongs to the local machine.
+ */
+export function resolveRemoteTerminalCwdReport(
+  reported: TerminalCwdReport | undefined, fallback: string
+): string {
+  if (!reported || !path.posix.isAbsolute(reported.path)) return fallback;
+  return path.posix.normalize(reported.path);
 }
 
 /**

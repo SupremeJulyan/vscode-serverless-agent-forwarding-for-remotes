@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  findRemotePathCandidates, findRemoteTerminalPaths, resolveRemoteTerminalPath
+  findRemotePathCandidates, findRemoteTerminalPaths, resolveRemoteTerminalCwdReport,
+  resolveRemoteTerminalPath
 } from '../src/terminal-links';
 
 test('finds absolute and relative compiler paths with locations', () => {
@@ -43,6 +44,20 @@ test('resolves paths against the remote terminal cwd', () => {
   );
   assert.equal(resolveRemoteTerminalPath('/etc/hosts', '/srv/project'), '/etc/hosts');
   assert.throws(() => resolveRemoteTerminalPath('a.ts', 'relative/cwd'), /must be absolute/);
+});
+
+test('accepts an authority-less file URI cwd reported by a remote shell', () => {
+  assert.equal(
+    resolveRemoteTerminalCwdReport(
+      { path: '/srv/project/batch_1' }, '/srv/project'
+    ),
+    '/srv/project/batch_1'
+  );
+  assert.equal(
+    resolveRemoteTerminalCwdReport({ path: 'relative/path' }, '/srv/project'),
+    '/srv/project'
+  );
+  assert.equal(resolveRemoteTerminalCwdReport(undefined, '/srv/project'), '/srv/project');
 });
 
 test('finds a basename omitted by a subdirectory listing without leaving the workspace', async () => {
