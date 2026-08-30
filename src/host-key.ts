@@ -24,7 +24,8 @@ export type HostKeyChangedAction = 'prompt' | 'reject' | 'accept';
 
 /** 用户对主机密钥弹窗的决策：追加、替换或取消。 */
 export type HostKeyDecision = 'accept' | 'replace' | 'refuse';
-export type HostKeyTrustResult = 'trusted' | HostKeyDecision;
+/** append 表示用户已把该地址确认为负载节点，后续新密钥可自动追加。 */
+export type HostKeyTrustResult = 'trusted' | 'append' | HostKeyDecision;
 
 let knownHostsFilePath = '';
 
@@ -172,6 +173,12 @@ export function hostEntryNames(host: HostConfig): string[] {
   return port === 22 ? [host.ip] : [`[${host.ip}]:${port}`, host.ip];
 }
 
+/** OpenSSH 会忽略该注释；SAFS 用它持久记录用户确认过的负载节点地址。 */
+function loadBalancedHostMarker(host: HostConfig): string {
+  const encoded = Buffer.from(hostEntryName(host), 'utf8').toString('base64url');
+  return `# SAFS_LOAD_BALANCED ${encoded}`;
+}
+
 /** 替换时额外清理旧版本写入、但 OpenSSH 不会匹配的方括号格式。 */
 function removableHostEntryNames(host: HostConfig): string[] {
   const port = host.port ?? 22;
@@ -203,13 +210,7 @@ export function hostKeyChangedAction(): HostKeyChangedAction {
     .get<HostKeyChangedAction>('hostKeyChangedAction', 'prompt');
 }
 
-/**
- * 把密钥行追加到 known_hosts 文件（幂等：已存在的行跳过）。
- */
-export async function appendKnownHostsFile(
-  filePath: string, keys: ProbedHostKey[], log?: (message: string) => void
-): Promise<void> {
-  const lines = keys.map((key) => `${key.host} ${key.type} ${key.blob}`);
+async function appendKnownHostsLines(filePath: string, lines: string[]): Promise<number> {
   let added = 0;
   await withKnownHostsLock(filePath, async () => {
     const existing = await readKnownHostsOrEmpty(filePath);
@@ -224,7 +225,41 @@ export async function appendKnownHostsFile(
       filePath, `${existing}${separator}${missing.join('\n')}\n`
     );
   });
+  return added;
+}
+
+/**
+ * 把密钥行追加到 known_hosts 文件（幂等：已存在的行跳过）。
+ */
+export async function appendKnownHostsFile(
+  filePath: string, keys: ProbedHostKey[], log?: (message: string) => void
+): Promise<void> {
+  const lines = keys.map((key) => `${key.host} ${key.type} ${key.blob}`);
+  const added = await appendKnownHostsLines(filePath, lines);
   if (added > 0) log?.(`已写入主机密钥记录（${added} 条）：${filePath}`);
+}
+
+/** 持久标记负载节点，并在同一次原子更新中追加本次确认的密钥。 */
+export async function appendLoadBalancedKnownHostsFile(
+  filePath: string, host: HostConfig, keys: ProbedHostKey[],
+  log?: (message: string) => void
+): Promise<void> {
+  const keyLines = keys.map((key) => `${key.host} ${key.type} ${key.blob}`);
+  const added = await appendKnownHostsLines(
+    filePath, [loadBalancedHostMarker(host), ...keyLines]
+  );
+  if (added > 0) {
+    log?.(`已记住主机"${host.name}"为负载节点并追加主机密钥：${filePath}`);
+  }
+}
+
+/** 该地址是否已由用户选择“追加新密钥”并持久确认为负载节点。 */
+export async function isLoadBalancedKnownHost(
+  filePath: string, host: HostConfig
+): Promise<boolean> {
+  const marker = loadBalancedHostMarker(host);
+  const content = await readKnownHostsOrEmpty(filePath);
+  return content.split(/\r?\n/).some((line) => line.trim() === marker);
 }
 
 /**
@@ -236,6 +271,7 @@ export async function replaceKnownHostsForHost(
   log?: (message: string) => void
 ): Promise<void> {
   const names = new Set(removableHostEntryNames(host));
+  const loadBalancedMarker = loadBalancedHostMarker(host);
   const entry = hostEntryName(host);
   const replacements = [...new Set(
     keys.map((key) => `${entry} ${key.type} ${key.blob}`)
@@ -243,7 +279,9 @@ export async function replaceKnownHostsForHost(
   await withKnownHostsLock(filePath, async () => {
     const existing = await readKnownHostsOrEmpty(filePath);
     const kept = existing.split(/\r?\n/).filter((line) => {
-      const match = /^(\S+)\s+/.exec(line.trim());
+      const trimmed = line.trim();
+      if (trimmed === loadBalancedMarker) return false;
+      const match = /^(\S+)\s+/.exec(trimmed);
       return !match || !names.has(match[1]);
     });
     while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
@@ -291,6 +329,19 @@ export async function recordTrustedHostKey(
 ): Promise<void> {
   if (!knownHostsFilePath) return;
   await appendKnownHostsFile(knownHostsFilePath, keys, log);
+}
+
+/** 记录“该地址是负载节点”的选择，并追加已确认密钥。 */
+export async function recordLoadBalancedHostKeys(
+  host: HostConfig, keys: ProbedHostKey[], log?: (message: string) => void
+): Promise<void> {
+  if (!knownHostsFilePath) return;
+  await appendLoadBalancedKnownHostsFile(knownHostsFilePath, host, keys, log);
+}
+
+async function loadBalancedPreferenceFor(host: HostConfig): Promise<boolean> {
+  if (!knownHostsFilePath) return false;
+  return isLoadBalancedKnownHost(knownHostsFilePath, host);
 }
 
 /** 用当前密钥替换扩展 known_hosts 中该主机的所有旧条目。 */
@@ -387,7 +438,8 @@ export { defaultPrompts };
  * 信任记录 = 扩展 known_hosts 文件（文件里有 = 已确认）：
  * 1. 文件已有匹配指纹 → 直接放行；
  * 2. 文件为空（首次连接）→ 弹窗确认；
- * 3. 文件非空但出现新密钥（后端轮换/重装）→ 弹窗确认。
+ * 3. 已标记负载节点且出现新密钥 → 自动追加；
+ * 4. 其他已知主机出现新密钥（后端轮换/重装）→ 弹窗确认。
  * 确认后的写入由调用方完成（hostVerifierFor / verifySystemSshHostKey）。
  *
  * @returns 已信任、追加、替换或拒绝；调用方据此更新信任库。
@@ -403,6 +455,10 @@ export async function verifyHostKeyWithPrompt(
   if (untrusted.length === 0) {
     return 'trusted';
   }
+  if (await loadBalancedPreferenceFor(host)) {
+    log?.(`主机"${host.name}"已标记为负载节点，自动接受新密钥：${untrusted.join(', ')}`);
+    return 'append';
+  }
   const decision = trusted.length === 0
     ? prompts.firstConnection(host, untrusted)
     : prompts.changed(host, trusted, untrusted);
@@ -412,7 +468,8 @@ export async function verifyHostKeyWithPrompt(
     return 'refuse';
   }
   log?.(`已确认主机"${host.name}"的密钥：${untrusted.join(', ')}`);
-  return choice;
+  // 只有“已有旧密钥后选择追加”才表示负载节点；首次连接的接受不做标记。
+  return trusted.length > 0 && choice === 'accept' ? 'append' : choice;
 }
 
 /**
@@ -467,7 +524,13 @@ export function hostVerifierFor(
       // prompt：文件比对 + 弹窗确认，确认后写入文件。
       const decision = await verifyHostKeyWithPrompt(host, [fingerprint], log);
       const allowed = decision !== 'refuse';
-      if (decision === 'accept') {
+      if (decision === 'append') {
+        try {
+          await recordLoadBalancedHostKeys(host, [entry(key)], log);
+        } catch (error) {
+          warnStoreFailure(error);
+        }
+      } else if (decision === 'accept') {
         try {
           await recordTrustedHostKey([entry(key)]);
         } catch (error) {

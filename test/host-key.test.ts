@@ -6,10 +6,12 @@ import * as path from 'node:path';
 import test from 'node:test';
 import { HostConfig } from '../src/config';
 import {
-  appendKnownHostsFile, changedKeyDecision, changedKeyPromptMessage,
+  appendKnownHostsFile, appendLoadBalancedKnownHostsFile,
+  changedKeyDecision, changedKeyPromptMessage,
   firstConnectionDecision, firstConnectionPromptMessage,
-  hostEntryName, hostEntryNames, keyTypeFromBlob, readTrustedFingerprints,
-  replaceKnownHostsForHost, setKnownHostsFilePath, sha256Fingerprint,
+  hostEntryName, hostEntryNames, isLoadBalancedKnownHost, keyTypeFromBlob,
+  readTrustedFingerprints, replaceKnownHostsForHost,
+  setKnownHostsFilePath, sha256Fingerprint,
   verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
@@ -263,12 +265,12 @@ test('verifyHostKeyWithPrompt prompts for untrusted keys in a mixed probe batch'
 
   assert.equal(
     await verifyHostKeyWithPrompt(host, [trusted, untrusted], undefined, injected),
-    'accept'
+    'append'
   );
   assert.deepEqual(shownNew, [untrusted]);
 });
 
-test('every new backend key prompts once and is then remembered', async () => {
+test('choosing append remembers a load-balanced host and suppresses later prompts', async () => {
   const { file } = tempKnownHosts();
   setKnownHostsFilePath(file);
   const host = hostAt(3004);
@@ -282,19 +284,37 @@ test('every new backend key prompts once and is then remembered', async () => {
   const fpsA = sha256Fingerprint(Buffer.from(blobA, 'base64'));
   assert.equal(await verifyHostKeyWithPrompt(host, [fpsA], undefined, injected), 'accept');
   await appendKnownHostsFile(file, [{ host: hostEntryName(host), type: 'ssh-ed25519', blob: blobA }]);
-  // 新后端：变化弹窗（每次新密钥都确认）。
+  // 新后端：首次选择追加，并由调用方原子记录负载节点偏好和密钥。
   const fpsB = sha256Fingerprint(Buffer.from(blobB, 'base64'));
-  assert.equal(await verifyHostKeyWithPrompt(host, [fpsB], undefined, injected), 'accept');
-  await appendKnownHostsFile(file, [{ host: hostEntryName(host), type: 'ssh-ed25519', blob: blobB }]);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fpsB], undefined, injected), 'append');
+  await appendLoadBalancedKnownHostsFile(file, host, [
+    { host: hostEntryName(host), type: 'ssh-ed25519', blob: blobB }
+  ]);
+  assert.equal(await isLoadBalancedKnownHost(file, host), true);
   assert.equal(firstPrompts, 1);
   assert.equal(changedPrompts, 1);
   // 已确认过的后端再次出现：文件命中，不弹窗。
   assert.equal(await verifyHostKeyWithPrompt(host, [fpsA], undefined, injected), 'trusted');
   assert.equal(changedPrompts, 1);
-  // 另一个新后端：再次弹窗。
+  // 另一个新后端：沿用负载节点偏好，自动追加，不再弹窗。
   const fpsC = sha256Fingerprint(Buffer.from(blobC, 'base64'));
-  assert.equal(await verifyHostKeyWithPrompt(host, [fpsC], undefined, injected), 'accept');
-  assert.equal(changedPrompts, 2);
+  assert.equal(await verifyHostKeyWithPrompt(host, [fpsC], undefined, injected), 'append');
+  assert.equal(changedPrompts, 1);
+});
+
+test('load-balanced preference is scoped by host and cleared by replacement', async () => {
+  const { file } = tempKnownHosts();
+  const host = hostAt(2222);
+  await appendLoadBalancedKnownHostsFile(file, host, [
+    { host: hostEntryName(host), type: 'ssh-ed25519', blob: blobA }
+  ]);
+  assert.equal(await isLoadBalancedKnownHost(file, host), true);
+  assert.equal(await isLoadBalancedKnownHost(file, hostAt(2223)), false);
+
+  await replaceKnownHostsForHost(file, host, [
+    { host: hostEntryName(host), type: 'ssh-ed25519', blob: blobB }
+  ]);
+  assert.equal(await isLoadBalancedKnownHost(file, host), false);
 });
 
 test('OpenSSH host-key failure detection excludes ordinary SSH failures', () => {
@@ -433,6 +453,46 @@ test('verifySystemSshHostKey first connection: trust stores the key and allows',
   assert.deepEqual(result, { ok: true });
   const content = await readFile(file, 'utf8');
   assert.ok(content.includes(lineFor(host, 'ssh-ed25519', blobA)));
+});
+
+test('system SSH persists append choice and auto-accepts later load-balanced keys', async () => {
+  const { file } = tempKnownHosts();
+  const host = hostAt(3012);
+  await writeFile(file, lineFor(host, 'ssh-ed25519', blobA) + '\n');
+  setKnownHostsFilePath(file);
+  let changedPrompts = 0;
+  const prompts = {
+    firstConnection: async () => { throw new Error('must prompt changed'); },
+    changed: async () => { changedPrompts += 1; return 'accept' as const; }
+  };
+  const probeFor = (blob: string): (() => Promise<HostKeyProbeResult>) => async () => ({
+    probed: true,
+    fingerprints: [sha256Fingerprint(Buffer.from(blob, 'base64'))],
+    keys: [{ host: hostEntryName(host), type: 'ssh-ed25519', blob }]
+  });
+
+  assert.deepEqual(
+    await verifySystemSshHostKey(
+      'prompt', host, 'linux', undefined, probeFor(blobB), prompts
+    ),
+    { ok: true }
+  );
+  assert.equal(await isLoadBalancedKnownHost(file, host), true);
+  assert.equal(changedPrompts, 1);
+
+  assert.deepEqual(
+    await verifySystemSshHostKey(
+      'prompt', host, 'linux', undefined, probeFor(blobC), {
+        firstConnection: async () => { throw new Error('must not prompt'); },
+        changed: async () => { throw new Error('must not prompt'); }
+      }
+    ),
+    { ok: true }
+  );
+  assert.equal(changedPrompts, 1);
+  const fingerprints = await readTrustedFingerprints(file, host);
+  assert.ok(fingerprints.includes(sha256Fingerprint(Buffer.from(blobB, 'base64'))));
+  assert.ok(fingerprints.includes(sha256Fingerprint(Buffer.from(blobC, 'base64'))));
 });
 
 test('verifySystemSshHostKey replaces stale keys when the user chooses replacement', async () => {

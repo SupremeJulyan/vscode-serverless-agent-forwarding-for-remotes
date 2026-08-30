@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { HostConfig } from './config';
 import {
-  appendKnownHostsFile, defaultPrompts, getKnownHostsFilePath,
+  appendKnownHostsFile, appendLoadBalancedKnownHostsFile, defaultPrompts,
+  getKnownHostsFilePath,
   HostKeyChangedAction, HostKeyPrompts, ProbedHostKey,
   replaceKnownHostsForHost, sha256Fingerprint, verifyHostKeyWithPrompt
 } from './host-key';
@@ -216,7 +217,8 @@ export async function runWithOpenSshHostKeyRetry<
  * 沿用 platform.ts 的 known_hosts 映射，不做预检）。
  *
  * 决策统一走 host-key.ts 的 verifyHostKeyWithPrompt（与内置 ssh2 通道共用），
- * 首次连接与每次新密钥（后端轮换/重装）都弹窗确认。
+ * 首次连接与未分类主机的新密钥会弹窗确认；用户选择追加后，该地址会持久
+ * 标记为负载节点，后续新密钥直接自动追加。
  * 确认通过后把探测到的密钥写入扩展独立 known_hosts 文件
  * （setKnownHostsFilePath 注入的路径），由 OpenSSH 原生校验兜底。
  *
@@ -259,6 +261,10 @@ export async function verifySystemSshHostKey(
     try {
       if (decision === 'replace') {
         await replaceKnownHostsForHost(knownHostsFile, host, result.keys, log);
+      } else if (decision === 'append') {
+        await appendLoadBalancedKnownHostsFile(
+          knownHostsFile, host, result.keys, log
+        );
       } else if (decision === 'accept') {
         await appendKnownHostsFile(knownHostsFile, result.keys, log);
       }
