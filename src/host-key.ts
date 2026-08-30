@@ -22,7 +22,7 @@ import { HostConfig } from './config';
 
 export type HostKeyChangedAction = 'prompt' | 'reject' | 'accept';
 
-/** 用户对主机密钥弹窗的决策：追加、替换或拒绝。 */
+/** 用户对主机密钥弹窗的决策：追加、替换或取消。 */
 export type HostKeyDecision = 'accept' | 'replace' | 'refuse';
 export type HostKeyTrustResult = 'trusted' | HostKeyDecision;
 
@@ -345,7 +345,7 @@ export function changedKeyPromptMessage(
     `服务器身份自上次连接后已改变：这可能是服务器主机密钥已更换，` +
     `或者你实际上连接到了一台伪装成该服务器的计算机。\n\n` +
     `旧密钥：${shownOld.join('\n')}\n新密钥：${newFingerprints.join('\n')}\n\n` +
-    `请选择替换旧密钥（SSH主机重装）/ 追加新密钥（SSH主机为负载节点） / 拒绝（不信任该主机）。`;
+    `请选择替换旧密钥（SSH主机重装），或追加新密钥（SSH主机为负载节点）。`;
 }
 
 /** 密钥变化弹窗：明确选择替换或追加，X / Esc 即拒绝。 */
@@ -354,7 +354,7 @@ export async function promptHostKeyChanged(
 ): Promise<HostKeyDecision> {
   const choice = await vscode.window.showWarningMessage(
     changedKeyPromptMessage(host, oldFingerprints, newFingerprints),
-    { modal: true }, '替换旧密钥', '追加新密钥', '拒绝'
+    { modal: true }, '替换旧密钥', '追加新密钥'
   );
   return changedKeyDecision(choice);
 }
