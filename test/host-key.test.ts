@@ -13,8 +13,8 @@ import {
   verifyHostKeyWithPrompt
 } from '../src/host-key';
 import {
-  parseKeyscanLines, parseKeyscanOutput, verifySystemSshHostKey,
-  HostKeyProbeResult
+  isOpenSshHostKeyVerificationFailure, parseKeyscanLines, parseKeyscanOutput,
+  runWithOpenSshHostKeyRetry, verifySystemSshHostKey, HostKeyProbeResult
 } from '../src/system-ssh-host-key';
 
 /** 每个测试使用独立临时 known_hosts 文件，避免模块级路径串扰。 */
@@ -267,6 +267,59 @@ test('every new backend key prompts once and is then remembered', async () => {
   const fpsC = sha256Fingerprint(Buffer.from(blobC, 'base64'));
   assert.equal(await verifyHostKeyWithPrompt(host, [fpsC], undefined, injected), 'accept');
   assert.equal(changedPrompts, 2);
+});
+
+test('OpenSSH host-key failure detection excludes ordinary SSH failures', () => {
+  assert.equal(isOpenSshHostKeyVerificationFailure(
+    'Host key verification failed.'
+  ), true);
+  assert.equal(isOpenSshHostKeyVerificationFailure(
+    'No ED25519 host key is known for [10.0.0.2]:2222 and you have requested strict checking.'
+  ), true);
+  assert.equal(isOpenSshHostKeyVerificationFailure(
+    'WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!'
+  ), true);
+  assert.equal(isOpenSshHostKeyVerificationFailure(
+    'Permission denied (publickey,password).'
+  ), false);
+  assert.equal(isOpenSshHostKeyVerificationFailure(
+    'Connection timed out'
+  ), false);
+});
+
+test('system SSH refreshes trust and retries only host-key failures', async () => {
+  let runs = 0;
+  let refreshes = 0;
+  const result = await runWithOpenSshHostKeyRetry(async () => {
+    runs += 1;
+    return runs < 3
+      ? { exitCode: 255, stdout: '', stderr: 'Host key verification failed.' }
+      : { exitCode: 0, stdout: 'ok', stderr: '' };
+  }, async () => { refreshes += 1; });
+  assert.equal(result.exitCode, 0);
+  assert.equal(runs, 3);
+  assert.equal(refreshes, 2);
+
+  runs = 0;
+  refreshes = 0;
+  const authFailure = await runWithOpenSshHostKeyRetry(async () => {
+    runs += 1;
+    return { exitCode: 255, stdout: '', stderr: 'Permission denied (publickey).' };
+  }, async () => { refreshes += 1; });
+  assert.equal(authFailure.exitCode, 255);
+  assert.equal(runs, 1);
+  assert.equal(refreshes, 0);
+});
+
+test('system SSH host-key retries are bounded', async () => {
+  let runs = 0;
+  let refreshes = 0;
+  await runWithOpenSshHostKeyRetry(async () => {
+    runs += 1;
+    return { exitCode: 255, stderr: 'Host key verification failed.' };
+  }, async () => { refreshes += 1; }, undefined, 2);
+  assert.equal(runs, 3);
+  assert.equal(refreshes, 2);
 });
 
 test('parseKeyscanOutput extracts unique fingerprints from keyscan lines', () => {

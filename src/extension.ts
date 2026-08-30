@@ -58,7 +58,10 @@ import {
 } from './sftp/uri';
 import { ensureWslBridgeExecutable, setWslBundlePath } from './wsl-bridge';
 import { hostVerifierFor, setKnownHostsFilePath } from './host-key';
-import { verifySystemSshHostKey } from './system-ssh-host-key';
+import {
+  isOpenSshHostKeyVerificationFailure, maxOpenSshHostKeyRetries,
+  runWithOpenSshHostKeyRetry, verifySystemSshHostKey
+} from './system-ssh-host-key';
 import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
@@ -126,6 +129,7 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   mount: MountConfig;
   remoteCwd: string;
   retryWithSystemSsh?: boolean;
+  hostKeyRetries?: number;
   /** 内置 ssh2 终端实例：live-sync 用它安全补发 cd（shell 就绪前入队）。 */
   pty?: import('./ssh2-terminal').Ssh2Terminal;
   diagnostic?: { file: string; command: string };
@@ -1390,7 +1394,7 @@ async function recoverTerminalDiagnostics(context: vscode.ExtensionContext): Pro
 async function logManagedTerminalExit(
   terminal: vscode.Terminal,
   info: NonNullable<ReturnType<typeof managedRemoteTerminals.get>>
-): Promise<void> {
+): Promise<string> {
   const status = terminal.exitStatus;
   bridgeOutput?.appendLine(
     `[终端] ${terminal.name} 已关闭；mount=${info.mount.name}；exit=${
@@ -1398,10 +1402,12 @@ async function logManagedTerminalExit(
     }；reason=${status?.reason ?? 'unknown'}`
   );
   const diagnostic = info.diagnostic;
-  if (!diagnostic) return;
+  if (!diagnostic) return '';
+  let diagnosticText = '';
   try {
     const raw = decodeTerminalDiagnostic(await readFile(diagnostic.file));
     const cleaned = cleanTerminalDiagnostic(redactSensitiveText(raw));
+    diagnosticText = cleaned.text;
     if (cleaned.text) {
       bridgeOutput?.appendLine(
         `[终端 stderr] $ ${diagnostic.command}${cleaned.truncated ? '（仅保留末尾 64 KiB）' : ''}\n${
@@ -1428,13 +1434,14 @@ async function logManagedTerminalExit(
       }
     });
   }
+  return diagnosticText;
 }
 
 async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promise<void> {
   const reopen = managedRemoteTerminals.get(terminal);
   managedRemoteTerminals.delete(terminal);
   if (!reopen) return;
-  await logManagedTerminalExit(terminal, reopen);
+  const diagnosticText = await logManagedTerminalExit(terminal, reopen);
   if (terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
     return;
   }
@@ -1445,6 +1452,24 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   const remoteCwd = location && location.mountName === reopen.mount.name
     ? location.remotePath
     : reopen.remoteCwd;
+  if (isOpenSshHostKeyVerificationFailure(diagnosticText)) {
+    const retry = reopen.hostKeyRetries ?? 0;
+    if (retry < maxOpenSshHostKeyRetries) {
+      bridgeOutput?.appendLine(
+        `[主机密钥] 终端连接命中尚未记录的负载节点，重新探测并重连（${
+          retry + 1
+        }/${maxOpenSshHostKeyRetries}）`
+      );
+      await openTerminal(
+        vscodeContext, reopen.mount, remoteCwd, undefined, true, true, retry + 1
+      );
+      return;
+    }
+    void vscode.window.showErrorMessage(
+      `远程终端“${terminal.name}”连续遇到未确认的负载节点，已停止自动重连。`
+    );
+    return;
+  }
   if (reopen.retryWithSystemSsh) {
     void vscode.window.showInformationMessage(
       `SAFS: 内置终端与该服务器不兼容，已改用系统 SSH 重连“${reopen.mount.name}”。`
@@ -1476,7 +1501,8 @@ async function warmSshCliCapabilities(): Promise<void> {
 
 async function openTerminal(
   context: vscode.ExtensionContext, requestedMount?: MountConfig, requestedRemoteCwd?: string,
-  loadedConfig?: BridgeConfig, forceNew = false, forceSystemSsh = false
+  loadedConfig?: BridgeConfig, forceNew = false, forceSystemSsh = false,
+  hostKeyRetries = 0
 ): Promise<{ terminal: vscode.Terminal; created: boolean } | undefined> {
   const config = loadedConfig ?? await readConfig();
   const location = requestedMount ? undefined : currentRemoteLocation();
@@ -1632,7 +1658,7 @@ async function openTerminal(
       });
     performanceLine(`${mount.name} SSH 终端创建（不含远端握手）`, terminalStartedAt);
     managedRemoteTerminals.set(terminal, {
-      mount, remoteCwd, pty: builtinPty, diagnostic
+      mount, remoteCwd, pty: builtinPty, diagnostic, hostKeyRetries
     });
     if (credentials) {
       const disposable = vscode.window.onDidCloseTerminal((closed) => {
@@ -2017,19 +2043,20 @@ async function executeRemoteCommand(
         }
       } else {
         await warmSshCliCapabilities();
-        let hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
+        const hostKeyPolicy = settings().get<'accept' | 'prompt' | 'reject'>(
           'hostKeyChangedAction', 'prompt'
         );
-        if (hostKeyPolicy === 'prompt') {
+        const verifyCurrentSystemSshHostKey = async (): Promise<void> => {
           const verification = await verifySystemSshHostKey(
             hostKeyPolicy, resolved.hostConfig, platformAdapter.kind,
             (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`),
             undefined, undefined,
             { WSL_VPN_SSH_CONFIG: configPath() }
           );
-          if (!verification.ok) {
-            throw new Error(verification.reason);
-          }
+          if (!verification.ok) throw new Error(verification.reason);
+        };
+        if (hostKeyPolicy === 'prompt') {
+          await verifyCurrentSystemSshHostKey();
         }
         const plan = platformAdapter.exec(resolved.hostConfig, remoteCwd, input.command, {
           reuseSshConnection: settings().get<boolean>('reuseSshConnection', true),
@@ -2042,7 +2069,15 @@ async function executeRemoteCommand(
           ...await bridgeMasterPasswordEnv(context, resolved.hostConfig),
           ...credentials?.env
         };
-        result = await executeAgentMcpCommand(plan, controller.signal, maxOutputBytes);
+        const runSystemSsh = () => executeAgentMcpCommand(
+          plan, controller.signal, maxOutputBytes
+        );
+        result = hostKeyPolicy === 'prompt'
+          ? await runWithOpenSshHostKeyRetry(
+              runSystemSsh, verifyCurrentSystemSshHostKey,
+              (message) => bridgeOutput?.appendLine(`[主机密钥] ${message}`)
+            )
+          : await runSystemSsh();
       }
       if (timedOut) {
         throw new Error(`远程命令执行超时（${commandTimeoutMs}ms）`);

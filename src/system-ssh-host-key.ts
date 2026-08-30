@@ -173,6 +173,44 @@ export interface HostKeyVerification {
   reason?: string;
 }
 
+/** 负载节点在预检与实际连接之间切换时，最多重新探测并重试的次数。 */
+export const maxOpenSshHostKeyRetries = 3;
+
+/** 仅识别 OpenSSH 的严格主机密钥校验错误，认证/网络/远端命令失败不重试。 */
+export function isOpenSshHostKeyVerificationFailure(message: string): boolean {
+  const patterns = [
+    /host\s+key\s+verification\s+failed/i,
+    /remote\s+host\s+identification\s+has\s+changed/i,
+    /no\s+\S+\s+host\s+key\s+is\s+known\s+for[\s\S]*strict\s+checking/i,
+    /offending\s+\S+\s+host\s+key/i,
+    /host\s+key\s+for\s+\S+[\s\S]*has\s+changed/i
+  ];
+  return patterns.some((pattern) => pattern.test(message));
+}
+
+/**
+ * OpenSSH 因负载节点换钥而严格拒绝时，刷新信任记录并重试。每次刷新仍走
+ * 正常指纹弹窗；达到上限后原样返回失败，避免不稳定地址造成无限重连。
+ */
+export async function runWithOpenSshHostKeyRetry<
+  T extends { exitCode: number; stderr: string }
+>(
+  run: () => Promise<T>, refreshTrust: () => Promise<void>,
+  log?: (message: string) => void, maxRetries = maxOpenSshHostKeyRetries
+): Promise<T> {
+  let result = await run();
+  for (let retry = 1;
+    retry <= maxRetries
+      && result.exitCode !== 0
+      && isOpenSshHostKeyVerificationFailure(result.stderr);
+    retry += 1) {
+    log?.(`OpenSSH 严格校验遇到尚未记录的负载节点，重新探测并重试（${retry}/${maxRetries}）`);
+    await refreshTrust();
+    result = await run();
+  }
+  return result;
+}
+
 /**
  * 系统 ssh 路径连接前的主机密钥校验（仅 prompt 模式执行；accept/reject
  * 沿用 platform.ts 的 known_hosts 映射，不做预检）。
