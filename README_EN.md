@@ -90,6 +90,11 @@ Remote terminals connect over SSH; no VS Code Server is required on the host.
 - When a system SSH terminal exits, its exit code and captured stderr are written
   to **SAFS Log** in the Output panel. Diagnostics left by an abnormal extension
   shutdown are recovered on the next activation.
+- Remote terminals created by SAFS support Ctrl+click (Cmd+click on macOS) for
+  absolute paths, relative paths, and `file:line:column` references. A file may
+  be outside the directory currently shown in Explorer, but it must remain
+  inside the configured mount root; out-of-range paths prompt for another SSH
+  config and cannot bypass mount or symbolic-link boundaries.
 - With `remote_terminal: "open"`, a terminal is connected automatically after
   opening the remote folder.
 - Opening a synced task opens the local mirror workspace: the terminal still

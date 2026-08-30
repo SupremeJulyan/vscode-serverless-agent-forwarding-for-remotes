@@ -78,6 +78,9 @@ import { shouldUseBuiltinSshTerminal } from './terminal-routing';
 import {
   AgentMcpSetupResult, agentForwardingInstallMessage
 } from './agent-forwarding-notification';
+import {
+  findRemoteTerminalPaths, resolveRemoteTerminalPath
+} from './terminal-links';
 
 const commandPrefix = 'safs';
 const platformAdapter = createPlatformAdapter();
@@ -95,6 +98,8 @@ const openConfigAction = 'Open Config';
 const addSshConfigAction = 'Add SSH Config';
 const reconnectRemoteTerminalAction = '重连终端';
 const viewSafsLogAction = '查看 SAFS 日志';
+const addTerminalLinkMountAction = '添加 SSH 配置';
+const openTerminalLinkConfigAction = '打开配置';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
 const logClearIntervalMs = 24 * 60 * 60 * 1000;
 /** Agent MCP 探测结果缓存：configureDetectedAgents 的 get 探测在 TTL 内复用，
@@ -134,6 +139,14 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   pty?: import('./ssh2-terminal').Ssh2Terminal;
   diagnostic?: { file: string; command: string };
 }>();
+
+interface SafsTerminalLink extends vscode.TerminalLink {
+  mountName: string;
+  remotePath: string;
+  remoteRoot: string;
+  line?: number;
+  column?: number;
+}
 
 /** 当前窗口对应挂载的活动传输通道；非远程窗口或尚未连接时返回 undefined。 */
 function currentSessionTransport(): 'sftp' | 'scp' | undefined {
@@ -519,6 +532,100 @@ async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
 
 function folderUri(folder: RemoteFolder, remotePath = folder.remoteRoot): string {
   return remoteUri(folder.mountName, workspacePathForRemote(folder, remotePath));
+}
+
+function reportedRemoteTerminalCwd(
+  terminal: vscode.Terminal, fallback: string
+): string {
+  const cwd = terminal.shellIntegration?.cwd;
+  if (!cwd || !path.posix.isAbsolute(cwd.path)) return fallback;
+  // A system-SSH terminal starts from a local process. Ignore a local cwd
+  // report and accept only a URI that identifies another host (or another
+  // remote scheme), otherwise relative links could silently open the wrong
+  // remote file before SSH shell integration has activated.
+  if (cwd.scheme === 'file') {
+    const authority = cwd.authority.toLowerCase();
+    const localAuthorities = new Set([
+      '', 'localhost', '127.0.0.1', '::1', os.hostname().toLowerCase()
+    ]);
+    if (localAuthorities.has(authority)) return fallback;
+  }
+  return path.posix.normalize(cwd.path);
+}
+
+function provideSafsTerminalLinks(
+  context: vscode.TerminalLinkContext
+): SafsTerminalLink[] {
+  const info = managedRemoteTerminals.get(context.terminal);
+  if (!info) return [];
+  const folder = registry.get(info.mount.name);
+  if (!folder) return [];
+  const remoteCwd = reportedRemoteTerminalCwd(context.terminal, info.remoteCwd);
+  return findRemoteTerminalPaths(context.line).map((match) => {
+    const remotePath = resolveRemoteTerminalPath(match.path, remoteCwd);
+    const insideRoot = isRemotePathInsideRoot(folder.remoteRoot, remotePath);
+    return {
+      startIndex: match.startIndex,
+      length: match.length,
+      tooltip: insideRoot
+        ? `打开远程文件 ${remotePath}${match.line ? `:${match.line}${
+          match.column ? `:${match.column}` : ''
+        }` : ''}`
+        : `路径超出挂载范围 ${folder.remoteRoot}，点击配置新的 SSH 挂载`,
+      mountName: info.mount.name,
+      remotePath,
+      remoteRoot: folder.remoteRoot,
+      ...(match.line ? { line: match.line } : {}),
+      ...(match.column ? { column: match.column } : {})
+    };
+  });
+}
+
+async function handleSafsTerminalLink(link: SafsTerminalLink): Promise<void> {
+  const currentRoot = registry.get(link.mountName)?.remoteRoot ?? link.remoteRoot;
+  if (!isRemotePathInsideRoot(currentRoot, link.remotePath)) {
+    const selected = await vscode.window.showWarningMessage(
+      `远程路径 ${link.remotePath} 不在挂载“${link.mountName}”的范围 ${currentRoot} 内。`,
+      addTerminalLinkMountAction,
+      openTerminalLinkConfigAction
+    );
+    if (selected === addTerminalLinkMountAction) {
+      await vscode.commands.executeCommand(`${commandPrefix}.addSshConfig`);
+    } else if (selected === openTerminalLinkConfigAction) {
+      await vscode.commands.executeCommand(`${commandPrefix}.openConfig`);
+    }
+    return;
+  }
+
+  let folder = registry.get(link.mountName);
+  if (!folder) {
+    const config = await readConfig();
+    const mount = config.mounts.find((candidate) => candidate.name === link.mountName);
+    if (!mount) throw new Error(`远程挂载不存在：${link.mountName}`);
+    folder = await ensureFolder(mount);
+  }
+  // Recheck against the live, server-resolved root in case the configuration
+  // changed after the terminal printed this link.
+  if (!isRemotePathInsideRoot(folder.remoteRoot, link.remotePath)) {
+    throw new Error(`远程路径已超出挂载范围：${link.remotePath}`);
+  }
+  const uri = vscode.Uri.parse(folderUri(folder, link.remotePath));
+  const fileStat = await vscode.workspace.fs.stat(uri);
+  if ((fileStat.type & vscode.FileType.Directory) !== 0) {
+    await vscode.commands.executeCommand('revealInExplorer', uri);
+    return;
+  }
+  const document = await vscode.workspace.openTextDocument(uri);
+  let selection: vscode.Range | undefined;
+  if (link.line) {
+    const line = Math.min(link.line - 1, Math.max(document.lineCount - 1, 0));
+    const column = Math.min(
+      Math.max((link.column ?? 1) - 1, 0), document.lineAt(line).text.length
+    );
+    const position = new vscode.Position(line, column);
+    selection = new vscode.Range(position, position);
+  }
+  await vscode.window.showTextDocument(document, { preview: true, selection });
 }
 
 function localRootForFolder(folder: RemoteFolder): string {
@@ -3338,6 +3445,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.registerFileSystemProvider(remoteFileSystemScheme, provider, {
       isCaseSensitive: true,
       isReadonly: false
+    }),
+    vscode.window.registerTerminalLinkProvider({
+      provideTerminalLinks: (linkContext) => provideSafsTerminalLinks(linkContext),
+      handleTerminalLink: (link) => guard(
+        () => handleSafsTerminalLink(link as SafsTerminalLink)
+      )
     }),
     vscode.window.registerTreeDataProvider(`${commandPrefix}.mounts`, tree),
     { dispose: () => { void pool.close(); syncManager?.dispose(); } }

@@ -76,6 +76,10 @@ code --install-extension safs-serverless-agent-forwarding-1.6.7.vsix
 - 系统 SSH 终端退出时，扩展会把退出码和捕获到的 stderr 写入输出面板的
   **SAFS Log**；即使错误只在终端短暂出现，也可在日志中追溯。异常退出遗留的
   诊断会在下次激活插件时恢复。
+- 插件创建的远程终端支持 `Ctrl+点击`（macOS 为 `Cmd+点击`）文件路径，可识别
+  绝对路径、相对路径和 `文件:行:列` 并直接打开远程文件。文件可以位于当前资源
+  管理器目录之外，但必须仍在该配置的挂载根目录内；超出范围时会提示添加 SSH
+  配置，不会绕过挂载边界或符号链接校验。
 - 配置 `remote_terminal: "open"` 时，打开远程目录后会自动连接终端。
 - 开启本地同步后打开的是本地镜像工作区：仍会按原 `remote_terminal` 设置自动
   连接原远程目录的终端；`safs.terminalFollowsActiveFile` 对镜像中的本地文件
