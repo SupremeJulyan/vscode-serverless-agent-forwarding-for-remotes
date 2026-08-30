@@ -150,31 +150,20 @@ async function probeViaBridge(
   }
 }
 
-const probeCache = new Map<string, { at: number; result: HostKeyProbeResult }>();
-const probeCacheTtlMs = 30_000;
-
-/** 探测主机当前密钥（带 30s 内存缓存，避免终端+命令执行连续探测）。
- * 瞬时失败（VPN 中继首次启动、PowerShell 启动延迟、慢链路）自动重试一次，
- * 尽量让新密钥写进扩展 known_hosts，避免系统 ssh 降级为不校验。 */
+/**
+ * 探测主机当前密钥。安全决策不缓存：负载切换或服务器刚换钥时，旧结果会让
+ * 随后的 StrictHostKeyChecking=yes 校验失败。瞬时失败自动重试一次。
+ */
 export async function probeHostKey(
   host: HostConfig, platformKind: PlatformKind,
   log?: (message: string) => void, env?: NodeJS.ProcessEnv
 ): Promise<HostKeyProbeResult> {
-  const cacheKey = `${host.ip}:${host.port ?? 22}`;
-  const cached = probeCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < probeCacheTtlMs) {
-    return cached.result;
-  }
   const probe = platformKind === 'wsl' ? probeViaBridge : probeNative;
   let result = await probe(host, platformKind, log, env);
   if (!result.probed) {
     log?.(`主机密钥首次探测失败，将重试：${result.error ?? '未知错误'}`);
     await new Promise((resolve) => setTimeout(resolve, 800));
     result = await probe(host, platformKind, log, env);
-  }
-  // 失败结果不缓存：防止 30s 内后续探测直接命中失败缓存而一直降级。
-  if (result.probed) {
-    probeCache.set(cacheKey, { at: Date.now(), result });
   }
   return result;
 }
