@@ -50,7 +50,7 @@
 ### 安装
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.7.vsix
+code --install-extension safs-serverless-agent-forwarding-1.6.8.vsix
 ```
 
 ### 添加 SSH 配置并打开远程目录
