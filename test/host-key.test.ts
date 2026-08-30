@@ -191,6 +191,29 @@ test('verifyHostKeyWithPrompt first connection: refuse blocks', async () => {
   assert.equal(await verifyHostKeyWithPrompt(host, [fps], undefined, injected), 'refuse');
 });
 
+test('verifyHostKeyWithPrompt prompts for untrusted keys in a mixed probe batch', async () => {
+  const { file } = tempKnownHosts();
+  setKnownHostsFilePath(file);
+  const host = hostAt(3011);
+  await writeFile(file, lineFor(host, 'ssh-ed25519', blobA) + '\n');
+  const trusted = sha256Fingerprint(Buffer.from(blobA, 'base64'));
+  const untrusted = sha256Fingerprint(Buffer.from(blobB, 'base64'));
+  let shownNew: string[] = [];
+  const injected = {
+    firstConnection: async () => { throw new Error('must prompt changed'); },
+    changed: async (_host: HostConfig, _old: string[], next: string[]) => {
+      shownNew = next;
+      return 'accept' as const;
+    }
+  };
+
+  assert.equal(
+    await verifyHostKeyWithPrompt(host, [trusted, untrusted], undefined, injected),
+    'accept'
+  );
+  assert.deepEqual(shownNew, [untrusted]);
+});
+
 test('every new backend key prompts once and is then remembered', async () => {
   const { file } = tempKnownHosts();
   setKnownHostsFilePath(file);

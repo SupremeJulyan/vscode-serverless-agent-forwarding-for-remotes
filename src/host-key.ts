@@ -284,18 +284,21 @@ export async function verifyHostKeyWithPrompt(
   log?: (message: string) => void, prompts: HostKeyPrompts = defaultPrompts
 ): Promise<HostKeyTrustResult> {
   const trusted = await trustedFingerprintsFor(host);
-  if (fingerprints.some((fingerprint) => trusted.includes(fingerprint))) {
+  const untrusted = [...new Set(fingerprints)].filter(
+    (fingerprint) => !trusted.includes(fingerprint)
+  );
+  if (untrusted.length === 0) {
     return 'trusted';
   }
   const decision = trusted.length === 0
-    ? prompts.firstConnection(host, fingerprints)
-    : prompts.changed(host, trusted, fingerprints);
+    ? prompts.firstConnection(host, untrusted)
+    : prompts.changed(host, trusted, untrusted);
   const choice = await decision;
   if (choice === 'refuse') {
     log?.(`用户拒绝信任主机"${host.name}"的新密钥，已中止连接`);
     return 'refuse';
   }
-  log?.(`已确认主机"${host.name}"的密钥：${fingerprints.join(', ')}`);
+  log?.(`已确认主机"${host.name}"的密钥：${untrusted.join(', ')}`);
   return choice;
 }
 
