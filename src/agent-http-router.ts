@@ -208,6 +208,7 @@ export class AgentHttpRouter {
         ? input.workspaceId.trim()
         : '';
       const agentCwd = typeof input.agentCwd === 'string' ? input.agentCwd.trim() : '';
+      const listCandidates = input.listCandidates === true;
       let workspace = workspaceId
         ? workspaces.find((candidate) => candidate.instanceId === workspaceId)
         : undefined;
@@ -222,6 +223,13 @@ export class AgentHttpRouter {
           'REMOTE_WORKSPACE_NOT_FOUND',
           'The selected remote workspace is no longer active.',
           { workspaceId }
+        );
+      }
+      if (!workspaceId && listCandidates) {
+        return this.toolError(
+          'WORKSPACE_SELECTION_REQUIRED',
+          'Active SAFS workspace candidates are listed below. Ask the user to choose one in the Agent conversation, then call this tool again with its workspaceId and userConfirmed=true.',
+          { candidates: workspaces.map((candidate) => this.selectableWorkspace(candidate)) }
         );
       }
       if (!workspaceId) {

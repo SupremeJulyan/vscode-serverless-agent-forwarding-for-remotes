@@ -32,16 +32,17 @@ __safs_escape_value() {
 }
 
 __safs_report_cwd() {
-  local status=$?
+  local status=${1-$?}
   builtin printf '\e]633;P;Cwd=%s\a' "$(__safs_escape_value "$PWD")"
   return "$status"
 }
 
+__safs_prompt_command='(__safs_status=$?; if builtin declare -F __safs_report_cwd >/dev/null; then __safs_report_cwd "$__safs_status"; else exit "$__safs_status"; fi)'
 if [[ $(builtin declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a '* ]]; then
-  PROMPT_COMMAND+=(__safs_report_cwd)
+  PROMPT_COMMAND+=("$__safs_prompt_command")
 elif [[ -n ${PROMPT_COMMAND:-} ]]; then
-  PROMPT_COMMAND="${PROMPT_COMMAND}"$'\n''__safs_report_cwd'
+  PROMPT_COMMAND="${PROMPT_COMMAND}"$'\n'"$__safs_prompt_command"
 else
-  PROMPT_COMMAND=__safs_report_cwd
+  PROMPT_COMMAND="$__safs_prompt_command"
 fi
-
+unset __safs_prompt_command

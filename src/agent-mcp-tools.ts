@@ -16,6 +16,7 @@ export const routedAgentMcpInstructions = [
   'This MCP server is only for SAFS remote workspaces; do not call SAFS tools for ordinary local workspaces.',
   'For an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once with the Agent actual current working directory in agentCwd. An exact SAFS placeholder match binds to that window instance automatically.',
   'If the cwd does not match exactly or is ambiguous, the tool returns candidates. Ask the user to choose in the Agent conversation, then call it again with that workspaceId and userConfirmed=true. Never select in the same turn as asking, and never treat one candidate as consent. No VS Code Quick Pick is used.',
+  'When the user asks to list available SAFS workspaces, change host/configuration, or switch away from the current binding, call safs_get_remote_workspace with listCandidates=true. Do not call it with agentCwd for a switch request, because an exact cwd would only rebind the current window.',
   'A workspaceId selection or switch cancels the previous task. After it succeeds, stop the current workflow and wait for a new user request before calling workspace tools.',
   'Use the returned workspace and its remote_list, remote_write, remote_search, current_remote_file, and run_remote_command tools for that workspace.',
   'File content is never returned into the conversation; inspect files with run_remote_command (head, sed, grep, tail, wc, diff) on the remote host instead.',
@@ -53,10 +54,11 @@ function toolDefinitions(routed: boolean): AgentMcpToolDefinition[] {
       name: 'safs_get_remote_workspace',
       title: routed ? 'Bind a SAFS remote workspace' : 'Bind this SAFS remote workspace',
       description: routed
-        ? 'Pass the Agent actual current working directory in agentCwd to bind an exact SAFS placeholder automatically. If no exact match exists, ask the user to choose one returned candidate, then call again with workspaceId and userConfirmed=true. No VS Code Quick Pick or focused-window fallback is used. The returned bindingId stays pinned to that window instance.'
+        ? 'For initial binding, pass the Agent actual current working directory in agentCwd. To list or switch SAFS workspaces/hosts/configurations, pass listCandidates=true instead; passing agentCwd would reselect the current exact match. Ask the user to choose a returned candidate, then call again with workspaceId and userConfirmed=true. No VS Code Quick Pick or focused-window fallback is used. The returned bindingId stays pinned to that window instance.'
         : 'Returns the SAFS workspace served by this exact VS Code window for later remote tool calls.',
       inputSchema: routed ? {
         agentCwd: z.string().min(1).optional(),
+        listCandidates: z.boolean().optional(),
         workspaceId: z.string().min(1).optional(),
         userConfirmed: z.literal(true).optional()
       } : {},

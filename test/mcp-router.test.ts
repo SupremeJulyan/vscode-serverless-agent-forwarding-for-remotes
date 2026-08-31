@@ -267,6 +267,17 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
       { workspaceId: 'focused', workspaceRoot: '/srv/a', host: 'host-a' },
       { workspaceId: 'other', workspaceRoot: '/srv/b', host: 'host-b' }
     ]);
+    const switchCandidates = await client.callTool({
+      name: 'safs_get_remote_workspace',
+      arguments: { agentCwd: '/local/agent-cwd/a', listCandidates: true }
+    });
+    assert.equal(switchCandidates.isError, true);
+    const switchCandidatesValue = JSON.parse((switchCandidates.content as any[])[0].text);
+    assert.equal(switchCandidatesValue.code, 'WORKSPACE_SELECTION_REQUIRED');
+    assert.deepEqual(switchCandidatesValue.candidates, [
+      { workspaceId: 'focused', workspaceRoot: '/srv/a', host: 'host-a' },
+      { workspaceId: 'other', workspaceRoot: '/srv/b', host: 'host-b' }
+    ]);
     const selected = await client.callTool({
       name: 'safs_get_remote_workspace', arguments: { workspaceId: 'other' }
     });

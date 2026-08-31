@@ -60,7 +60,7 @@ intranet hosts and remote servers that forbid port forwarding.
 ### Install
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.8.vsix
+code --install-extension safs-serverless-agent-forwarding-1.6.9.vsix
 ```
 
 ### Add an SSH config and open a remote folder
@@ -226,6 +226,9 @@ as follows:
   tool with the selected ID and `userConfirmed: true` only after an explicit reply.
   A manual selection stops the previous task and waits for a new request. No VS Code
   Quick Pick, focused-window fallback, home-cwd special case, or single-candidate guess is used.
+- When the user asks to list or switch SAFS workspaces, hosts, or configurations,
+  the Agent uses `listCandidates: true` to retrieve every active candidate instead
+  of letting an exact cwd match bind the current window again.
 - Each window's dynamic-port service can only access its own mount and cannot
   reach other mounts through request parameters.
 

@@ -50,7 +50,7 @@
 ### 安装
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.8.vsix
+code --install-extension safs-serverless-agent-forwarding-1.6.9.vsix
 ```
 
 ### 添加 SSH 配置并打开远程目录
@@ -181,6 +181,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
   对话中询问用户，收到明确回复后再用所选 `workspaceId` 和 `userConfirmed: true`
   调用同一工具；选择成功后停止旧任务并等待新请求。不会打开 VS Code Quick Pick，
   也不会按焦点窗口、`~/` 或唯一候选猜测目标。
+- 用户要求列出、切换 SAFS 工作区/主机/配置时，Agent 用 `listCandidates: true`
+  获取全部活动候选；此时不会因 cwd 精确匹配而再次绑定当前窗口。
 - 每个窗口的动态端口服务只能访问自己绑定的挂载，不能通过请求参数跨窗口
   访问其他挂载。
 
