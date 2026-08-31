@@ -14,7 +14,7 @@ export const directAgentMcpInstructions =
 
 export const routedAgentMcpInstructions = [
   'This MCP server is only for SAFS remote workspaces; do not call SAFS tools for ordinary local workspaces.',
-  'For an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once with the Agent actual current working directory in agentCwd. An exact SAFS placeholder match binds to that window instance automatically.',
+  'For an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once with the Agent actual current working directory in agentCwd. An exact SAFS placeholder match binds automatically; if it does not match, one uniquely focused SAFS window also binds automatically.',
   'If the cwd does not match exactly or is ambiguous, the tool returns candidates. Ask the user to choose in the Agent conversation, then call safs_switch_remote_workspace with that workspaceId and userConfirmed=true. Never select in the same turn as asking, and never treat one candidate as consent. No VS Code Quick Pick is used.',
   'When the user asks to list available SAFS workspaces, change host/configuration, or switch away from the current binding, call safs_switch_remote_workspace without a workspaceId. Never use safs_get_remote_workspace for switching.',
   'A successful safs_switch_remote_workspace call cancels the previous task. Stop the current workflow and wait for a new user request before calling workspace tools.',
@@ -55,7 +55,7 @@ function toolDefinitions(routed: boolean): AgentMcpToolDefinition[] {
       name: 'safs_get_remote_workspace',
       title: routed ? 'Bind a SAFS remote workspace' : 'Bind this SAFS remote workspace',
       description: routed
-        ? 'Gets and initially binds the SAFS workspace matching the Agent actual current working directory in agentCwd. This tool never switches workspaces. If matching fails, ask the user to choose a returned candidate and use safs_switch_remote_workspace. The returned bindingId stays pinned to that window instance.'
+        ? 'Gets and initially binds the SAFS workspace matching the Agent actual current working directory in agentCwd, or the uniquely focused SAFS window when cwd does not match. This tool never switches workspaces. If neither is unique, ask the user to choose a returned candidate and use safs_switch_remote_workspace. The returned bindingId stays pinned to that window instance.'
         : 'Returns the SAFS workspace served by this exact VS Code window for later remote tool calls.',
       inputSchema: routed ? {
         agentCwd: z.string().min(1)

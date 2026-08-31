@@ -218,8 +218,9 @@ as follows:
   entry; the windows elect one Router Leader on the fixed port, and another
   window takes over when the leader exits.
 - On its first `safs_get_remote_workspace` call, the Agent passes its current cwd.
-  The router binds automatically only when that cwd exactly matches one window's
-  empty placeholder and pins the returned `bindingId` to that window's `instanceId`.
+  The router binds automatically when that cwd exactly matches one window's empty
+  placeholder, or when the cwd does not match and exactly one SAFS window is focused,
+  and pins the returned `bindingId` to that window's `instanceId`.
   Closing the window expires the binding; it never falls back to another window.
 - If the cwd has no exact match or is ambiguous, the get tool returns candidates with
   `workspaceId`. The Agent asks the user in its own conversation and calls

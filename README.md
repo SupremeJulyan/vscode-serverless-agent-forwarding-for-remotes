@@ -175,7 +175,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 - 同时打开多个远程窗口时，所有窗口共用同一个固定 HTTP MCP 入口；窗口之间
   通过固定端口选举一个 Router Leader，Leader 关闭后其他窗口自动接管。
 - Agent 首次调用 `safs_get_remote_workspace` 时传入自己的当前 cwd；Router 只在它
-  与某个窗口发布的空占位 cwd 精确匹配时自动绑定，并把 `bindingId` 固定到该窗口的
+  与某个窗口发布的空占位 cwd 精确匹配，或 cwd 不匹配但恰好一个 SAFS 窗口处于焦点时
+  自动绑定，并把 `bindingId` 固定到该窗口的
   `instanceId`。窗口关闭后绑定失效，绝不改投剩余窗口。
 - cwd 无法精确匹配或匹配不唯一时，get 工具返回带 `workspaceId` 的候选；Agent 在自身
   对话中询问用户，收到明确回复后再用所选 `workspaceId` 和 `userConfirmed: true`

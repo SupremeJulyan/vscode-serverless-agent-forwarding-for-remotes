@@ -244,12 +244,16 @@ export class AgentHttpRouter {
           (candidate) => canonicalAgentCwd(candidate.agentCwd!).length === longest
         );
         if (closest.length === 1) workspace = closest[0];
+        if (!workspace && closest.length === 0) {
+          const focused = workspaces.filter((candidate) => candidate.focused);
+          if (focused.length === 1) workspace = focused[0];
+        }
         if (!workspace) {
           return this.toolError(
             'WORKSPACE_SELECTION_REQUIRED',
             closest.length > 1
               ? 'The Agent cwd matches multiple active SAFS windows. Ask the user to choose one candidate in the Agent conversation, then call this tool again with its workspaceId.'
-              : 'The Agent cwd does not match an active SAFS placeholder. Ask the user to choose one candidate in the Agent conversation, then call this tool again with its workspaceId.',
+              : 'The Agent cwd does not match an active SAFS placeholder and there is no unique focused SAFS window. Ask the user to choose one candidate in the Agent conversation, then call safs_switch_remote_workspace with its workspaceId.',
             {
               agentCwd,
               candidates: workspaces.map((candidate) => this.selectableWorkspace(candidate))

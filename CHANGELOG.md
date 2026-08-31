@@ -2,6 +2,8 @@
 
 ## 1.7.0
 
+- 修复 Agent 从普通本地 cwd 使用 SAFS 时无法自动绑定：cwd 未命中占位目录但恰好有
+  一个 SAFS 窗口处于焦点时，Router 自动绑定该窗口；焦点不唯一时仍要求明确选择。
 - 新增独立 MCP 工具 `safs_switch_remote_workspace`：get 工具只负责按 cwd 初始绑定；
   显式切换负责列候选与确认选择，并注销同一 Agent 会话的旧 binding。
 
