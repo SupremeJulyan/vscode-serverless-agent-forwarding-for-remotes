@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.0
+
+- 新增独立 MCP 工具 `safs_switch_remote_workspace`：get 工具只负责按 cwd 初始绑定；
+  显式切换负责列候选与确认选择，并注销同一 Agent 会话的旧 binding。
+
 ## 1.6.9
 
 - Agent 请求列出或切换 SAFS 工作区、主机、配置时，可显式获取全部活动候选，避免

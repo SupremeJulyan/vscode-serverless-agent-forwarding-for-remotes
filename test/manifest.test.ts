@@ -32,7 +32,7 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.6.9');
+  assert.equal(manifest.version, '1.7.0');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
@@ -117,6 +117,7 @@ test('SAFS MCP is opt-in for remote context instead of mandatory in every worksp
   assert.ok(tools.includes('Do not call SAFS tools for ordinary local workspaces'));
   assert.ok(tools.includes('do not call SAFS tools for ordinary local workspaces'));
   assert.ok(tools.includes("'safs_get_remote_workspace'"));
+  assert.ok(tools.includes("'safs_switch_remote_workspace'"));
   assert.ok(direct.includes('registerAgentMcpTools'));
   assert.ok(router.includes('registerAgentMcpTools'));
   assert.equal(direct.includes('safs_list_remote_workspaces'), false);

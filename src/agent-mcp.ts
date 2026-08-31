@@ -105,6 +105,10 @@ export class AgentMcpServer {
                 localShellAllowed: false
               } : { workspace: null };
             });
+          case 'safs_switch_remote_workspace':
+            return invoke(async () => {
+              throw new Error('Workspace switching is only available through the SAFS router');
+            });
           case 'current_remote_file':
             return invoke(() => this.callbacks.currentFile(input));
           case 'remote_list':

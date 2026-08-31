@@ -196,7 +196,7 @@ export class AgentHttpRouter {
     name: string, input: Record<string, unknown>, agentName?: string,
     agentPlatform?: AgentPlatformLabel
   ): Promise<any> {
-    if (name === 'safs_get_remote_workspace') {
+    if (name === 'safs_get_remote_workspace' || name === 'safs_switch_remote_workspace') {
       const workspaces = this.workspaces();
       if (!workspaces.length) {
         return this.toolError(
@@ -204,15 +204,15 @@ export class AgentHttpRouter {
           'No active Agent-forwarded Serverless Remote window was found.'
         );
       }
+      const switching = name === 'safs_switch_remote_workspace';
       const workspaceId = typeof input.workspaceId === 'string'
         ? input.workspaceId.trim()
         : '';
       const agentCwd = typeof input.agentCwd === 'string' ? input.agentCwd.trim() : '';
-      const listCandidates = input.listCandidates === true;
       let workspace = workspaceId
         ? workspaces.find((candidate) => candidate.instanceId === workspaceId)
         : undefined;
-      if (workspaceId && input.userConfirmed !== true) {
+      if (switching && workspaceId && input.userConfirmed !== true) {
         return this.toolError(
           'WORKSPACE_SELECTION_NOT_CONFIRMED',
           'Ask the user to choose in the Agent conversation first, then call again with workspaceId and userConfirmed=true.'
@@ -225,14 +225,14 @@ export class AgentHttpRouter {
           { workspaceId }
         );
       }
-      if (!workspaceId && listCandidates) {
+      if (switching && !workspaceId) {
         return this.toolError(
           'WORKSPACE_SELECTION_REQUIRED',
           'Active SAFS workspace candidates are listed below. Ask the user to choose one in the Agent conversation, then call this tool again with its workspaceId and userConfirmed=true.',
           { candidates: workspaces.map((candidate) => this.selectableWorkspace(candidate)) }
         );
       }
-      if (!workspaceId) {
+      if (!switching) {
         const canonicalCwd = agentCwd ? canonicalAgentCwd(agentCwd) : '';
         const matches = canonicalCwd ? workspaces.filter((candidate) => candidate.agentCwd
           && cwdContains(canonicalAgentCwd(candidate.agentCwd), canonicalCwd)) : [];
@@ -258,19 +258,25 @@ export class AgentHttpRouter {
         }
       }
       const selectedWorkspace = workspace!;
+      const owner = this.bindingKey(agentName, agentPlatform);
+      if (switching) {
+        for (const [existingId, existing] of this.bindings) {
+          if (existing.owner === owner) this.bindings.delete(existingId);
+        }
+      }
       const bindingId = randomUUID().replace(/-/g, '').slice(0, 16);
       this.bindings.set(bindingId, {
         instanceId: selectedWorkspace.instanceId,
         host: selectedWorkspace.host,
         workspaceRoot: selectedWorkspace.workspaceRoot,
-        owner: this.bindingKey(agentName, agentPlatform)
+        owner
       });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
           workspace: this.publicWorkspace(selectedWorkspace),
           bindingId,
-          selectedAutomatically: !workspaceId,
-          ...(workspaceId ? {
+          selectedAutomatically: !switching,
+          ...(switching ? {
             previousTaskCancelled: true,
             mustWaitForNewUserRequest: true
           } : {}),
@@ -391,7 +397,7 @@ export class AgentHttpRouter {
       );
       // 绑定工具由固定路由器本地完成；其它工具只在实际执行窗口记录，避免双份日志。
       if (method === 'tools/call' && typeof tool === 'string'
-        && tool === 'safs_get_remote_workspace') {
+        && ['safs_get_remote_workspace', 'safs_switch_remote_workspace'].includes(tool)) {
         const input = request.body?.params?.arguments;
         this.options.audit?.({
           toolName: tool,

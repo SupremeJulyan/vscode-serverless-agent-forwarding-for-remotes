@@ -50,7 +50,7 @@
 ### 安装
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.9.vsix
+code --install-extension safs-serverless-agent-forwarding-1.7.0.vsix
 ```
 
 ### 添加 SSH 配置并打开远程目录
@@ -177,12 +177,13 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 - Agent 首次调用 `safs_get_remote_workspace` 时传入自己的当前 cwd；Router 只在它
   与某个窗口发布的空占位 cwd 精确匹配时自动绑定，并把 `bindingId` 固定到该窗口的
   `instanceId`。窗口关闭后绑定失效，绝不改投剩余窗口。
-- cwd 无法精确匹配或匹配不唯一时，工具返回带 `workspaceId` 的候选；Agent 在自身
+- cwd 无法精确匹配或匹配不唯一时，get 工具返回带 `workspaceId` 的候选；Agent 在自身
   对话中询问用户，收到明确回复后再用所选 `workspaceId` 和 `userConfirmed: true`
-  调用同一工具；选择成功后停止旧任务并等待新请求。不会打开 VS Code Quick Pick，
+  调用 `safs_switch_remote_workspace`；选择成功后停止旧任务并等待新请求。不会打开 VS Code Quick Pick，
   也不会按焦点窗口、`~/` 或唯一候选猜测目标。
-- 用户要求列出、切换 SAFS 工作区/主机/配置时，Agent 用 `listCandidates: true`
-  获取全部活动候选；此时不会因 cwd 精确匹配而再次绑定当前窗口。
+- 用户要求列出、切换 SAFS 工作区/主机/配置时，Agent 调用
+  `safs_switch_remote_workspace` 获取全部活动候选；get 工具不再判断切换。
+  切换成功会注销该 Agent 会话的旧 binding。
 - 每个窗口的动态端口服务只能访问自己绑定的挂载，不能通过请求参数跨窗口
   访问其他挂载。
 
@@ -191,7 +192,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 - 仅当用户明确要求操作 SAFS，或上下文已表明当前是 `safs://` 虚拟工作区时，
   调用 `safs_get_remote_workspace` 并传入 Agent 当前工作目录 `agentCwd`；普通本地
   工作区不要调用 SAFS 工具。精确匹配时自动绑定；否则由用户在 Agent 对话中从返回的
-  候选选择 `workspaceId`，确认后传入 `userConfirmed: true`。后续远程工具必须携带
+  候选选择 `workspaceId`，确认后调用 `safs_switch_remote_workspace` 并传入
+  `userConfirmed: true`。后续远程工具必须携带
   返回的 `bindingId`。
 - `workspaceRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
   SFTP 配置的挂载根。`remote_list`、`remote_search` 的相对路径以及

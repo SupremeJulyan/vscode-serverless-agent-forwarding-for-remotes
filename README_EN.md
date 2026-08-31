@@ -60,7 +60,7 @@ intranet hosts and remote servers that forbid port forwarding.
 ### Install
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.6.9.vsix
+code --install-extension safs-serverless-agent-forwarding-1.7.0.vsix
 ```
 
 ### Add an SSH config and open a remote folder
@@ -221,14 +221,16 @@ as follows:
   The router binds automatically only when that cwd exactly matches one window's
   empty placeholder and pins the returned `bindingId` to that window's `instanceId`.
   Closing the window expires the binding; it never falls back to another window.
-- If the cwd has no exact match or is ambiguous, the tool returns candidates with
-  `workspaceId`. The Agent asks the user in its own conversation and calls the same
-  tool with the selected ID and `userConfirmed: true` only after an explicit reply.
+- If the cwd has no exact match or is ambiguous, the get tool returns candidates with
+  `workspaceId`. The Agent asks the user in its own conversation and calls
+  `safs_switch_remote_workspace` with the selected ID and `userConfirmed: true` only
+  after an explicit reply.
   A manual selection stops the previous task and waits for a new request. No VS Code
   Quick Pick, focused-window fallback, home-cwd special case, or single-candidate guess is used.
 - When the user asks to list or switch SAFS workspaces, hosts, or configurations,
-  the Agent uses `listCandidates: true` to retrieve every active candidate instead
-  of letting an exact cwd match bind the current window again.
+  the Agent calls `safs_switch_remote_workspace` to retrieve every active candidate;
+  the get tool no longer decides whether a request is a switch. A successful switch
+  invalidates that Agent session's older bindings.
 - Each window's dynamic-port service can only access its own mount and cannot
   reach other mounts through request parameters.
 
@@ -239,7 +241,7 @@ as follows:
   the Agent's current directory as `agentCwd`. Do not call SAFS tools for an
   ordinary local workspace. An exact placeholder match binds automatically;
   otherwise the user chooses a returned `workspaceId` in the Agent conversation and
-  the confirmed call includes `userConfirmed: true`.
+  calls `safs_switch_remote_workspace` with `userConfirmed: true`.
   Later tools pass the returned `bindingId`.
 - `workspaceRoot` is the remote directory actually open in that VS Code window,
   not the configured SFTP mount root. Relative `remote_list`/`remote_search`

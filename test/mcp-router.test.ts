@@ -268,8 +268,7 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
       { workspaceId: 'other', workspaceRoot: '/srv/b', host: 'host-b' }
     ]);
     const switchCandidates = await client.callTool({
-      name: 'safs_get_remote_workspace',
-      arguments: { agentCwd: '/local/agent-cwd/a', listCandidates: true }
+      name: 'safs_switch_remote_workspace', arguments: {}
     });
     assert.equal(switchCandidates.isError, true);
     const switchCandidatesValue = JSON.parse((switchCandidates.content as any[])[0].text);
@@ -279,7 +278,7 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
       { workspaceId: 'other', workspaceRoot: '/srv/b', host: 'host-b' }
     ]);
     const selected = await client.callTool({
-      name: 'safs_get_remote_workspace', arguments: { workspaceId: 'other' }
+      name: 'safs_switch_remote_workspace', arguments: { workspaceId: 'other' }
     });
     assert.equal(selected.isError, true);
     assert.equal(
@@ -287,7 +286,7 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
       'WORKSPACE_SELECTION_NOT_CONFIRMED'
     );
     const confirmed = await client.callTool({
-      name: 'safs_get_remote_workspace',
+      name: 'safs_switch_remote_workspace',
       arguments: { workspaceId: 'other', userConfirmed: true }
     });
     const selectedValue = JSON.parse((confirmed.content as any[])[0].text);
@@ -304,7 +303,7 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
     assert.equal(JSON.parse((bound.content as any[])[0].text).label, 'second');
 
     const stale = await client.callTool({
-      name: 'safs_get_remote_workspace',
+      name: 'safs_switch_remote_workspace',
       arguments: { workspaceId: 'missing', userConfirmed: true }
     });
     assert.equal(stale.isError, true);
@@ -318,7 +317,7 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
     assert.equal(JSON.parse((stillBound.content as any[])[0].text).label, 'second');
 
     const switchedSelection = await client.callTool({
-      name: 'safs_get_remote_workspace',
+      name: 'safs_switch_remote_workspace',
       arguments: { workspaceId: 'focused', userConfirmed: true }
     });
     const switchedId = JSON.parse((switchedSelection.content as any[])[0].text).bindingId;
@@ -329,7 +328,11 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
     const originalBinding = await client.callTool({
       name: 'remote_list', arguments: { bindingId, path: '.' }
     });
-    assert.equal(JSON.parse((originalBinding.content as any[])[0].text).label, 'second');
+    assert.equal(originalBinding.isError, true);
+    assert.equal(
+      JSON.parse((originalBinding.content as any[])[0].text).code,
+      'WORKSPACE_BINDING_INVALID'
+    );
   } finally {
     await client.close();
     await Promise.allSettled([router.stop(), first.stop(), second.stop()]);
@@ -380,7 +383,7 @@ test('router refuses to forward to its own port (loop protection)', async () => 
     await router.start();
     await client.connect(new StreamableHTTPClientTransport(new URL(router.url)));
     const selected = await client.callTool({
-      name: 'safs_get_remote_workspace',
+      name: 'safs_switch_remote_workspace',
       arguments: { workspaceId: 'self', userConfirmed: true }
     });
     const bindingId = JSON.parse((selected.content as any[])[0].text).bindingId;
