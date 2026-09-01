@@ -82,7 +82,10 @@ code --install-extension safs-serverless-agent-forwarding-1.7.0.vsix
   配置，不会绕过挂载边界或符号链接校验。若 `ls 子目录` 等命令只输出文件名，
   直接路径不存在时会在当前远程工作区内受限搜索：唯一结果直接打开，多项结果
   由用户选择。内置 ssh2 终端会自动探测 Bash、Zsh、Fish，并通过独立的会话级
-  Shell Integration 上报 `$PWD`，因此执行 `cd` 后，相对路径会立即按新目录打开。
+  Shell Integration 上报 `$PWD` 和完整的命令生命周期，因此执行 `cd` 后相对路径会
+  立即按新目录打开，并启用 VS Code 的命令成功/失败标记、命令导航、输出范围、
+  Sticky Scroll、最近命令和终端 Quick Fix。若 Bash 已安装无法安全串接的第三方
+  DEBUG trap，则自动降级为仅上报 cwd，不干扰用户现有 hook。
   它不修改 `.bashrc`、`.zshrc` 或 Fish 配置；Bash/Fish 只使用会话文件描述符，
   Zsh 的私有临时启动目录会在用户配置加载后立即删除。
 - 配置 `remote_terminal: "open"` 时，打开远程目录后会自动连接终端。

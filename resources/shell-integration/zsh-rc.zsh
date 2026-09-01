@@ -32,12 +32,39 @@ __safs_escape_value() {
 }
 
 __safs_report_cwd() {
-  local status=$?
+  local status=${1-$?}
   builtin printf '\e]633;P;Cwd=%s\a' "$(__safs_escape_value "$PWD")"
   return "$status"
 }
 
-add-zsh-hook precmd __safs_report_cwd
+__safs_prompt_start() { builtin printf '\e]633;A\a'; }
+__safs_prompt_end() { builtin printf '\e]633;B\a'; }
+
+__safs_current_command=''
+__safs_prior_prompt=''
+
+__safs_precmd() {
+  local status=$?
+  if [[ -n $__safs_current_command ]]; then
+    builtin printf '\e]633;D;%s\a' "$status"
+  fi
+  __safs_report_cwd "$status"
+  __safs_current_command=''
+  __safs_prior_prompt=$PS1
+  PS1="%{$(__safs_prompt_start)%}${PS1}%{$(__safs_prompt_end)%}"
+  return "$status"
+}
+
+__safs_preexec() {
+  PS1=$__safs_prior_prompt
+  __safs_current_command=$1
+  builtin printf '\e]633;E;%s\a' "$(__safs_escape_value "$1")"
+  builtin printf '\e]633;C\a'
+}
+
+add-zsh-hook precmd __safs_precmd
+add-zsh-hook preexec __safs_preexec
+builtin printf '\e]633;P;HasRichCommandDetection=True\a'
 
 ZDOTDIR=$SAFS_USER_ZDOTDIR
 __safs_cleanup_integration_startup
