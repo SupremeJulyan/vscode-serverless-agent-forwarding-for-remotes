@@ -67,6 +67,10 @@ import {
   hasRequiredWslDependencies, installWslDependencies
 } from './dependency-installer';
 import { appendMcpCommandLog, appendMcpToolLog } from './mcp-log';
+import {
+  localPathForAgent, localPathFromAgent,
+  validateLocalDownloadTarget, validateLocalUploadSource
+} from './local-transfer-path';
 import { redactSensitiveText } from './redact';
 import { shellQuote } from './shell-quote';
 import {
@@ -1235,7 +1239,10 @@ async function startRemoteSyncWithProgress(
   });
 }
 
-async function visualDownload(uri?: vscode.Uri): Promise<void> {
+async function visualDownload(
+  uri?: vscode.Uri, forcedLocalPath?: string, transferTimeoutMs?: number,
+  secureLocalRoot?: string
+): Promise<boolean> {
   const resolvedUri = uri && uri.scheme === remoteFileSystemScheme
     ? uri
     : vscode.window.activeTextEditor?.document.uri;
@@ -1249,30 +1256,37 @@ async function visualDownload(uri?: vscode.Uri): Promise<void> {
   const session = await pool.get(folder.hostName);
   const stat = await session.stat(remotePath);
   if (stat.type === 'directory') {
-    await downloadRemoteDirectory(session, remotePath);
-  } else {
-    await downloadRemoteFile(session, remotePath, stat.size);
+    return downloadRemoteDirectory(
+      session, remotePath, forcedLocalPath, transferTimeoutMs, secureLocalRoot
+    );
   }
+  return downloadRemoteFile(
+    session, remotePath, stat.size, forcedLocalPath, transferTimeoutMs
+  );
 }
 
 async function downloadRemoteFile(
-  session: SftpSession, remotePath: string, totalBytes: number
-): Promise<void> {
+  session: SftpSession, remotePath: string, totalBytes: number, forcedLocalPath?: string,
+  transferTimeoutMs?: number
+): Promise<boolean> {
   const baseName = path.posix.basename(remotePath);
-  const picked = await vscode.window.showSaveDialog({
+  const target = forcedLocalPath ?? (await vscode.window.showSaveDialog({
     title: 'SAFS：下载到',
     defaultUri: vscode.Uri.file(path.join(os.homedir(), baseName)),
     saveLabel: '下载'
-  });
-  if (!picked) return;
-  const target = picked.fsPath;
-  await vscode.window.withProgress({
+  }))?.fsPath;
+  if (!target) return false;
+  return vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: `正在下载 ${baseName}`,
     cancellable: true
   }, async (progress, token) => {
     const controller = new AbortController();
     const onCancelled = token.onCancellationRequested(() => controller.abort());
+    let timedOut = false;
+    const timeout = transferTimeoutMs && transferTimeoutMs > 0
+      ? setTimeout(() => { timedOut = true; controller.abort(); }, transferTimeoutMs)
+      : undefined;
     let cumulative = 0;
     // 立即上报一次：通知一出现即带文件名/大小，而不是等跨过 1% 才显示。
     progress.report({
@@ -1297,64 +1311,102 @@ async function downloadRemoteFile(
         message: `完成：${baseName}（${formatDownloadBytes(totalBytes)}）`,
         increment: totalBytes > 0 ? 100 - cumulative / totalBytes * 100 : undefined
       });
+      return true;
     } catch (error) {
       if (controller.signal.aborted) {
+        if (timedOut) throw new Error(`文件传输超时（${transferTimeoutMs}ms）`);
         // writeStreamToFile 已删除半成品文件。
         void vscode.window.showInformationMessage(`已取消下载 ${baseName}。`);
-        return;
+        return false;
       }
       throw error;
     } finally {
+      if (timeout) clearTimeout(timeout);
       onCancelled.dispose();
     }
   });
 }
 
 async function downloadRemoteDirectory(
-  session: SftpSession, remotePath: string
-): Promise<void> {
+  session: SftpSession, remotePath: string, forcedLocalPath?: string,
+  transferTimeoutMs?: number, secureLocalRoot?: string
+): Promise<boolean> {
   const baseName = path.posix.basename(remotePath);
-  const picked = await vscode.window.showOpenDialog({
-    title: 'SAFS：选择下载目标目录',
-    canSelectFolders: true,
-    canSelectMany: false,
-    openLabel: '下载到这里',
-    defaultUri: vscode.Uri.file(os.homedir())
-  });
-  if (!picked || picked.length === 0) return;
-  const targetRoot = path.join(picked[0].fsPath, baseName);
+  let targetRoot = forcedLocalPath;
+  if (!targetRoot) {
+    const picked = await vscode.window.showOpenDialog({
+      title: 'SAFS：选择下载目标目录',
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: '下载到这里',
+      defaultUri: vscode.Uri.file(os.homedir())
+    });
+    if (!picked || picked.length === 0) return false;
+    targetRoot = path.join(picked[0].fsPath, baseName);
+  }
+  const selectedTargetRoot = targetRoot;
   // 先统计文件清单与总大小（复用指纹扫描，readDirectory 已带 size，无额外 stat）。
   const lines = await scanRemote(session, remotePath);
   const files: Array<{ rel: string; size: number }> = [];
+  const directories: string[] = [];
   let totalBytes = 0;
   for (const line of lines) {
-    if (!line.startsWith('f:')) continue;
     const rel = line.slice(2, line.indexOf(':', 2));
+    if (line.startsWith('d:')) {
+      directories.push(rel);
+      continue;
+    }
+    if (!line.startsWith('f:')) continue;
     const size = Number((line.slice(rel.length + 2).match(/^\d+/) ?? ['0'])[0]);
     files.push({ rel, size });
     totalBytes += size;
   }
-  await vscode.window.withProgress({
+  return vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: `正在下载目录 ${baseName}`,
     cancellable: true
   }, async (progress, token) => {
     const controller = new AbortController();
     const onCancelled = token.onCancellationRequested(() => controller.abort());
+    let timedOut = false;
+    const timeout = transferTimeoutMs && transferTimeoutMs > 0
+      ? setTimeout(() => { timedOut = true; controller.abort(); }, transferTimeoutMs)
+      : undefined;
     let cumulative = 0;
     let currentFile = '';
     progress.report({
       message: `${baseName}：0 B / ${formatDownloadBytes(totalBytes)}（0%）`
     });
     try {
+      let safeTargetRoot = selectedTargetRoot;
+      if (secureLocalRoot) {
+        safeTargetRoot = await validateLocalDownloadTarget(
+          secureLocalRoot, selectedTargetRoot
+        );
+      }
+      await mkdir(safeTargetRoot, { recursive: true });
+      for (const directory of directories) {
+        if (controller.signal.aborted) break;
+        let localDirectory = path.join(safeTargetRoot, ...directory.split('/'));
+        if (secureLocalRoot) {
+          localDirectory = await validateLocalDownloadTarget(
+            secureLocalRoot, localDirectory
+          );
+        }
+        await mkdir(localDirectory, { recursive: true });
+      }
       for (const file of files) {
         if (controller.signal.aborted) break;
         // 显示"根目录名 + 相对路径"（如 AF3/af3.bin.zst），与上传一致。
         currentFile = path.posix.join(baseName, file.rel);
+        let localFile = path.join(safeTargetRoot, ...file.rel.split('/'));
+        if (secureLocalRoot) {
+          localFile = await validateLocalDownloadTarget(secureLocalRoot, localFile);
+        }
         const source = await session.readFileStream(
           path.posix.join(remotePath, file.rel), controller.signal
         );
-        await writeStreamToFile(source, path.join(targetRoot, ...file.rel.split('/')), {
+        await writeStreamToFile(source, localFile, {
           onDelta: (delta) => {
             cumulative += delta;
             const percent = totalBytes > 0 ? cumulative / totalBytes * 100 : 0;
@@ -1369,23 +1421,27 @@ async function downloadRemoteDirectory(
         });
       }
       if (controller.signal.aborted) {
+        if (timedOut) throw new Error(`文件传输超时（${transferTimeoutMs}ms）`);
         // 当前文件的半成品已被 writeStreamToFile 删除；已完成的文件保留。
         void vscode.window.showInformationMessage(
           `已取消下载目录 ${baseName}（已完成的文件已保留）。`
         );
-        return;
+        return false;
       }
       progress.report({
         message: `完成：${formatDownloadBytes(totalBytes)}`,
         increment: totalBytes > 0 ? 100 - cumulative / totalBytes * 100 : undefined
       });
+      return true;
     } catch (error) {
       if (controller.signal.aborted) {
+        if (timedOut) throw new Error(`文件传输超时（${transferTimeoutMs}ms）`);
         void vscode.window.showInformationMessage(`已取消下载目录 ${baseName}。`);
-        return;
+        return false;
       }
       throw error;
     } finally {
+      if (timeout) clearTimeout(timeout);
       onCancelled.dispose();
     }
   });
@@ -1393,32 +1449,39 @@ async function downloadRemoteDirectory(
 
 // ---- SAFS：可视化上传（本地 → 远程，流式 + 进度 + 可取消） ----
 
-async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
+async function visualUpload(
+  resources: vscode.Uri[], forcedMountName?: string, forcedTargetDir?: string,
+  secureWorkspaceRoot?: string, transferTimeoutMs?: number
+): Promise<boolean> {
   const sources = await collectUploadSources(resources);
-  if (sources.length === 0) return;
+  if (sources.length === 0) return false;
   // 第一步：选择远程挂载（来自 ~/.safs/config.json，无需打开远程目录）。
-  const mount = await selectMount('选择要上传到的远程挂载');
-  if (!mount) return;
   const config = await readConfig();
+  const mount = forcedMountName
+    ? config.mounts.find((candidate) => candidate.name === forcedMountName)
+    : await selectMount('选择要上传到的远程挂载');
+  if (forcedMountName && !mount) throw new Error(`远程目录不存在：${forcedMountName}`);
+  if (!mount) return false;
   const resolved = resolveMount(config, mount);
   const session = await pool.get(resolved.hostConfig.name);
   const remoteRoot = await session.realpath(mount.remote_path);
   // 第二步：选择/输入远程目标目录（Tab 补全、回车确认）。
-  const picked = await promptRemoteDirectory(session, remoteRoot, remoteRoot, mount.name);
-  if (!picked) return;
+  const picked = forcedTargetDir
+    ?? await promptRemoteDirectory(session, remoteRoot, remoteRoot, mount.name);
+  if (!picked) return false;
   const targetDir = picked.startsWith('/') ? picked : path.posix.join(remoteRoot, picked);
   const plan = await planUploads(sources, targetDir);
-  if (plan.files.length === 0) {
-    void vscode.window.showInformationMessage('没有可上传的文件。');
-    return;
-  }
-  await vscode.window.withProgress({
+  return vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: `正在上传到 ${mount.name}:${targetDir}`,
     cancellable: true
   }, async (progress, token) => {
     const controller = new AbortController();
     const onCancelled = token.onCancellationRequested(() => controller.abort());
+    let timedOut = false;
+    const timeout = transferTimeoutMs && transferTimeoutMs > 0
+      ? setTimeout(() => { timedOut = true; controller.abort(); }, transferTimeoutMs)
+      : undefined;
     let cumulative = 0;
     let currentName = '';
     let currentRemote = '';
@@ -1429,7 +1492,11 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
       // 一次性创建全部远程目录（含目标根与空目录），再逐文件上传。
       for (const dir of plan.dirs) {
         if (controller.signal.aborted) break;
-        await ensureRemoteDir(session, dir);
+        if (secureWorkspaceRoot) {
+          await ensureRemoteTransferDirectory(session, secureWorkspaceRoot, dir);
+        } else {
+          await ensureRemoteDir(session, dir);
+        }
       }
       for (const file of plan.files) {
         if (controller.signal.aborted) break;
@@ -1437,6 +1504,11 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
         // 避免同名文件在不同目录下分不清。
         currentName = path.posix.relative(targetDir, file.remote) || path.basename(file.local);
         currentRemote = file.remote;
+        if (secureWorkspaceRoot) {
+          await verifyRemoteTransferFileDestination(
+            session, secureWorkspaceRoot, file.remote
+          );
+        }
         const source = createReadStream(file.local);
         const target = await session.writeFileStream(
           file.remote, { create: true, overwrite: true }, controller.signal
@@ -1458,24 +1530,28 @@ async function visualUpload(...resources: vscode.Uri[]): Promise<void> {
         });
       }
       if (controller.signal.aborted) {
+        if (timedOut) throw new Error(`文件传输超时（${transferTimeoutMs}ms）`);
         void vscode.window.showInformationMessage(
           '已取消上传（已完成的文件已保留）。'
         );
-        return;
+        return false;
       }
       progress.report({
         message: `完成：${plan.files.length} 个文件（${formatDownloadBytes(plan.totalBytes)}）`,
         increment: plan.totalBytes > 0 ? 100 - cumulative / plan.totalBytes * 100 : undefined
       });
+      return true;
     } catch (error) {
       if (controller.signal.aborted) {
         // 当前文件的远端半成品已中断，删除避免残留。
-        void session.deleteFile(currentRemote).catch(() => undefined);
+        if (currentRemote) void session.deleteFile(currentRemote).catch(() => undefined);
+        if (timedOut) throw new Error(`文件传输超时（${transferTimeoutMs}ms）`);
         void vscode.window.showInformationMessage('已取消上传。');
-        return;
+        return false;
       }
       throw error;
     } finally {
+      if (timeout) clearTimeout(timeout);
       onCancelled.dispose();
     }
   });
@@ -2103,6 +2179,85 @@ function toolPath(folder: RemoteFolder, value = '.'): string {
   return resolved;
 }
 
+/** Resolve an Agent file-transfer path without allowing it to leave this window's workspace. */
+function transferRemotePath(folder: RemoteFolder, value: string): string {
+  const workspaceRoot = currentWorkspacePath(folder);
+  const resolved = value.startsWith('/')
+    ? path.posix.normalize(value)
+    : path.posix.resolve(workspaceRoot, value);
+  if (!isRemotePathInsideRoot(workspaceRoot, resolved)) {
+    throw new Error(`传输路径超出当前工作区：${value}`);
+  }
+  return resolved;
+}
+
+function isMissingRemoteError(error: unknown): boolean {
+  const code = (error as { code?: unknown }).code;
+  return code === 2 || code === 'ENOENT';
+}
+
+async function ensureRemoteTransferDirectory(
+  session: SftpSession, realWorkspaceRoot: string, remoteDir: string
+): Promise<string> {
+  if (!isRemotePathInsideRoot(realWorkspaceRoot, remoteDir)) {
+    throw new Error(`上传目录超出当前工作区：${remoteDir}`);
+  }
+  const relative = path.posix.relative(realWorkspaceRoot, remoteDir);
+  let current = realWorkspaceRoot;
+  for (const part of relative.split('/').filter(Boolean)) {
+    const candidate = path.posix.join(current, part);
+    let stat;
+    try {
+      stat = await session.stat(candidate);
+    } catch (error) {
+      if (!isMissingRemoteError(error)) throw error;
+      await session.createDirectory(candidate);
+      stat = await session.stat(candidate);
+    }
+    if (stat.type === 'symbolic-link') {
+      throw new Error(`上传目录包含符号链接，拒绝写入：${candidate}`);
+    }
+    if (stat.type !== 'directory') {
+      throw new Error(`上传目录路径被非目录占用：${candidate}`);
+    }
+    current = await session.realpath(candidate);
+    if (!isRemotePathInsideRoot(realWorkspaceRoot, current)) {
+      throw new Error(`上传目录通过符号链接超出当前工作区：${candidate}`);
+    }
+  }
+  return current;
+}
+
+async function verifyRemoteTransferFileDestination(
+  session: SftpSession, realWorkspaceRoot: string, remotePath: string
+): Promise<void> {
+  const realParent = await session.realpath(path.posix.dirname(remotePath));
+  if (!isRemotePathInsideRoot(realWorkspaceRoot, realParent)) {
+    throw new Error(`上传文件父目录超出当前工作区：${remotePath}`);
+  }
+  try {
+    const stat = await session.stat(remotePath);
+    if (stat.type === 'symbolic-link') {
+      throw new Error(`上传目标是符号链接，拒绝覆盖：${remotePath}`);
+    }
+    if (stat.type === 'directory') {
+      throw new Error(`上传目标是目录，无法覆盖：${remotePath}`);
+    }
+    const realPath = await session.realpath(remotePath);
+    if (!isRemotePathInsideRoot(realWorkspaceRoot, realPath)) {
+      throw new Error(`上传目标超出当前工作区：${remotePath}`);
+    }
+  } catch (error) {
+    if (!isMissingRemoteError(error)) throw error;
+  }
+}
+
+async function localTransferRoot(folder: RemoteFolder): Promise<string> {
+  return ensureAgentCwdSubdirectory(
+    localRootForFolder(folder), folder.remoteRoot, currentWorkspacePath(folder)
+  );
+}
+
 /** The remote directory currently open in this window, or the mount root. */
 function currentWorkspacePath(folder: RemoteFolder): string {
   const location = currentRemoteLocation();
@@ -2140,6 +2295,63 @@ async function remoteList(input: {
   };
 }
 
+async function remoteRead(input: {
+  mountName: string; path: string; offset?: number; length?: number;
+}): Promise<unknown> {
+  const { folder } = await mountAndFolder(input.mountName);
+  const requestedPath = resolveRemotePath(folder, input.path);
+  const session = await pool.get(folder.hostName);
+  const resolved = await session.statResolved(requestedPath);
+  if (resolved.stat.type !== 'file') {
+    throw new Error(`remote_read 只能读取普通文件：${input.path}`);
+  }
+  const offset = input.offset ?? 0;
+  const length = Math.min(input.length ?? 64 * 1024, 64 * 1024);
+  if (offset >= resolved.stat.size) {
+    return {
+      path: resolved.path, content: '', offset, bytes: 0,
+      nextOffset: offset, fileSize: resolved.stat.size, truncated: false
+    };
+  }
+  const data = await session.readFileRange(
+    resolved.path, offset, Math.min(length, resolved.stat.size - offset)
+  );
+  if (data.includes(0)) {
+    throw new Error(`文件包含二进制数据，请使用 remote_download：${input.path}`);
+  }
+  const controlBytes = data.reduce((count, byte) =>
+    count + (byte < 32 && ![8, 9, 10, 12, 13].includes(byte) ? 1 : 0), 0);
+  if (data.length > 0 && controlBytes / data.length > 0.1) {
+    throw new Error(`文件疑似二进制，请使用 remote_download：${input.path}`);
+  }
+  let consumed = data.length;
+  let content: string | undefined;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  // 分块末尾可能落在一个 UTF-8 字符中间；最多回退 3 字节找到完整边界。
+  for (let backoff = 0; backoff <= Math.min(3, data.length); backoff += 1) {
+    try {
+      consumed = data.length - backoff;
+      content = decoder.decode(data.subarray(0, consumed));
+      break;
+    } catch {
+      // 下一轮缩短分块；若错误位于中间，所有尝试都会失败并按非 UTF-8 拒绝。
+    }
+  }
+  if (content === undefined || (data.length > 0 && consumed === 0)) {
+    throw new Error(`文件不是有效的 UTF-8 文本，请使用 remote_download：${input.path}`);
+  }
+  const nextOffset = offset + consumed;
+  return {
+    path: resolved.path,
+    content,
+    offset,
+    bytes: consumed,
+    nextOffset,
+    fileSize: resolved.stat.size,
+    truncated: nextOffset < resolved.stat.size
+  };
+}
+
 async function remoteWrite(input: {
   mountName: string; path: string; content: string;
 }): Promise<unknown> {
@@ -2168,6 +2380,102 @@ async function remoteWrite(input: {
   const content = new TextEncoder().encode(input.content);
   await provider.writeFile(uri, content, { create: true, overwrite: true });
   return { path: remotePath, bytes: content.length };
+}
+
+async function verifiedRemoteEntry(
+  folder: RemoteFolder, session: SftpSession, value: string,
+  options: { allowWorkspaceRoot?: boolean; allowSymbolicLink?: boolean } = {}
+) {
+  const workspaceRoot = currentWorkspacePath(folder);
+  const remotePath = transferRemotePath(folder, value);
+  if (!options.allowWorkspaceRoot && remotePath === workspaceRoot) {
+    throw new Error(`不能操作当前工作区根目录：${value}`);
+  }
+  const realParent = await session.realpath(path.posix.dirname(remotePath));
+  if (!isRemotePathInsideRoot(workspaceRoot, realParent)) {
+    throw new Error(`目标父目录通过符号链接超出当前工作区：${value}`);
+  }
+  const stat = await session.stat(remotePath);
+  if (stat.type === 'symbolic-link') {
+    if (!options.allowSymbolicLink) {
+      throw new Error(`不允许对符号链接执行该操作：${value}`);
+    }
+  } else {
+    const realPath = await session.realpath(remotePath);
+    if (!isRemotePathInsideRoot(workspaceRoot, realPath)) {
+      throw new Error(`目标通过符号链接超出当前工作区：${value}`);
+    }
+  }
+  return { remotePath, stat };
+}
+
+async function verifiedRemoteDestination(
+  folder: RemoteFolder, session: SftpSession, value: string
+): Promise<string> {
+  const workspaceRoot = currentWorkspacePath(folder);
+  const remotePath = transferRemotePath(folder, value);
+  if (remotePath === workspaceRoot) {
+    throw new Error(`不能覆盖当前工作区根目录：${value}`);
+  }
+  const realParent = await session.realpath(path.posix.dirname(remotePath));
+  if (!isRemotePathInsideRoot(workspaceRoot, realParent)) {
+    throw new Error(`目标父目录通过符号链接超出当前工作区：${value}`);
+  }
+  try {
+    const stat = await session.stat(remotePath);
+    if (stat.type !== 'symbolic-link') {
+      const realPath = await session.realpath(remotePath);
+      if (!isRemotePathInsideRoot(workspaceRoot, realPath)) {
+        throw new Error(`已有目标通过符号链接超出当前工作区：${value}`);
+      }
+    }
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code !== 2 && code !== 'ENOENT') throw error;
+  }
+  return remotePath;
+}
+
+async function remoteDelete(input: {
+  mountName: string; path: string; recursive?: boolean;
+}): Promise<unknown> {
+  const { folder } = await mountAndFolder(input.mountName);
+  const session = await pool.get(folder.hostName);
+  const entry = await verifiedRemoteEntry(folder, session, input.path, {
+    allowSymbolicLink: true
+  });
+  await provider.delete(vscode.Uri.parse(folderUri(folder, entry.remotePath)), {
+    recursive: input.recursive === true
+  });
+  return { path: entry.remotePath, type: entry.stat.type, recursive: input.recursive === true };
+}
+
+async function remoteChmod(input: {
+  mountName: string; path: string; mode: string;
+}): Promise<unknown> {
+  const { folder } = await mountAndFolder(input.mountName);
+  const session = await pool.get(folder.hostName);
+  const entry = await verifiedRemoteEntry(folder, session, input.path);
+  const mode = Number.parseInt(input.mode, 8);
+  await session.chmod(entry.remotePath, mode);
+  return { path: entry.remotePath, mode: input.mode };
+}
+
+async function remoteMove(input: {
+  mountName: string; sourcePath: string; targetPath: string; overwrite?: boolean;
+}): Promise<unknown> {
+  const { folder } = await mountAndFolder(input.mountName);
+  const session = await pool.get(folder.hostName);
+  const source = await verifiedRemoteEntry(folder, session, input.sourcePath, {
+    allowSymbolicLink: true
+  });
+  const targetPath = await verifiedRemoteDestination(folder, session, input.targetPath);
+  await provider.rename(
+    vscode.Uri.parse(folderUri(folder, source.remotePath)),
+    vscode.Uri.parse(folderUri(folder, targetPath)),
+    { overwrite: input.overwrite === true }
+  );
+  return { sourcePath: source.remotePath, targetPath, overwrite: input.overwrite === true };
 }
 
 async function executeRemoteCommand(
@@ -2788,9 +3096,77 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
         list: async (input) => remoteList({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
+        read: async (input) => remoteRead({
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
+        }),
         write: async (input) => remoteWrite({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
+        delete: async (input) => remoteDelete({
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
+        }),
+        chmod: async (input) => remoteChmod({
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
+        }),
+        move: async (input) => remoteMove({
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
+        }),
+        upload: async (input) => {
+          const mountName = forwardedWindowMountName(
+            context, boundMountName, input.mountName
+          );
+          const { folder } = await mountAndFolder(mountName);
+          const stagingRoot = await localTransferRoot(folder);
+          const localPaths = await Promise.all(input.localPaths.map(
+            (localPath) => validateLocalUploadSource(
+              stagingRoot, localPathFromAgent(localPath, input.agentPlatform)
+            )
+          ));
+          const session = await pool.get(folder.hostName);
+          const lexicalWorkspaceRoot = currentWorkspacePath(folder);
+          const realWorkspaceRoot = await session.realpath(lexicalWorkspaceRoot);
+          const lexicalTarget = transferRemotePath(folder, input.remoteDirectory);
+          const relativeTarget = path.posix.relative(lexicalWorkspaceRoot, lexicalTarget);
+          const requestedTarget = path.posix.resolve(realWorkspaceRoot, relativeTarget);
+          const remoteDirectory = await ensureRemoteTransferDirectory(
+            session, realWorkspaceRoot, requestedTarget
+          );
+          const sources = localPaths.map((localPath) => vscode.Uri.file(localPath));
+          const timeoutMs = settings().get<number>('agentMcpTimeoutMs', 120_000);
+          return {
+            completed: await visualUpload(
+              sources, mountName, remoteDirectory, realWorkspaceRoot, timeoutMs
+            ),
+            remoteDirectory,
+            localRoot: localPathForAgent(stagingRoot, input.agentPlatform)
+          };
+        },
+        download: async (input) => {
+          const mountName = forwardedWindowMountName(
+            context, boundMountName, input.mountName
+          );
+          const { folder } = await mountAndFolder(mountName);
+          const stagingRoot = await localTransferRoot(folder);
+          const localPath = await validateLocalDownloadTarget(
+            stagingRoot, localPathFromAgent(input.localPath, input.agentPlatform)
+          );
+          const workspaceRoot = currentWorkspacePath(folder);
+          const session = await pool.get(folder.hostName);
+          const realWorkspaceRoot = await session.realpath(workspaceRoot);
+          const requestedPath = transferRemotePath(folder, input.remotePath);
+          const resolved = await session.statResolved(requestedPath);
+          if (!isRemotePathInsideRoot(realWorkspaceRoot, resolved.path)) {
+            throw new Error(`下载路径通过符号链接超出当前工作区：${input.remotePath}`);
+          }
+          const uri = vscode.Uri.parse(remoteUri(mountName, resolved.path));
+          const timeoutMs = settings().get<number>('agentMcpTimeoutMs', 120_000);
+          return {
+            completed: await visualDownload(uri, localPath, timeoutMs, stagingRoot),
+            remotePath: resolved.path,
+            localPath: localPathForAgent(localPath, input.agentPlatform),
+            localRoot: localPathForAgent(stagingRoot, input.agentPlatform)
+          };
+        },
         search: async (input) => remoteSearch({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
@@ -3591,7 +3967,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   command('completeRemoteDirectory', completeRemoteDirectory);
   command('syncToLocal', (uri) => syncToLocal(uri as vscode.Uri | undefined));
   command('visualDownload', (uri) => visualDownload(uri as vscode.Uri | undefined));
-  command('visualUpload', (...args) => visualUpload(...args as vscode.Uri[]));
+  command('visualUpload', (...args) => visualUpload(args as vscode.Uri[]));
   command('openTerminal', () => openTerminal(context, undefined, undefined, undefined, true));
   command('openTerminalItem', (mount) =>
     openTerminal(context, mount, undefined, undefined, true));

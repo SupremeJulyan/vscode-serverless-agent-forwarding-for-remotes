@@ -158,7 +158,9 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 5. 之后 Agent 可直接使用远程工具：VS Code Agent 的 `#safsList`、
    `#safsWrite`、`#safsSearch`、`#safsRun`，或 MCP 工具
    `safs_get_remote_workspace`、`remote_list`、
-   `remote_write`、`remote_search`、`run_remote_command`，
+   `remote_read`、`remote_write`、`remote_delete`、`remote_chmod`、`remote_move`、
+   `remote_upload`、`remote_download`、
+   `remote_search`、`run_remote_command`，
    以及 `current_remote_file`（查看当前打开的远程文件路径与元数据）。
 6. 关闭转发：点击连接项上的“关闭 Agent 转发”。只有最后一个启用挂载也被
    关闭后，扩展才会执行 `mcp remove`。
@@ -200,16 +202,15 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
   `userConfirmed: true`。后续远程工具必须携带
   返回的 `bindingId`。
 - `workspaceRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
-  SFTP 配置的挂载根。`remote_list`、`remote_search` 的相对路径以及
+  SFTP 配置的挂载根。`remote_list`、`remote_read`、`remote_search` 的相对路径以及
   `run_remote_command` 的默认工作目录都以它为基准。
-- `remote_write` 只能在 `workspaceRoot` 及其子目录内创建或覆盖文件；
-  只读的 `remote_list`/`remote_search` 仍可用绝对路径查看其他位置。
+- `remote_write` 只能在 `workspaceRoot` 及其子目录内写入文件；只读的
+  `remote_list`、`remote_read`、`remote_search` 仍可用绝对路径查看其他位置。
 - **当前打开的远程文件**：调用 `current_remote_file` 获取 VS Code 中当前
-  打开的远程文件（路径、相对挂载根的路径、大小、是否有未保存修改）。扩展不会把
-  文件内容返回给 Agent；需要查看内容时用 `run_remote_command` 在远程执行
-  `head`、`sed`、`grep`、`tail`、`wc`、`diff` 等命令按需查看，避免大文件
-  内容进入 Agent 上下文。用户说"这个远程文件内容是什么"时，先用
-  `current_remote_file` 拿到路径，再以远程命令查看。
+  打开的远程文件（路径、相对挂载根的路径、大小、是否有未保存修改）。需要查看内容时
+  使用有 64 KB 分块上限的 `remote_read`；二进制、大文件或目录使用
+  `remote_download`。用户说"这个远程文件内容是什么"时，先用
+  `current_remote_file` 拿到路径，再调用 `remote_read`。
 - 尚未选择、绑定失效或 Router Leader 接管后，工作区工具会要求重新选择，绝不
   静默回退到其他窗口。
 - VS Code 侧可运行 `SAFS: 显示状态` 在输出面板查看各挂载的连接状态。
@@ -258,21 +259,32 @@ VS Code Agent 可使用：
 - `#safsCurrentRemoteFile`（当前打开的远程文件路径与元数据）
 
 扩展还在 `127.0.0.1` 上提供令牌保护的 Streamable HTTP MCP 服务，工具包括
-`safs_get_remote_workspace`、`remote_list`、`remote_write`、
-`remote_search`、`run_remote_command` 和 `current_remote_file`。
+`safs_get_remote_workspace`、`remote_list`、`remote_read`、`remote_write`、
+`remote_delete`、`remote_chmod`、`remote_move`、
+`remote_upload`、`remote_download`、`remote_search`、`run_remote_command` 和
+`current_remote_file`。`remote_upload` / `remote_download` 的本地与远程路径均由
+Agent 通过参数指定，不弹路径选择框；VS Code 只显示传输进度和取消入口。两者支持目录
+递归传输，文件字节不经过 Agent 上下文。上传源和下载目标必须位于当前 SAFS 窗口自动
+创建的 Agent cwd 暂存目录内，不增加额外配置；扩展会校验真实路径或最近已存在父目录，
+阻止符号链接逃逸。
+删除、权限修改和移动分别使用 `remote_delete`、`remote_chmod`、`remote_move`；三者在
+SFTP 操作前验证真实路径及父目录均位于当前工作区，避免依赖 Shell 变量解析。
 
 Agent 仅在 SAFS 远程任务中绑定当前 SFTP 虚拟工作区；
 普通本地工作区不调用 SAFS 工具。
 开启转发并选择工作区后，文件工具通过返回的 `bindingId` 绑定当前工作区。所有远程文件访问
-都通过 SFTP 工具完成，构建、测试、Git 和系统检查通过 SSH 远程命令完成；工具被
-限制在已开启转发的 `remote_path` 内。远程文件内容不返回给 Agent——查看内容请用
-`run_remote_command` 在远程执行 `head`/`sed`/`grep`/`tail` 等命令。Agent 路由和
+都通过 SFTP 工具完成，构建、测试、Git 和系统检查通过 SSH 远程命令完成；结构化修改
+和传输目标被限制在当前工作区内。UTF-8 文本通过最多 64 KB 的
+`remote_read` 分块读取；二进制、大文件和目录通过 `remote_download` 传输。Agent 路由和
 使用约束由固定 MCP 服务统一管理，扩展
 不会在远端创建或读取 Agent 指引文件。
 
 `run_remote_command` 不再对 Shell 命令弹出逐次确认。命中高风险规则的命令按配置
 直接拒绝或放行，普通命令直接执行；普通文件创建或覆盖仍建议使用受当前工作区边界
-保护的 `remote_write`。
+保护的 `remote_write`。命令工具不是文件系统沙箱，获准执行后拥有 SSH 登录账号的全部
+权限；强隔离应使用非 root 最小权限账号并禁用免密提权，必要时再在远端使用容器、chroot
+或受限执行账号。`remote_list`、`remote_read` 和 `remote_search` 保持可读取工作区外的
+绝对路径，便于排查系统环境，但不会因此扩大结构化写工具的边界。
 
 为避免大输出刷爆模型上下文，工具结果做了多层限流：`remote_list` 默认最多返回
 500 条条目（可用 `limit` 上调，超限返回 `truncated` 与 `total`）；`remote_search`
@@ -393,13 +405,14 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   插件运行在 Windows、Agent 在 WSL 中运行时选择 `wsl`：MCP 注册读写 WSL
   家目录下的配置文件（`~/.pi/agent/mcp.json`、`$DSH_HOME/cordis.patch.yml`），
   Agent CLI（`codex`/`claude`）也通过 `wsl.exe` 在 WSL 内检测与执行。
-- `safs.agentMcpTimeoutMs`：Agent MCP 远程命令/搜索执行超时（毫秒，默认
+- `safs.agentMcpTimeoutMs`：Agent MCP 工具转发、远程命令、搜索及上传/下载的统一超时（毫秒，默认
   120000；`0` 关闭）。
 - `safs.sftp.idleConnectionTtl`：空闲 SFTP 连接回收秒数（默认 600；`0` 关闭）。
 - `safs.highRiskCommandPatterns`：Agent 通过 MCP 请求远程命令时的高危匹配规则（正则数组），
   默认包含递归删除、磁盘/分区/文件系统操作、关机重启、管道执行远程脚本，以及 `sudo`/`su`/
   `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按
   `safs.highRiskCommandAction` 处理；设为 `[]` 可关闭拦截。匹配会忽略引号内的内容，避免搜索
-  “sudo” 这类关键词时误伤。
+  “sudo” 这类关键词时误伤。`cat`/`tee` 的 heredoc 正文按数据处理，不参与匹配；Shell 或
+  解释器实际执行的 heredoc 仍会扫描。动态且无法确认目标范围的破坏操作直接拒绝，不弹窗。
 - `safs.highRiskCommandAction`：`deny`（默认）直接拒绝高危命令并记录日志；`allow` 直接
   放行。两种模式均不弹出逐次确认；旧版 `confirm` 值按 `deny` 处理。

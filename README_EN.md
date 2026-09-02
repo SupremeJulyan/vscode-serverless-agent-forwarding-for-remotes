@@ -198,7 +198,9 @@ platforms.
 5. The Agent can now use the remote tools directly: `#safsList`,
    `#safsWrite`, `#safsSearch`, and `#safsRun` for VS Code agents, or the MCP
    tools `safs_get_remote_workspace`, `remote_list`,
-   `remote_write`, `remote_search`, and `run_remote_command`, plus
+   `remote_read`, `remote_write`, `remote_delete`, `remote_chmod`, `remote_move`,
+   `remote_upload`, `remote_download`, `remote_search`, and
+   `run_remote_command`, plus
    `current_remote_file` to inspect the remote file currently open in VS Code.
 6. To disable: click "Disable Agent Forwarding" on the connection item. The
    extension runs `mcp remove` only after the last enabled mount is disabled.
@@ -248,19 +250,18 @@ as follows:
   calls `safs_switch_remote_workspace` with `userConfirmed: true`.
   Later tools pass the returned `bindingId`.
 - `workspaceRoot` is the remote directory actually open in that VS Code window,
-  not the configured SFTP mount root. Relative `remote_list`/`remote_search`
+  not the configured SFTP mount root. Relative `remote_list`/`remote_read`/`remote_search`
   paths and the default `run_remote_command` working directory start there.
-- `remote_write` can create or replace files only inside `workspaceRoot` and
-  its descendants. Read-only `remote_list`/`remote_search` may still inspect
+- `remote_write` can write files only inside `workspaceRoot` and its descendants.
+  Read-only `remote_list`, `remote_read`, and `remote_search` may still inspect
   explicitly supplied absolute paths elsewhere.
 - **Currently open remote file**: call `current_remote_file` to get the remote
   file open in the VS Code editor (absolute path, path relative to the remote
-  root, size, and whether the editor has unsaved changes). The
-  extension never returns file content to the Agent; to inspect content, run
-  remote commands such as `head`, `sed`, `grep`, `tail`, `wc`, or `diff` via
-  `run_remote_command` so large files never enter the Agent context. When the
-  user asks "what is the content of this remote file", get its path with
-  `current_remote_file` first, then inspect it with a remote command.
+  root, size, and whether the editor has unsaved changes). Inspect content with
+  `remote_read`, which caps each UTF-8 text chunk at 64 KB; use `remote_download`
+  for binary files, large files, and directories. When the user asks "what is
+  the content of this remote file", get its path with `current_remote_file`
+  first, then call `remote_read`.
 - Before selection, after binding expiry, or after Router Leader takeover,
   workspace tools require a fresh selection and never silently fall back.
 - On the VS Code side, run `SAFS: Show Status` to see each mount's connection
@@ -304,23 +305,40 @@ VS Code tools: `#safsList`,
 `#safsCurrentRemoteFile` (path and metadata of the currently open remote file).
 
 The loopback-only, token-protected MCP service exposes
-`safs_get_remote_workspace`, `remote_list`, `remote_write`,
-`remote_search`, `run_remote_command`, and `current_remote_file`.
+`safs_get_remote_workspace`, `remote_list`, `remote_read`, `remote_write`,
+`remote_delete`, `remote_chmod`, `remote_move`,
+`remote_upload`, `remote_download`, `remote_search`, `run_remote_command`, and
+`current_remote_file`. For `remote_upload` and `remote_download`, the Agent
+supplies both local and remote paths directly, so no path picker is opened;
+VS Code only shows transfer progress and cancellation. Both support recursive
+folder transfers without putting file bytes in the Agent context. Upload sources
+and download targets must stay inside the Agent cwd staging directory created
+automatically for the current SAFS window; there is no additional setting. The
+extension checks the real path or nearest existing parent to prevent symlink escapes.
+Use `remote_delete`, `remote_chmod`, and `remote_move` for deletion, permission
+changes, and moves. Each validates the real path and parent inside the current
+workspace before the SFTP operation, avoiding Shell-variable ambiguity.
 
 Agents bind workspaces only for SAFS remote tasks, not for
 ordinary local workspaces. Once forwarding is enabled and a workspace is
 selected, tools bind to it through the returned `bindingId`. Remote URIs are not
 local paths: agents use SFTP tools for files and SSH execution for builds, tests,
-Git, and operating-system inspection. Tools are restricted to forwarding-enabled
-remote roots. Remote file content is never returned to the Agent — inspect it
-with `run_remote_command` (`head`/`sed`/`grep`/`tail` and similar). Agent routing
+Git, and operating-system inspection. Structured mutations and transfer targets
+are restricted to the current workspace. UTF-8 text is read in chunks of at most 64 KB through
+`remote_read`; binary files, large files, and directories use `remote_download`. Agent routing
 and tool guidance are managed by the fixed MCP service; the
 extension does not create or read Agent guidance files on the remote host.
 
 `run_remote_command` does not show per-command Shell confirmation prompts.
 Commands matching the high-risk rules are denied or allowed directly according
 to configuration, while ordinary commands run directly. Prefer workspace-confined
-`remote_write` for ordinary file writes.
+`remote_write` for ordinary file writes. The command tool is not a filesystem
+sandbox: once allowed, it has every permission of the SSH login account. For
+strong isolation, use a least-privilege non-root account without passwordless
+privilege escalation and, when needed, a remote container, chroot, or restricted
+execution account. `remote_list`, `remote_read`, and `remote_search` may read
+absolute paths outside the workspace for environment diagnostics; this does not
+expand the boundary of the structured write tools.
 
 Tool results are throttled so large output cannot blow up model context:
 `remote_list` returns at most 500 entries by default (raise with `limit`; when
@@ -476,8 +494,9 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   config files under the WSL home (`~/.pi/agent/mcp.json`,
   `$DSH_HOME/cordis.patch.yml`), and Agent CLIs (`codex`/`claude`) are detected
   and executed through `wsl.exe` inside WSL.
-- `safs.agentMcpTimeoutMs`: timeout for Agent MCP remote command/search
-  execution in milliseconds (default `120000`; `0` disables it).
+- `safs.agentMcpTimeoutMs`: unified timeout for Agent MCP forwarding, remote
+  commands, search, and uploads/downloads in milliseconds (default `120000`;
+  `0` disables it).
 - `safs.sftp.idleConnectionTtl`: seconds before an idle SFTP connection is
   recycled by the pool (default `600`; `0` disables recycling).
 - `safs.terminalFollowsActiveFile`: when a remote file is switched/opened,
@@ -499,7 +518,9 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   setuid/setgid, account management, `visudo`/`sudoers`). Matches are handled
   per `safs.highRiskCommandAction`; set to `[]` to disable interception.
   Matches inside quotes are ignored to avoid false positives when searching
-  for keywords like `sudo`.
+  for keywords like `sudo`. Heredoc bodies consumed as data by `cat`/`tee` are
+  ignored, while heredocs executed by a shell or interpreter are still scanned.
+  Destructive operations with dynamically scoped targets are denied without a prompt.
 - `safs.highRiskCommandAction`: `deny` (default) rejects and logs matching
   commands; `allow` runs them. Neither mode shows per-command prompts; legacy
   `confirm` values are treated as `deny`.

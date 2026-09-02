@@ -25,7 +25,13 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       if (input.path === 'forbidden') throw new Error('路径越界');
       return { ...input, entries: [] };
     },
+    read: async (input) => ({ ...input, content: 'hello', truncated: false }),
     write: async (input) => ({ ...input, bytes: input.content.length }),
+    delete: async (input) => ({ ...input, deleted: true }),
+    chmod: async (input) => ({ ...input, changed: true }),
+    move: async (input) => ({ ...input, moved: true }),
+    upload: async (input) => ({ ...input, completed: true }),
+    download: async (input) => ({ ...input, completed: true }),
     search: async (input) => ({ ...input, stdout: 'src/index.ts:1:hello' }),
     run: async (input) => ({ ...input, exitCode: 0, stdout: 'ok' }),
     audit: (entry) => audited.push(entry)
@@ -42,8 +48,14 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
       'current_remote_file',
+      'remote_chmod',
+      'remote_delete',
+      'remote_download',
       'remote_list',
+      'remote_move',
+      'remote_read',
       'remote_search',
+      'remote_upload',
       'remote_write',
       'run_remote_command',
       'safs_get_remote_workspace'
@@ -70,6 +82,46 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     });
     const listedText = (listed.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
     assert.equal(JSON.parse(listedText).limit, 10);
+    const read = await client.callTool({
+      name: 'remote_read', arguments: { path: 'src/index.ts', offset: 10, length: 20 }
+    });
+    const readText = (read.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+    assert.deepEqual(JSON.parse(readText), {
+      path: 'src/index.ts', offset: 10, length: 20, content: 'hello', truncated: false
+    });
+    const downloaded = await client.callTool({
+      name: 'remote_download', arguments: {
+        remotePath: 'dist/app.bin', localPath: '/tmp/app.bin'
+      }
+    });
+    const downloadedText = (downloaded.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+    assert.deepEqual(JSON.parse(downloadedText), {
+      remotePath: 'dist/app.bin', localPath: '/tmp/app.bin', agentPlatform: 'wsl', completed: true
+    });
+    const uploaded = await client.callTool({
+      name: 'remote_upload', arguments: {
+        localPaths: ['/tmp/app.bin'], remoteDirectory: 'dist'
+      }
+    });
+    const uploadedText = (uploaded.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+    assert.deepEqual(JSON.parse(uploadedText), {
+      localPaths: ['/tmp/app.bin'], remoteDirectory: 'dist',
+      agentPlatform: 'wsl', completed: true
+    });
+    const deleted = await client.callTool({
+      name: 'remote_delete', arguments: { path: 'dist/old.bin', recursive: false }
+    });
+    assert.equal(JSON.parse((deleted.content as any[])[0].text).deleted, true);
+    const chmod = await client.callTool({
+      name: 'remote_chmod', arguments: { path: 'scripts/build.sh', mode: '755' }
+    });
+    assert.equal(JSON.parse((chmod.content as any[])[0].text).mode, '755');
+    const moved = await client.callTool({
+      name: 'remote_move', arguments: {
+        sourcePath: 'old.txt', targetPath: 'new.txt', overwrite: false
+      }
+    });
+    assert.equal(JSON.parse((moved.content as any[])[0].text).moved, true);
     const rejected = await client.callTool({
       name: 'remote_list', arguments: { path: 'forbidden' }
     });
@@ -79,7 +131,9 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       code: 'REMOTE_TOOL_ERROR', message: '路径越界'
     });
     assert.deepEqual(audited.map((entry) => entry.toolName), [
-      'current_remote_file', 'safs_get_remote_workspace', 'remote_list', 'remote_list'
+      'current_remote_file', 'safs_get_remote_workspace', 'remote_list',
+      'remote_read', 'remote_download', 'remote_upload', 'remote_delete',
+      'remote_chmod', 'remote_move', 'remote_list'
     ]);
     assert.ok(audited.every((entry) => entry.agentName === 'codex'));
   } finally {
@@ -99,7 +153,13 @@ test('allocates independent ports for concurrent window MCP servers', async () =
     }),
     currentFile: async () => null,
     list: async () => [],
+    read: async () => ({}),
     write: async () => ({}),
+    delete: async () => ({}),
+    chmod: async () => ({}),
+    move: async () => ({}),
+    upload: async () => ({}),
+    download: async () => ({}),
     search: async () => ({}),
     run: async () => ({})
   });

@@ -65,7 +65,9 @@ export async function appendMcpCommandLog(
 function safeToolInput(toolName: string, input: Record<string, unknown> = {}): string {
   const summary: Record<string, unknown> = {};
   for (const key of [
-    'mountName', 'host', 'workspaceRoot', 'path', 'limit', 'query', 'remoteCwd'
+    'mountName', 'host', 'workspaceRoot', 'path', 'sourcePath', 'targetPath',
+    'remoteDirectory', 'remotePath', 'localPath', 'mode', 'limit', 'offset', 'length',
+    'recursive', 'overwrite', 'query', 'remoteCwd'
   ]) {
     const value = input[key];
     if (typeof value === 'string') summary[key] = redactSensitiveText(value).slice(0, 500);
@@ -73,6 +75,11 @@ function safeToolInput(toolName: string, input: Record<string, unknown> = {}): s
   }
   if (toolName === 'remote_write' && typeof input.content === 'string') {
     summary.contentBytes = Buffer.byteLength(input.content, 'utf8');
+  }
+  if (toolName === 'remote_upload' && Array.isArray(input.localPaths)) {
+    summary.localPaths = input.localPaths.slice(0, 20).flatMap((value) =>
+      typeof value === 'string' ? [redactSensitiveText(value).slice(0, 500)] : []
+    );
   }
   if (toolName === 'run_remote_command' && typeof input.command === 'string') {
     summary.commandBytes = Buffer.byteLength(input.command, 'utf8');

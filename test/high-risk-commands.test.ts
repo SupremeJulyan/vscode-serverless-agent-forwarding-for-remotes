@@ -141,3 +141,34 @@ test('does not flag harmless redirects to /dev/null or reads of system files', (
     assert.equal(matchHighRiskCommand(command), undefined, `expected safe: ${command}`);
   }
 });
+
+test('ignores data heredoc bodies but scans executable heredocs and later commands', () => {
+  assert.equal(matchHighRiskCommand([
+    "cat > /tmp/job.sh <<'EOF'",
+    'rm -rf /',
+    'chmod 4755 /usr/bin/tool',
+    'EOF'
+  ].join('\n')), undefined);
+  assert.equal(matchHighRiskCommand('echo rc=$?'), undefined);
+  assert.ok(matchHighRiskCommand([
+    "bash <<'EOF'",
+    'rm -rf /',
+    'EOF'
+  ].join('\n')));
+  assert.ok(matchHighRiskCommand([
+    "cat <<'EOF' | bash",
+    'rm -rf /',
+    'EOF'
+  ].join('\n')));
+  assert.ok(matchHighRiskCommand([
+    "cat > /tmp/job.sh <<'EOF'",
+    'rm -rf /',
+    'EOF',
+    'rm -rf /etc'
+  ].join('\n')));
+});
+
+test('denies destructive operations with dynamically scoped targets', () => {
+  assert.ok(matchHighRiskCommand('rm -rf "$D/probe"'));
+  assert.ok(matchHighRiskCommand('chmod +x "$D/collect_times.sh"'));
+});

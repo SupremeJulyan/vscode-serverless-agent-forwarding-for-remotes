@@ -20,7 +20,23 @@ export interface AgentMcpCallbacks {
   /** 当前打开的远程文件元数据（无活动远程文件时为 null）。 */
   currentFile(input: { mountName?: string }): Promise<unknown>;
   list(input: { mountName?: string; path?: string; limit?: number }): Promise<unknown>;
+  read(input: {
+    mountName?: string; path: string; offset?: number; length?: number;
+  }): Promise<unknown>;
   write(input: { mountName?: string; path: string; content: string }): Promise<unknown>;
+  delete(input: { mountName?: string; path: string; recursive?: boolean }): Promise<unknown>;
+  chmod(input: { mountName?: string; path: string; mode: string }): Promise<unknown>;
+  move(input: {
+    mountName?: string; sourcePath: string; targetPath: string; overwrite?: boolean;
+  }): Promise<unknown>;
+  upload(input: {
+    mountName?: string; localPaths: string[]; remoteDirectory: string;
+    agentPlatform?: string;
+  }): Promise<unknown>;
+  download(input: {
+    mountName?: string; remotePath: string; localPath: string;
+    agentPlatform?: string;
+  }): Promise<unknown>;
   search(input: {
     mountName?: string; query: string; path?: string; agentName?: string;
     agentPlatform?: string;
@@ -113,10 +129,34 @@ export class AgentMcpServer {
             return invoke(() => this.callbacks.currentFile(input));
           case 'remote_list':
             return invoke(() => this.callbacks.list(input));
+          case 'remote_read':
+            return invoke(() => this.callbacks.read(input as {
+              mountName?: string; path: string; offset?: number; length?: number;
+            }));
           case 'remote_write':
             return invoke(() => this.callbacks.write(input as {
               mountName?: string; path: string; content: string;
             }));
+          case 'remote_delete':
+            return invoke(() => this.callbacks.delete(input as {
+              mountName?: string; path: string; recursive?: boolean;
+            }));
+          case 'remote_chmod':
+            return invoke(() => this.callbacks.chmod(input as {
+              mountName?: string; path: string; mode: string;
+            }));
+          case 'remote_move':
+            return invoke(() => this.callbacks.move(input as {
+              mountName?: string; sourcePath: string; targetPath: string; overwrite?: boolean;
+            }));
+          case 'remote_upload':
+            return invoke(() => this.callbacks.upload({
+              ...input, agentPlatform
+            } as Parameters<AgentMcpCallbacks['upload']>[0]));
+          case 'remote_download':
+            return invoke(() => this.callbacks.download({
+              ...input, agentPlatform
+            } as Parameters<AgentMcpCallbacks['download']>[0]));
           case 'remote_search':
             return invoke(() => this.callbacks.search({
               ...input, agentName, agentPlatform

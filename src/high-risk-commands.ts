@@ -81,6 +81,43 @@ function stripQuotedSegments(command: string): string {
   return command.replace(/(['"])(?:\\.|(?!\1).)*\1/g, ' ');
 }
 
+/**
+ * Remove heredoc bodies that are data for known non-executing consumers. This
+ * prevents script/file content uploaded with `cat <<EOF` or `tee <<EOF` from
+ * being mistaken for commands. Heredocs consumed by shells/interpreters (and
+ * unknown consumers) remain intact and are scanned conservatively.
+ */
+export function stripDataHeredocBodies(command: string): string {
+  const lines = command.split('\n');
+  let active: { delimiter: string; strip: boolean; tabs: boolean } | undefined;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (active) {
+      const candidate = active.tabs ? line.replace(/^\t+/, '') : line;
+      if (candidate.trimEnd() === active.delimiter) {
+        active = undefined;
+      } else if (active.strip) {
+        lines[index] = '';
+      }
+      continue;
+    }
+    const marker = /<<(-)?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/.exec(line);
+    if (!marker) continue;
+    const prefix = line.slice(0, marker.index);
+    const segment = prefix.split(/(?:&&|\|\||[;|&])/).at(-1) ?? prefix;
+    const tokens = tokenizeCommand(segment);
+    const executable = tokens.find((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token));
+    const consumer = executable ? commandName(executable) : '';
+    const feedsAnotherCommand = line.includes('|') || /[<>]\(/.test(line);
+    active = {
+      delimiter: marker[2] ?? marker[3] ?? marker[4],
+      strip: (consumer === 'cat' || consumer === 'tee') && !feedsAnotherCommand,
+      tabs: marker[1] === '-'
+    };
+  }
+  return lines.join('\n');
+}
+
 // ─── 智能删除目标分析 ───────────────────────────────────────────────────────
 // 不再对 rm -rf / find -delete 一刀切：只拦截删除目标是系统关键位置、
 // 家目录、通配符或范围不确定的操作；`rm -rf ./dist`、`find ./src -delete`
@@ -136,7 +173,7 @@ function extractEmbeddedCommands(command: string): string[] {
   const seen = new Set<string>();
   const pending = [command];
   while (pending.length > 0) {
-    const text = pending.pop()!;
+    const text = stripDataHeredocBodies(pending.pop()!);
     const substitution = /\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`/g;
     const wrapper =
       /\b(?:sh|bash|zsh|dash|ksh|fish)\s+(?:-[a-zA-Z0-9]+\s+)*-?[a-zA-Z0-9]*c[a-zA-Z0-9]*\s+("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\beval\s+("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g;
@@ -243,10 +280,11 @@ function matchDangerousChmodChown(command: string): string | undefined {
 /** 智能删除分析：rm / find / xargs / chmod / chown 的危险操作（含内嵌命令层） */
 export function matchHighRiskDelete(command: string): string | undefined {
   for (const candidate of [command, ...extractEmbeddedCommands(command)]) {
-    const hit = matchDangerousRm(candidate)
-      ?? matchDangerousFind(candidate)
-      ?? matchDangerousXargsRm(candidate)
-      ?? matchDangerousChmodChown(candidate);
+    const executable = stripDataHeredocBodies(candidate);
+    const hit = matchDangerousRm(executable)
+      ?? matchDangerousFind(executable)
+      ?? matchDangerousXargsRm(executable)
+      ?? matchDangerousChmodChown(executable);
     if (hit) return hit;
   }
   return undefined;
@@ -259,7 +297,7 @@ export function matchHighRiskCommand(
   // 对原始命令与每一层内嵌执行内容分别做模式匹配（stripQuotedSegments 会剥掉
   // 引号内容，间接执行的内容必须在解包后的候选上重新匹配）。
   for (const candidate of [command, ...extractEmbeddedCommands(command)]) {
-    const normalized = stripQuotedSegments(candidate.trim());
+    const normalized = stripQuotedSegments(stripDataHeredocBodies(candidate).trim());
     for (const pattern of patterns) {
       try {
         if (new RegExp(pattern, 'i').test(normalized)) return pattern;

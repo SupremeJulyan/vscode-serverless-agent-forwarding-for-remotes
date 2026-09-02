@@ -162,6 +162,7 @@ export class AgentHttpRouter {
         agentName ? `，agent=${agentName}` : ''
       }`
     );
+    const forwardTimeoutMs = this.options.forwardTimeoutMs ?? 120_000;
     const response = await fetch(url, {
       method: 'POST',
       // redirect: manual —— 不允许 3xx 重定向跳出 loopback（SSRF 防护）。
@@ -176,7 +177,7 @@ export class AgentHttpRouter {
         jsonrpc: '2.0', id: requestId, method: 'tools/call',
         params: { name, arguments: args }
       }),
-      signal: AbortSignal.timeout(this.options.forwardTimeoutMs ?? 120_000)
+      signal: forwardTimeoutMs > 0 ? AbortSignal.timeout(forwardTimeoutMs) : undefined
     });
     const body = await response.text();
     if (!response.ok) {

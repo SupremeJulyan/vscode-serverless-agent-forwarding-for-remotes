@@ -495,7 +495,7 @@
           "type": "number",
           "minimum": 0,
           "default": 120000,
-          "description": "Timeout for Agent MCP remote command/search execution (milliseconds). 0 disables the timeout. On expiry the command is aborted and an error is returned, so a hung Agent cannot leave remote commands running in the background forever."
+          "description": "Unified timeout for Agent MCP forwarding, remote commands, searches, uploads, and downloads (milliseconds). 0 disables the timeout."
         },
         "safs.agentMcpMaxOutputBytes": {
           "type": "number",

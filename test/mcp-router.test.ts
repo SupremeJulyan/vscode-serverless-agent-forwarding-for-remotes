@@ -20,7 +20,13 @@ function callbacks(label: string) {
       if ((input as { path?: string }).path === 'forbidden') throw new Error('路径越界');
       return { label, input };
     },
+    read: async (input: unknown) => ({ label, input }),
     write: async (input: unknown) => ({ label, input }),
+    delete: async (input: unknown) => ({ label, input }),
+    chmod: async (input: unknown) => ({ label, input }),
+    move: async (input: unknown) => ({ label, input }),
+    upload: async (input: unknown) => ({ label, input }),
+    download: async (input: unknown) => ({ label, input }),
     search: async (input: unknown) => ({ label, input }),
     run: async (input: unknown) => ({ label, input })
   };
