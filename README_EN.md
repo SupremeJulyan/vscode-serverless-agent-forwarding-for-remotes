@@ -60,7 +60,7 @@ intranet hosts and remote servers that forbid port forwarding.
 ### Install
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.7.0.vsix
+code --install-extension safs-serverless-agent-forwarding-1.7.1.vsix
 ```
 
 ### Add an SSH config and open a remote folder

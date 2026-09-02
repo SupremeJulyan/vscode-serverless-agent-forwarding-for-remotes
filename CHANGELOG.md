@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.1
+
+- 新增 MCP 工具 `remote_read`、`remote_delete`、`remote_chmod`、`remote_move`、
+  `remote_upload` 和 `remote_download`；上传/下载直接复用流式可视化传输，并由 Agent
+  自主指定路径，无需弹出路径选择框。
+- 上传源和下载目标自动限制在当前 Agent cwd 暂存目录，结构化修改与传输目标限制在
+  当前远程工作区，并校验真实路径、父目录及符号链接；只读工具仍可用绝对路径排查
+  工作区外的远程环境。
+- 改进远程命令风险分析：忽略 `cat`/`tee` 的数据 heredoc 正文，继续扫描可执行
+  heredoc，并拒绝目标范围无法静态确认的动态删除或权限修改；所有模式均不弹确认框。
+- MCP 转发、远程命令、搜索和上传/下载统一使用 `safs.agentMcpTimeoutMs`，目录传输
+  支持空目录，并兼容 Windows 扩展宿主与 WSL Agent 的本地路径互转。
+
 ## 1.7.0
 
 - 修复 Agent 从普通本地 cwd 使用 SAFS 时无法自动绑定：cwd 未命中占位目录但恰好有
