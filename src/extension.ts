@@ -323,14 +323,23 @@ function settings(): vscode.WorkspaceConfiguration {
 }
 
 function agentTrace(stage: string, message: string): void {
-  bridgeOutput?.appendLine(
-    `[${new Date().toISOString()}] [Agent trace] [${stage}] ${message}`
-  );
+  bridgeOutput?.debug(`[${stage}] ${message}`);
 }
 
 function logAsyncFailure(label: string, error: unknown): void {
   const detail = error instanceof Error ? error.stack ?? error.message : String(error);
-  bridgeOutput?.appendLine(`[${label}] ${redactSensitiveText(detail)}`);
+  bridgeOutput?.error(`[${label}] ${redactSensitiveText(detail)}`);
+}
+
+function logMcpMessage(component: string, message: string): void {
+  const line = `[${component}] ${message}`;
+  if (message.startsWith('收到 MCP 请求：tools/call')) {
+    bridgeOutput?.info(line);
+  } else if (message.startsWith('收到 MCP 请求：')) {
+    bridgeOutput?.debug(line);
+  } else {
+    bridgeOutput?.info(line);
+  }
 }
 
 function configPath(): string {
@@ -395,7 +404,7 @@ async function executeAgentMcpCommand(
 }
 
 function performanceLine(label: string, startedAt: number): void {
-  bridgeOutput?.appendLine(`[性能] ${label}: ${(performance.now() - startedAt).toFixed(1)} ms`);
+  bridgeOutput?.trace(`[性能] ${label}: ${(performance.now() - startedAt).toFixed(1)} ms`);
 }
 
 async function timedPhase<T>(label: string, action: () => Promise<T>): Promise<T> {
@@ -516,7 +525,7 @@ async function selectMount(placeHolder: string): Promise<MountConfig | undefined
 async function ensureFolder(mount: MountConfig): Promise<RemoteFolder> {
   const existing = registry.get(mount.name);
   if (existing) {
-    agentTrace('SFTP', `复用挂载 ${mount.name}，remoteRoot=${existing.remoteRoot}`);
+    bridgeOutput?.trace(`[SFTP] 复用挂载 ${mount.name}，remoteRoot=${existing.remoteRoot}`);
     await pool.get(existing.hostName);
     refreshSafsEntryLabel();
     return existing;
@@ -1661,11 +1670,15 @@ async function logManagedTerminalExit(
   info: NonNullable<ReturnType<typeof managedRemoteTerminals.get>>
 ): Promise<string> {
   const status = terminal.exitStatus;
-  bridgeOutput?.appendLine(
-    `[终端] ${terminal.name} 已关闭；mount=${info.mount.name}；exit=${
-      status?.code ?? 'unknown'
-    }；reason=${status?.reason ?? 'unknown'}`
-  );
+  const exitLine = `[终端] ${terminal.name} 已关闭；mount=${info.mount.name}；exit=${
+    status?.code ?? 'unknown'
+  }；reason=${status?.reason ?? 'unknown'}`;
+  if (status?.reason === vscode.TerminalExitReason.Process
+    && status.code !== 0 && !info.pty?.cleanExit) {
+    bridgeOutput?.warn(exitLine);
+  } else {
+    bridgeOutput?.info(exitLine);
+  }
   const diagnostic = info.diagnostic;
   if (!diagnostic) return '';
   let diagnosticText = '';
@@ -1760,8 +1773,10 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
       );
       return;
     }
-    bridgeOutput?.appendLine(
-      `[终端] 已启用自动重连，正在重连 ${remoteCwd}（${fails}/${maxTerminalAutoReconnectAttempts}）`
+    bridgeOutput?.info(
+      `[终端] 安排自动重连；mount=${reopen.mount.name}；cwd=${remoteCwd}；attempt=${
+        fails
+      }/${maxTerminalAutoReconnectAttempts}`
     );
     await openTerminal(
       vscodeContext, reopen.mount, remoteCwd, undefined, true, false, reopen.hostKeyRetries ?? 0
@@ -1911,7 +1926,7 @@ async function openTerminal(
         const pty = new Ssh2Terminal(
           resolved.hostConfig, resolved.hostConfig.password!, remoteCwd,
           (error) => {
-            bridgeOutput?.appendLine(
+            bridgeOutput?.error(
               `[终端] 内置 ssh2 终端 ${mount.name} 失败：${error.stack ?? error.message}`
             );
             // Server rejected the pty/shell negotiation (gateway appliance):
@@ -3010,7 +3025,7 @@ async function ensureAgentHttpRouter(
           settings().get<number>('agentHttpRouterPort', 9848),
           await agentMcpToken(context),
           {
-            log: (message) => bridgeOutput?.appendLine(`[Agent HTTP Router] ${message}`),
+            log: (message) => logMcpMessage('Agent HTTP Router', message),
             audit: auditMcpTool,
             forwardTimeoutMs: settings().get<number>('agentMcpTimeoutMs', 120_000)
           }
@@ -3177,7 +3192,7 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
           updateSafsStatusBar(vscode.window.state.focused, agentName, agentPlatform);
         },
         audit: auditMcpTool,
-        log: (message) => bridgeOutput?.appendLine(`[Agent MCP] ${message}`)
+        log: (message) => logMcpMessage('Agent MCP', message)
       }
     );
     context.subscriptions.push({ dispose: () => void mcp?.stop() });
