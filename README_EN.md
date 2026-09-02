@@ -484,6 +484,14 @@ port and defaults to `9848`; the extension rejects an unrelated process occupyin
   the terminal `cd`s to that file's directory in real time (default `false`);
   opening a remote terminal and reopening a remote window always follow the
   active file's directory regardless of this setting.
+- `safs.terminalAutoReconnect`: automatically reconnect the remote terminal
+  when the remote connection is abnormally interrupted/crashed (default
+  `false`); when enabled the "Reconnect terminal" confirmation is skipped and
+  a terminal is reopened in the same directory. It triggers only on abnormal
+  remote disconnects (dropped connection, crashed session, non-zero/missing
+  exit code); manually closing the terminal locally or typing `exit` to exit
+  normally never triggers it. Stops after 3 consecutive abnormal exits to
+  avoid an infinite loop.
 - `safs.highRiskCommandPatterns`: regex rules for dangerous remote commands
   requested by Agents through MCP (defaults include recursive delete,
   disk/partition/filesystem operations, shutdown/reboot, piping remote

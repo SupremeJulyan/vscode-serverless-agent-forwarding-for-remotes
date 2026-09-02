@@ -604,6 +604,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "切换/打开远程文件时，实时把远程终端 `cd` 到文件所在目录（默认 `false`）。无论该设置如何，**打开远程终端**和**重开远程窗口**都会跟随当前打开的远程文件目录。"
+        },
+        "safs.terminalAutoReconnect": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "远端连接被异常中断/崩溃时自动重连远程终端（默认 `false`）。开启后不再弹出“重连终端”确认框，直接重新打开同一目录的终端；仅在远端异常断连（连接掉线、会话崩溃，退出码非 0 或无退出码）时触发，本地手动在 VS Code 关闭或输入 `exit` 正常退出不触发；同一挂载+目录连续异常退出 `3` 次会停止自动重连以避免无限循环。"
         }
       }
     },

@@ -209,13 +209,16 @@ export async function executeSsh2Command(
 export class Ssh2Terminal implements vscode.Pseudoterminal {
   private readonly writeEmitter = new vscode.EventEmitter<string>();
   readonly onDidWrite = this.writeEmitter.event;
-  private readonly closeEmitter = new vscode.EventEmitter<number>();
+  private readonly closeEmitter = new vscode.EventEmitter<number | undefined>();
   readonly onDidClose = this.closeEmitter.event;
   private readonly client = new Client();
   private stream?: ClientChannel;
   private dimensions: vscode.TerminalDimensions = { columns: 80, rows: 24 };
   private password?: string;
   private closed = false;
+  /** 远端已通过 SSH 协议上报 shell 进程退出（exit-status/exit-signal），
+   *  即用户输入 exit / 远端主动结束会话；连接中断不会触发 exit 事件。 */
+  private exitStatusReceived = false;
   private readonly cwdTracker = new RemoteCwdOscTracker();
   private readonly outputDecoder = new StringDecoder('utf8');
   private readonly stderrDecoder = new StringDecoder('utf8');
@@ -298,11 +301,17 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
         const data = this.stderrDecoder.write(chunk);
         if (data) this.writeEmitter.fire(data);
       });
-      stream.once('close', (code: number | undefined) => {
+      // ssh2 仅在服务器返回 exit-status / exit-signal（正常/主动结束会话）时
+      // 触发 exit 事件；连接被远端切断/掉线时不会触发，而是直接 close 且无退出码。
+      stream.once('exit', () => {
+        this.exitStatusReceived = true;
+      });
+      stream.once('close', (code: number | null | undefined) => {
+        if (typeof code === 'number') this.exitStatusReceived = true;
         this.handleOutput(this.outputDecoder.end());
         const stderr = this.stderrDecoder.end();
         if (stderr) this.writeEmitter.fire(stderr);
-        this.finish(code ?? 0);
+        this.finish(typeof code === 'number' ? code : undefined);
       });
       // 补发连接建立期间排队（live-sync）的输入，避免 cd 被丢弃。
       if (this.pendingInput) {
@@ -380,7 +389,12 @@ export class Ssh2Terminal implements vscode.Pseudoterminal {
     this.finish(1);
   }
 
-  private finish(code: number): void {
+  /** 远端是否以 SSH exit-status/exit-signal 正常结束会话（输入 exit 等主动退出）。 */
+  get cleanExit(): boolean {
+    return this.exitStatusReceived;
+  }
+
+  private finish(code: number | undefined): void {
     if (this.closed) return;
     this.closed = true;
     this.password = undefined;

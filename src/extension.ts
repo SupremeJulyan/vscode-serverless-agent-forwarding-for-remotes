@@ -104,6 +104,8 @@ const addTerminalLinkMountAction = '添加 SSH 配置';
 const openTerminalLinkConfigAction = '打开配置';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
 const logClearIntervalMs = 24 * 60 * 60 * 1000;
+/** 启用 safs.terminalAutoReconnect 后，同一挂载+目录的终端连续异常退出的自动重连上限，避免无限重连循环。 */
+const maxTerminalAutoReconnectAttempts = 3;
 /** Agent MCP 探测结果缓存：configureDetectedAgents 的 get 探测在 TTL 内复用，
  * 避免每次打开目录/窗口都串行 spawn 全部 Agent CLI（codex/claude 启动可达数百 ms）。 */
 const agentProbeCacheTtlMs = 60_000;
@@ -141,6 +143,8 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   pty?: import('./ssh2-terminal').Ssh2Terminal;
   diagnostic?: { file: string; command: string };
 }>();
+/** 自动重连计数（key：mount\0remoteCwd），防止异常退出时无限自动重连。 */
+const autoReconnectFails = new Map<string, number>();
 
 interface SafsTerminalLink extends vscode.TerminalLink {
   mountName: string;
@@ -1627,7 +1631,14 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   managedRemoteTerminals.delete(terminal);
   if (!reopen) return;
   const diagnosticText = await logManagedTerminalExit(terminal, reopen);
-  if (terminal.exitStatus?.reason !== vscode.TerminalExitReason.Process) {
+  const status = terminal.exitStatus;
+  // 仅当远端连接被异常中断/崩溃时才处理（重连或提示）：
+  // - 本地手动在 VS Code 关闭终端（reason=User/Shutdown）不触发；
+  // - 在远端输入 exit 等正常结束会话（exit-status 到达 / 退出码 0）也不触发。
+  if (status?.reason !== vscode.TerminalExitReason.Process) {
+    return;
+  }
+  if (status.code === 0 || reopen.pty?.cleanExit) {
     return;
   }
   // Reconnect into the remote directory currently open in this window
@@ -1660,6 +1671,25 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
       `SAFS: 内置终端与该服务器不兼容，已改用系统 SSH 重连“${reopen.mount.name}”。`
     );
     await openTerminal(vscodeContext, reopen.mount, remoteCwd, undefined, true, true);
+    return;
+  }
+  if (settings().get<boolean>('terminalAutoReconnect', false)) {
+    const key = `${reopen.mount.name}\0${remoteCwd}`;
+    const fails = (autoReconnectFails.get(key) ?? 0) + 1;
+    autoReconnectFails.set(key, fails);
+    if (fails >= maxTerminalAutoReconnectAttempts) {
+      autoReconnectFails.delete(key);
+      void vscode.window.showErrorMessage(
+        `远程终端“${terminal.name}”已连续异常退出${fails}次，已停止自动重连。`
+      );
+      return;
+    }
+    bridgeOutput?.appendLine(
+      `[终端] 已启用自动重连，正在重连 ${remoteCwd}（${fails}/${maxTerminalAutoReconnectAttempts}）`
+    );
+    await openTerminal(
+      vscodeContext, reopen.mount, remoteCwd, undefined, true, false, reopen.hostKeyRetries ?? 0
+    );
     return;
   }
   const selected = await vscode.window.showInformationMessage(
@@ -1862,6 +1892,8 @@ async function openTerminal(
       }, terminalCredentialTtlMs);
     }
     terminal.show();
+    // 成功（尝试）创建即视为一次健康连接，重置该目录的自动重连失败计数。
+    autoReconnectFails.delete(`${mount.name}\0${remoteCwd}`);
     return { terminal, created: true };
   } finally {
     openingTerminalIds.delete(terminalId);

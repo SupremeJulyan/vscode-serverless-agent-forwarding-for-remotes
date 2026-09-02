@@ -361,6 +361,7 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
 ## 设置
 
 - `safs.terminalFollowsActiveFile`：切换/打开远程文件时实时把终端 `cd` 到文件所在目录（默认 `false`）；打开远程终端和重开远程窗口始终跟随活动文件目录，与此设置无关）
+- `safs.terminalAutoReconnect`：远端异常断连（掉线/崩溃，退出码非 0 或无退出码）时自动重连（默认 `false`）；开启后不再弹出“重连终端”确认框，直接重开同一目录的终端（本地手动关闭、远端输入 `exit` 正常退出都不触发），连续异常退出 3 次后停止以避免无限循环）
 - `safs.configPath`
 - `safs.reuseSshConnection`
 - `safs.sshClientIdent`：SSH 客户端标识字符串，默认伪装为 `OpenSSH_9.6`；
