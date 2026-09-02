@@ -387,7 +387,7 @@ async function executeAgentMcpCommand(
   plan: CommandPlan, signal?: AbortSignal, maxOutputBytes = 1024 * 1024
 ): Promise<Awaited<ReturnType<typeof executeCaptured>>> {
   const displayName = redactAgentMcpText(planDisplayName(plan));
-  bridgeOutput?.appendLine(`[${new Date().toLocaleString()}] [Agent MCP] $ ${displayName}`);
+  bridgeOutput?.appendLine(`[Agent MCP] $ ${displayName}`);
   try {
     const result = await executeCaptured(
       { ...plan, cwd: plan.cwd ?? os.homedir() }, signal, maxOutputBytes
@@ -2570,7 +2570,7 @@ async function executeRemoteCommand(
       let result;
       if (platformAdapter.kind === 'windows') {
         bridgeOutput?.appendLine(
-          `[${new Date().toLocaleString()}] [Agent MCP] $ ${redactSensitiveText(input.command)} (cwd: ${remoteCwd})`
+          `[Agent MCP] $ ${redactSensitiveText(input.command)} (cwd: ${remoteCwd})`
         );
         try {
           result = await executeSsh2Command(
@@ -3349,7 +3349,7 @@ function createMcpRunner(platform: AgentPlatformContext): AgentMcpCliRunner {
       signal
     ),
     log: (message) => bridgeOutput?.appendLine(
-      `[${new Date().toLocaleString()}] [Agent MCP] $ ${message}`
+      `[Agent MCP] $ ${message}`
     )
   };
 }
@@ -3751,7 +3751,7 @@ async function ensureSystemDependencies(): Promise<void> {
   if (platform !== 'wsl' || await hasRequiredWslDependencies()) return;
   const platformName = 'WSL';
   bridgeOutput?.appendLine(
-    `[${new Date().toLocaleString()}] 检测到 ${platformName} 系统依赖缺失，开始自动安装`
+    `检测到 ${platformName} 系统依赖缺失，开始自动安装`
   );
   try {
     await vscode.window.withProgress({
