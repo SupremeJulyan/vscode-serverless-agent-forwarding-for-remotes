@@ -1665,6 +1665,21 @@ async function recoverTerminalDiagnostics(context: vscode.ExtensionContext): Pro
   }
 }
 
+const sshConnectionDropPatterns = [
+  /connection reset by peer/i,
+  /connection (?:closed|terminated) (?:by remote|remotely)/i,
+  /connection unexpectedly closed/i,
+  /broken pipe/i,
+  /kex_exchange_identification.*closed/i,
+  /connection (?:refused|timed out)/i,
+  /no route to host/i,
+  /network is unreachable/i
+];
+
+function isSshConnectionDrop(diagnosticText: string): boolean {
+  return sshConnectionDropPatterns.some((pattern) => pattern.test(diagnosticText));
+}
+
 async function logManagedTerminalExit(
   terminal: vscode.Terminal,
   info: NonNullable<ReturnType<typeof managedRemoteTerminals.get>>
@@ -1723,11 +1738,12 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   const status = terminal.exitStatus;
   // 仅当远端连接被异常中断/崩溃时才处理（重连或提示）：
   // - 本地手动在 VS Code 关闭终端（reason=User/Shutdown）不触发；
-  // - 在远端输入 exit 等正常结束会话（exit-status 到达 / 退出码 0）也不触发。
+  // - 在远端输入 exit 等正常结束会话（exit-status 到达 / 退出码 0）也不触发；
+  // - 退出码 0 但诊断文本含连接断开特征（Connection reset / Broken pipe 等）视为异常断开。
   if (status?.reason !== vscode.TerminalExitReason.Process) {
     return;
   }
-  if (status.code === 0 || reopen.pty?.cleanExit) {
+  if ((status.code === 0 && !isSshConnectionDrop(diagnosticText)) || reopen.pty?.cleanExit) {
     return;
   }
   // Reconnect into the remote directory currently open in this window
