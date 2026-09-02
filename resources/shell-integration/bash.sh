@@ -43,6 +43,33 @@ __safs_prompt_end() { builtin printf '\e]633;B\a'; }
 __safs_first_prompt=''
 __safs_in_command=1
 __safs_current_command=''
+__safs_command_status=0
+
+# PROMPT_COMMAND may run arbitrary user hooks before SAFS. Capture the command
+# status first and return it unchanged so the existing first hook still sees
+# the real `$?` value.
+__safs_prompt_capture() {
+  local status=$?
+  __safs_command_status=$status
+  return "$status"
+}
+
+# Run last in PROMPT_COMMAND. This must execute in the current shell: using a
+# `( ... )` subshell loses __safs_in_command/__safs_first_prompt and prevents
+# the next DEBUG/preexec hook from reporting E/C/D command boundaries.
+__safs_prompt_finish() {
+  local status=$__safs_command_status
+  if builtin declare -F __safs_report_cwd >/dev/null; then
+    if (( ${__safs_rich_command_detection:-0} )) && [[ -n ${__safs_current_command:-} ]]; then
+      builtin printf '\e]633;D;%s\a' "$status"
+    fi
+    __safs_report_cwd "$status"
+    __safs_first_prompt=1
+    __safs_current_command=''
+    __safs_in_command=0
+  fi
+  return "$status"
+}
 
 __safs_preexec() {
   local status=$?
@@ -70,15 +97,13 @@ elif [[ $- == *i* && -z $__safs_debug_trap ]]; then
   __safs_rich_command_detection=1
 fi
 
-__safs_prompt_command='(__safs_status=$?; if builtin declare -F __safs_report_cwd >/dev/null; then if (( ${__safs_rich_command_detection:-0} )) && [[ -n ${__safs_first_prompt:-} ]]; then builtin printf "\e]633;D;%s\a" "$__safs_status"; fi; __safs_report_cwd "$__safs_status"; __safs_first_prompt=1; __safs_current_command=""; __safs_in_command=0; fi; exit "$__safs_status")'
 if [[ $(builtin declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a '* ]]; then
-  PROMPT_COMMAND+=("$__safs_prompt_command")
+  PROMPT_COMMAND=(__safs_prompt_capture "${PROMPT_COMMAND[@]}" __safs_prompt_finish)
 elif [[ -n ${PROMPT_COMMAND:-} ]]; then
-  PROMPT_COMMAND="${PROMPT_COMMAND}"$'\n'"$__safs_prompt_command"
+  PROMPT_COMMAND="__safs_prompt_capture"$'\n'"${PROMPT_COMMAND}"$'\n'"__safs_prompt_finish"
 else
-  PROMPT_COMMAND="$__safs_prompt_command"
+  PROMPT_COMMAND=$'__safs_prompt_capture\n__safs_prompt_finish'
 fi
-unset __safs_prompt_command
 
 PS1="\[$(__safs_prompt_start)\]${PS1}\[$(__safs_prompt_end)\]"
 if (( __safs_rich_command_detection )); then
