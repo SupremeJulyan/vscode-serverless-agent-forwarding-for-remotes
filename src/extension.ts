@@ -77,8 +77,8 @@ import {
   evaluateMcpCommandPolicy, readMcpCommandPolicySettings
 } from './mcp-command-policy';
 import {
-  cleanTerminalDiagnostic, decodeTerminalDiagnostic, shouldRecoverTerminalExit,
-  terminalDiagnosticPlan
+  cleanTerminalDiagnostic, decodeTerminalDiagnostic, nextAutoReconnectAttempt,
+  shouldRecoverTerminalExit, terminalDiagnosticPlan
 } from './terminal-diagnostics';
 import { shouldUseBuiltinSshTerminal } from './terminal-routing';
 import {
@@ -109,8 +109,10 @@ const addTerminalLinkMountAction = '添加 SSH 配置';
 const openTerminalLinkConfigAction = '打开配置';
 const terminalCredentialTtlMs = 5 * 60 * 1000;
 const logClearIntervalMs = 24 * 60 * 60 * 1000;
-/** 启用 safs.terminalAutoReconnect 后，同一挂载+目录的终端连续异常退出的自动重连上限，避免无限重连循环。 */
-const maxTerminalAutoReconnectAttempts = 3;
+/** 稳定终端断开后只自动恢复一次；短时间内再次退出视为用户主动结束。 */
+const maxTerminalAutoReconnectAttempts = 1;
+/** 存活达到该时长的终端视为稳定连接，后续断开重新从第 1 次重连计数。 */
+const terminalAutoReconnectStableMs = 60_000;
 /** Agent MCP 探测结果缓存：configureDetectedAgents 的 get 探测在 TTL 内复用，
  * 避免每次打开目录/窗口都串行 spawn 全部 Agent CLI（codex/claude 启动可达数百 ms）。 */
 const agentProbeCacheTtlMs = 60_000;
@@ -144,6 +146,7 @@ const managedRemoteTerminals = new Map<vscode.Terminal, {
   remoteCwd: string;
   retryWithSystemSsh?: boolean;
   hostKeyRetries?: number;
+  startedAt: number;
   /** 内置 ssh2 终端实例：live-sync 用它安全补发 cd（shell 就绪前入队）。 */
   pty?: import('./ssh2-terminal').Ssh2Terminal;
   diagnostic?: { file: string; command: string };
@@ -1769,17 +1772,19 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   }
   if (autoReconnect) {
     const key = `${reopen.mount.name}\0${remoteCwd}`;
-    const fails = (autoReconnectFails.get(key) ?? 0) + 1;
+    const lifetimeMs = Math.max(0, Date.now() - reopen.startedAt);
+    const fails = nextAutoReconnectAttempt(
+      autoReconnectFails.get(key) ?? 0, lifetimeMs, terminalAutoReconnectStableMs
+    );
     autoReconnectFails.set(key, fails);
-    if (fails >= maxTerminalAutoReconnectAttempts) {
+    if (fails > maxTerminalAutoReconnectAttempts) {
       autoReconnectFails.delete(key);
       bridgeOutput?.error(
-        `[终端] 已停止自动重连；mount=${reopen.mount.name}；cwd=${remoteCwd}；attempt=${
-          fails
-        }/${maxTerminalAutoReconnectAttempts}`
+        `[终端] 已停止自动重连；mount=${reopen.mount.name}；cwd=${remoteCwd}；` +
+        '重连后的终端在 60 秒内再次退出'
       );
       void vscode.window.showErrorMessage(
-        `远程终端“${terminal.name}”已连续异常退出${fails}次，已停止自动重连。`
+        `远程终端“${terminal.name}”重连后再次退出，已停止自动重连。`
       );
       return;
     }
@@ -1979,7 +1984,7 @@ async function openTerminal(
       });
     performanceLine(`${mount.name} SSH 终端创建（不含远端握手）`, terminalStartedAt);
     managedRemoteTerminals.set(terminal, {
-      mount, remoteCwd, pty: builtinPty, diagnostic, hostKeyRetries
+      mount, remoteCwd, pty: builtinPty, diagnostic, hostKeyRetries, startedAt: Date.now()
     });
     if (credentials) {
       const disposable = vscode.window.onDidCloseTerminal((closed) => {
@@ -1994,8 +1999,6 @@ async function openTerminal(
       }, terminalCredentialTtlMs);
     }
     terminal.show();
-    // 成功（尝试）创建即视为一次健康连接，重置该目录的自动重连失败计数。
-    autoReconnectFails.delete(`${mount.name}\0${remoteCwd}`);
     return { terminal, created: true };
   } finally {
     openingTerminalIds.delete(terminalId);

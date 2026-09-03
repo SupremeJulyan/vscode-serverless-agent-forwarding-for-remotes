@@ -6,8 +6,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
 import {
-  cleanTerminalDiagnostic, decodeTerminalDiagnostic, shouldRecoverTerminalExit,
-  terminalDiagnosticPlan
+  cleanTerminalDiagnostic, decodeTerminalDiagnostic, nextAutoReconnectAttempt,
+  shouldRecoverTerminalExit, terminalDiagnosticPlan
 } from '../src/terminal-diagnostics';
 
 const plan = {
@@ -91,6 +91,13 @@ test('an SSH disconnect diagnostic is recoverable even when exit code is 0', () 
     autoReconnect: false,
     diagnosticText: 'client_loop: send disconnect: Broken pipe'
   }), true);
+});
+
+test('automatic reconnect attempts accumulate only for short-lived terminals', () => {
+  assert.equal(nextAutoReconnectAttempt(0, 5_000, 60_000), 1);
+  assert.equal(nextAutoReconnectAttempt(1, 59_999, 60_000), 2);
+  assert.equal(nextAutoReconnectAttempt(2, 60_000, 60_000), 1);
+  assert.equal(nextAutoReconnectAttempt(2, 10 * 60_000, 60_000), 1);
 });
 
 test('Unix wrapper mirrors stderr, persists it, and preserves the SSH exit code', {

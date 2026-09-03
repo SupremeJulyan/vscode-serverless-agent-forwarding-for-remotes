@@ -31,6 +31,12 @@ export function shouldRecoverTerminalExit(input: {
     || sshConnectionDropPatterns.some((pattern) => pattern.test(input.diagnosticText));
 }
 
+export function nextAutoReconnectAttempt(
+  previousAttempts: number, terminalLifetimeMs: number, stableLifetimeMs: number
+): number {
+  return terminalLifetimeMs >= stableLifetimeMs ? 1 : previousAttempts + 1;
+}
+
 const ansiPattern = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
 /**
