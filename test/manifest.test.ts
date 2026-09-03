@@ -32,11 +32,15 @@ test('extension declares the SFTP filesystem activation event', async () => {
     await readFile(new URL('../package.json', import.meta.url), 'utf8')
   ) as ExtensionManifest;
 
-  assert.equal(manifest.version, '1.7.1');
+  assert.equal(manifest.version, '1.7.2');
   assert.ok(manifest.activationEvents?.includes('onFileSystem:safs'));
   assert.ok(manifest.activationEvents?.includes('onCommand:safs.switchRemoteDirectory'));
   assert.equal(manifest.activationEvents?.includes('*'), false);
   assert.deepEqual(manifest.extensionKind, ['workspace']);
+  assert.equal(
+    manifest.contributes?.configuration?.properties?.['safs.terminalAutoReconnect']?.default,
+    true
+  );
 });
 
 test('contributes a remote-directory switch command instead of relying on the local picker', async () => {

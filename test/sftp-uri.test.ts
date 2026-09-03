@@ -59,11 +59,14 @@ test('resolves dot and relative roots through the server realpath result', () =>
 test('rejects malformed or unrelated remote URIs', () => {
   assert.throws(() => parseRemoteUri('file:///srv/project'), /Unsupported remote URI scheme/);
   assert.throws(
-    () => parseRemoteUri(`${remoteUri('project', '/srv')}?secret=value`),
-    /Invalid remote workspace URI/
-  );
-  assert.throws(
     () => parseRemoteUri('safs://user@project/srv'),
     /Invalid remote workspace URI/
+  );
+});
+
+test('ignores cache metadata appended by VS Code media previews', () => {
+  assert.deepEqual(
+    parseRemoteUri(`${remoteUri('project', '/srv/效果图.png')}?version%3D123#preview`),
+    { mountName: 'project', remotePath: '/srv/效果图.png' }
   );
 });

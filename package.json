@@ -3,7 +3,7 @@
   "displayName": "SAFS：Serverless Agent Forwarding for SSH",
   "description": "Serverless Agent Forwarding for SSH: remote SFTP workspaces, SSH execution, and MCP routing without VS Code Server.",
   "icon": "images/icon.png",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "publisher": "julyan",
   "license": "MIT",
   "repository": {
@@ -607,8 +607,8 @@
         },
         "safs.terminalAutoReconnect": {
           "type": "boolean",
-          "default": false,
-          "markdownDescription": "远端连接被异常中断/崩溃时自动重连远程终端（默认 `false`）。开启后不再弹出“重连终端”确认框，直接重新打开同一目录的终端；仅在远端异常断连（连接掉线、会话崩溃，退出码非 0 或无退出码）时触发，本地手动在 VS Code 关闭或输入 `exit` 正常退出不触发；同一挂载+目录连续异常退出 `3` 次会停止自动重连以避免无限循环。"
+          "default": true,
+          "markdownDescription": "远程终端进程结束后自动重连（默认 `true`）。稳定运行超过 `60` 秒的终端结束时会重开同一目录；重连后的终端若在 `60` 秒内再次结束，则视为用户主动退出并停止重连。手动在 VS Code 中关闭终端或窗口不会触发重连。"
         }
       }
     },

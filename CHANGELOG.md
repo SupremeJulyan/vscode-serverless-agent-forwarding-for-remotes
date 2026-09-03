@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.2
+
+- 修复 VS Code 图片等媒体预览为 `safs:` URI 附加缓存参数后无法读取远程文件的问题。
+- 远程终端自动重连改为默认开启；稳定连接结束后重连一次，重连终端在 60 秒内再次
+  退出则停止，兼顾服务器空闲断连与用户输入 `exit` 主动结束。
+- 精简 SAFS 默认日志，心跳、协议握手和完整 SSH 命令降为 Debug/Trace。
+
 ## 1.7.1
 
 - 新增 MCP 工具 `remote_read`、`remote_delete`、`remote_chmod`、`remote_move`、

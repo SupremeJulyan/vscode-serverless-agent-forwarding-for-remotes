@@ -1730,7 +1730,7 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   // - 启用自动重连后，所有 Process 结束都会恢复；部分 HPC 网关会把空闲超时报告为
   //   exit 0/cleanExit，无法与远端输入 exit 区分；
   // - 未启用自动重连时，exit 0 仅在诊断文本含断线特征时才提示用户。
-  const autoReconnect = settings().get<boolean>('terminalAutoReconnect', false);
+  const autoReconnect = settings().get<boolean>('terminalAutoReconnect', true);
   if (!shouldRecoverTerminalExit({
     processExit: status?.reason === vscode.TerminalExitReason.Process,
     exitCode: status?.code,

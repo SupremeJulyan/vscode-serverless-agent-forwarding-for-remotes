@@ -86,7 +86,10 @@ export function parseRemoteUri(value: string): RemoteUriLocation {
   if (parsed.protocol !== `${remoteFileSystemScheme}:`) {
     throw new Error(`Unsupported remote URI scheme: ${parsed.protocol.slice(0, -1)}`);
   }
-  if (parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash) {
+  // VS Code media previews append cache-busting query/fragment data to custom
+  // filesystem URIs. They are not part of the remote filename and must be
+  // ignored, just like FileSystemProvider implementations ignore URI metadata.
+  if (parsed.username || parsed.password || parsed.port) {
     throw new Error(`Invalid remote workspace URI: ${value}`);
   }
   return {
