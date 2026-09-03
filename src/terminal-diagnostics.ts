@@ -1,5 +1,30 @@
 import type { CommandPlan, PlatformKind } from './platform';
 
+const sshConnectionDropPatterns = [
+  /connection reset by peer/i,
+  /connection (?:closed|terminated) (?:by remote|remotely)/i,
+  /connection unexpectedly closed/i,
+  /broken pipe/i,
+  /kex_exchange_identification.*closed/i,
+  /connection (?:refused|timed out)/i,
+  /no route to host/i,
+  /network is unreachable/i
+];
+
+export function shouldRecoverTerminalExit(input: {
+  processExit: boolean;
+  exitCode: number | undefined;
+  cleanExit: boolean;
+  systemSsh: boolean;
+  autoReconnect: boolean;
+  diagnosticText: string;
+}): boolean {
+  if (!input.processExit || input.cleanExit) return false;
+  return input.exitCode !== 0
+    || sshConnectionDropPatterns.some((pattern) => pattern.test(input.diagnosticText))
+    || (input.autoReconnect && input.systemSsh);
+}
+
 const ansiPattern = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
 /**

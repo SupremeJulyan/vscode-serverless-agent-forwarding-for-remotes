@@ -77,7 +77,8 @@ import {
   evaluateMcpCommandPolicy, readMcpCommandPolicySettings
 } from './mcp-command-policy';
 import {
-  cleanTerminalDiagnostic, decodeTerminalDiagnostic, terminalDiagnosticPlan
+  cleanTerminalDiagnostic, decodeTerminalDiagnostic, shouldRecoverTerminalExit,
+  terminalDiagnosticPlan
 } from './terminal-diagnostics';
 import { shouldUseBuiltinSshTerminal } from './terminal-routing';
 import {
@@ -387,12 +388,12 @@ async function executeAgentMcpCommand(
   plan: CommandPlan, signal?: AbortSignal, maxOutputBytes = 1024 * 1024
 ): Promise<Awaited<ReturnType<typeof executeCaptured>>> {
   const displayName = redactAgentMcpText(planDisplayName(plan));
-  bridgeOutput?.appendLine(`[Agent MCP] $ ${displayName}`);
+  bridgeOutput?.debug(`[Agent MCP] $ ${displayName}`);
   try {
     const result = await executeCaptured(
       { ...plan, cwd: plan.cwd ?? os.homedir() }, signal, maxOutputBytes
     );
-    bridgeOutput?.appendLine(
+    bridgeOutput?.debug(
       `[Agent MCP] [${result.exitCode === 0 ? '完成' : `失败: exit ${result.exitCode}`}] ${displayName}`
     );
     return result;
@@ -1665,21 +1666,6 @@ async function recoverTerminalDiagnostics(context: vscode.ExtensionContext): Pro
   }
 }
 
-const sshConnectionDropPatterns = [
-  /connection reset by peer/i,
-  /connection (?:closed|terminated) (?:by remote|remotely)/i,
-  /connection unexpectedly closed/i,
-  /broken pipe/i,
-  /kex_exchange_identification.*closed/i,
-  /connection (?:refused|timed out)/i,
-  /no route to host/i,
-  /network is unreachable/i
-];
-
-function isSshConnectionDrop(diagnosticText: string): boolean {
-  return sshConnectionDropPatterns.some((pattern) => pattern.test(diagnosticText));
-}
-
 async function logManagedTerminalExit(
   terminal: vscode.Terminal,
   info: NonNullable<ReturnType<typeof managedRemoteTerminals.get>>
@@ -1738,14 +1724,18 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
   const status = terminal.exitStatus;
   // 仅当远端连接被异常中断/崩溃时才处理（重连或提示）：
   // - 本地手动在 VS Code 关闭终端（reason=User/Shutdown）不触发；
-  // - 在远端输入 exit 等正常结束会话（exit-status 到达 / 退出码 0）也不触发；
-  // - 退出码 0 但诊断文本含连接断开特征（Connection reset / Broken pipe 等）视为异常断开。
-  if (status?.reason !== vscode.TerminalExitReason.Process) {
-    return;
-  }
-  if ((status.code === 0 && !isSshConnectionDrop(diagnosticText)) || reopen.pty?.cleanExit) {
-    return;
-  }
+  // - 内置 ssh2 能准确识别远端 shell 正常退出，不触发；
+  // - 系统 SSH 可能把服务器主动关闭/空闲超时报告为 exit 0，启用自动重连时仍需恢复；
+  // - 未启用自动重连时，exit 0 仅在诊断文本含断线特征时才提示用户。
+  const autoReconnect = settings().get<boolean>('terminalAutoReconnect', false);
+  if (!shouldRecoverTerminalExit({
+    processExit: status?.reason === vscode.TerminalExitReason.Process,
+    exitCode: status?.code,
+    cleanExit: reopen.pty?.cleanExit ?? false,
+    systemSsh: !reopen.pty,
+    autoReconnect,
+    diagnosticText
+  })) return;
   // Reconnect into the remote directory currently open in this window
   // (kept in sync by SAFS: 切换远程目录), falling back to the cwd the
   // terminal was originally opened with.
@@ -1778,7 +1768,7 @@ async function suggestReopeningClosedTerminal(terminal: vscode.Terminal): Promis
     await openTerminal(vscodeContext, reopen.mount, remoteCwd, undefined, true, true);
     return;
   }
-  if (settings().get<boolean>('terminalAutoReconnect', false)) {
+  if (autoReconnect) {
     const key = `${reopen.mount.name}\0${remoteCwd}`;
     const fails = (autoReconnectFails.get(key) ?? 0) + 1;
     autoReconnectFails.set(key, fails);
@@ -1929,8 +1919,9 @@ async function openTerminal(
         )
       : { ...plan, command: resolvedTerminalCommand };
     const terminalCommand = await resolveExecutable(terminalPlan.command, terminalPlan.env);
-    bridgeOutput?.appendLine(
-      `[终端] 正在启动 ${mount.name}；cwd=${remoteCwd ?? remoteRoot}；$ ${
+    bridgeOutput?.info(`[终端] 正在启动 ${mount.name}；cwd=${remoteCwd ?? remoteRoot}`);
+    bridgeOutput?.debug(
+      `[终端] 启动命令：$ ${
         redactSensitiveText(planDisplayName({ ...plan, command: resolvedTerminalCommand }))
       }`
     );

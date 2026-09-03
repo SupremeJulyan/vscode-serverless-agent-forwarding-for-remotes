@@ -6,7 +6,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
 import {
-  cleanTerminalDiagnostic, decodeTerminalDiagnostic, terminalDiagnosticPlan
+  cleanTerminalDiagnostic, decodeTerminalDiagnostic, shouldRecoverTerminalExit,
+  terminalDiagnosticPlan
 } from '../src/terminal-diagnostics';
 
 const plan = {
@@ -42,6 +43,50 @@ test('terminal diagnostics decode UTF-8 and Windows PowerShell UTF-16LE output',
   assert.equal(decodeTerminalDiagnostic(Buffer.concat([
     Buffer.from([0xff, 0xfe]), Buffer.from('错误', 'utf16le')
   ])), '错误');
+});
+
+test('system SSH exit 0 is recovered when automatic reconnect is enabled', () => {
+  assert.equal(shouldRecoverTerminalExit({
+    processExit: true,
+    exitCode: 0,
+    cleanExit: false,
+    systemSsh: true,
+    autoReconnect: true,
+    diagnosticText: ''
+  }), true);
+  assert.equal(shouldRecoverTerminalExit({
+    processExit: true,
+    exitCode: 0,
+    cleanExit: false,
+    systemSsh: true,
+    autoReconnect: false,
+    diagnosticText: ''
+  }), false);
+});
+
+test('terminal recovery excludes user/window closure and known clean ssh2 exits', () => {
+  const base = {
+    exitCode: 1,
+    cleanExit: false,
+    systemSsh: true,
+    autoReconnect: true,
+    diagnosticText: 'Connection reset by peer'
+  };
+  assert.equal(shouldRecoverTerminalExit({ ...base, processExit: false }), false);
+  assert.equal(shouldRecoverTerminalExit({
+    ...base, processExit: true, cleanExit: true, systemSsh: false
+  }), false);
+});
+
+test('an SSH disconnect diagnostic is recoverable even when exit code is 0', () => {
+  assert.equal(shouldRecoverTerminalExit({
+    processExit: true,
+    exitCode: 0,
+    cleanExit: false,
+    systemSsh: true,
+    autoReconnect: false,
+    diagnosticText: 'client_loop: send disconnect: Broken pipe'
+  }), true);
 });
 
 test('Unix wrapper mirrors stderr, persists it, and preserves the SSH exit code', {
