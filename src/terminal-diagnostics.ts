@@ -15,14 +15,20 @@ export function shouldRecoverTerminalExit(input: {
   processExit: boolean;
   exitCode: number | undefined;
   cleanExit: boolean;
-  systemSsh: boolean;
   autoReconnect: boolean;
   diagnosticText: string;
 }): boolean {
-  if (!input.processExit || input.cleanExit) return false;
+  if (!input.processExit) return false;
+  // VS Code reports a remote shell's exit-status as a Process exit. Some HPC
+  // gateways use exit 0 both for an explicit `exit` and for server-side idle
+  // session expiry, so neither the code nor ssh2's cleanExit can distinguish
+  // them. When the user explicitly enables automatic reconnect, Process exit
+  // is the requested policy; closing the terminal tab/window has another
+  // TerminalExitReason and is filtered above.
+  if (input.autoReconnect) return true;
+  if (input.cleanExit) return false;
   return input.exitCode !== 0
-    || sshConnectionDropPatterns.some((pattern) => pattern.test(input.diagnosticText))
-    || (input.autoReconnect && input.systemSsh);
+    || sshConnectionDropPatterns.some((pattern) => pattern.test(input.diagnosticText));
 }
 
 const ansiPattern = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;

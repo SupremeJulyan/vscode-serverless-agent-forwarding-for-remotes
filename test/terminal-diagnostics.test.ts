@@ -50,7 +50,6 @@ test('system SSH exit 0 is recovered when automatic reconnect is enabled', () =>
     processExit: true,
     exitCode: 0,
     cleanExit: false,
-    systemSsh: true,
     autoReconnect: true,
     diagnosticText: ''
   }), true);
@@ -58,23 +57,29 @@ test('system SSH exit 0 is recovered when automatic reconnect is enabled', () =>
     processExit: true,
     exitCode: 0,
     cleanExit: false,
-    systemSsh: true,
     autoReconnect: false,
     diagnosticText: ''
   }), false);
 });
 
-test('terminal recovery excludes user/window closure and known clean ssh2 exits', () => {
+test('terminal recovery excludes user/window closure but auto-recovers clean ssh2 exits', () => {
   const base = {
     exitCode: 1,
     cleanExit: false,
-    systemSsh: true,
     autoReconnect: true,
     diagnosticText: 'Connection reset by peer'
   };
   assert.equal(shouldRecoverTerminalExit({ ...base, processExit: false }), false);
   assert.equal(shouldRecoverTerminalExit({
-    ...base, processExit: true, cleanExit: true, systemSsh: false
+    ...base, processExit: true, cleanExit: true
+  }), true);
+  assert.equal(shouldRecoverTerminalExit({
+    ...base,
+    processExit: true,
+    exitCode: 0,
+    cleanExit: true,
+    autoReconnect: false,
+    diagnosticText: ''
   }), false);
 });
 
@@ -83,7 +88,6 @@ test('an SSH disconnect diagnostic is recoverable even when exit code is 0', () 
     processExit: true,
     exitCode: 0,
     cleanExit: false,
-    systemSsh: true,
     autoReconnect: false,
     diagnosticText: 'client_loop: send disconnect: Broken pipe'
   }), true);
