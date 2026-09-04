@@ -76,6 +76,13 @@ function safeToolInput(toolName: string, input: Record<string, unknown> = {}): s
   if (toolName === 'remote_write' && typeof input.content === 'string') {
     summary.contentBytes = Buffer.byteLength(input.content, 'utf8');
   }
+  if (toolName === 'remote_edit' && Array.isArray(input.edits)) {
+    summary.editCount = input.edits.length;
+    const expectedHash = input.expectedHash;
+    if (typeof expectedHash === 'string' && /^[0-9a-f]{64}$/i.test(expectedHash)) {
+      summary.expectedHash = expectedHash.toLowerCase();
+    }
+  }
   if (toolName === 'remote_upload' && Array.isArray(input.localPaths)) {
     summary.localPaths = input.localPaths.slice(0, 20).flatMap((value) =>
       typeof value === 'string' ? [redactSensitiveText(value).slice(0, 500)] : []

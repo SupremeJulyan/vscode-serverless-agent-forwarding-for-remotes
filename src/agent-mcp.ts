@@ -23,6 +23,11 @@ export interface AgentMcpCallbacks {
   read(input: {
     mountName?: string; path: string; offset?: number; length?: number;
   }): Promise<unknown>;
+  edit(input: {
+    mountName?: string; path: string;
+    edits: Array<{ oldText: string; newText: string }>;
+    expectedHash?: string;
+  }): Promise<unknown>;
   write(input: { mountName?: string; path: string; content: string }): Promise<unknown>;
   delete(input: { mountName?: string; path: string; recursive?: boolean }): Promise<unknown>;
   chmod(input: { mountName?: string; path: string; mode: string }): Promise<unknown>;
@@ -132,6 +137,12 @@ export class AgentMcpServer {
           case 'remote_read':
             return invoke(() => this.callbacks.read(input as {
               mountName?: string; path: string; offset?: number; length?: number;
+            }));
+          case 'remote_edit':
+            return invoke(() => this.callbacks.edit(input as {
+              mountName?: string; path: string;
+              edits: Array<{ oldText: string; newText: string }>;
+              expectedHash?: string;
             }));
           case 'remote_write':
             return invoke(() => this.callbacks.write(input as {

@@ -72,6 +72,9 @@ import {
   validateLocalDownloadTarget, validateLocalUploadSource
 } from './local-transfer-path';
 import { redactSensitiveText } from './redact';
+import {
+  applyRemoteTextEdits, maxRemoteEditFileBytes, RemoteTextEdit, textSha256
+} from './remote-edit';
 import { shellQuote } from './shell-quote';
 import {
   evaluateMcpCommandPolicy, readMcpCommandPolicySettings
@@ -2411,6 +2414,51 @@ async function remoteWrite(input: {
   return { path: remotePath, bytes: content.length };
 }
 
+async function remoteEdit(input: {
+  mountName: string; path: string; edits: RemoteTextEdit[]; expectedHash?: string;
+}): Promise<unknown> {
+  const { folder } = await mountAndFolder(input.mountName);
+  const session = await pool.get(folder.hostName);
+  const entry = await verifiedRemoteEntry(folder, session, input.path);
+  if (entry.stat.type !== 'file') {
+    throw new Error(`remote_edit 只能修改普通文件：${input.path}`);
+  }
+  if (entry.stat.size > maxRemoteEditFileBytes) {
+    throw new Error(`remote_edit 文件不能超过 ${maxRemoteEditFileBytes} 字节：${input.path}`);
+  }
+  const data = await session.readFile(entry.remotePath);
+  if (data.length > maxRemoteEditFileBytes) {
+    throw new Error(`remote_edit 文件不能超过 ${maxRemoteEditFileBytes} 字节：${input.path}`);
+  }
+  const beforeHash = textSha256(data);
+  if (input.expectedHash && input.expectedHash.toLowerCase() !== beforeHash) {
+    throw new Error(
+      `remote_edit 文件已变化，expectedHash=${input.expectedHash.toLowerCase()}，` +
+      `actualHash=${beforeHash}`
+    );
+  }
+  let content: string;
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(data);
+  } catch {
+    throw new Error(`remote_edit 只支持有效的 UTF-8 文本：${input.path}`);
+  }
+  const edited = applyRemoteTextEdits(content, input.edits);
+  const encoded = new TextEncoder().encode(edited.content);
+  if (encoded.length > maxRemoteEditFileBytes) {
+    throw new Error(`remote_edit 修改结果不能超过 ${maxRemoteEditFileBytes} 字节：${input.path}`);
+  }
+  const uri = vscode.Uri.parse(folderUri(folder, entry.remotePath));
+  await provider.writeFile(uri, encoded, { create: false, overwrite: true });
+  return {
+    path: entry.remotePath,
+    replacements: edited.replacements,
+    bytes: encoded.length,
+    beforeHash,
+    hash: textSha256(encoded)
+  };
+}
+
 async function verifiedRemoteEntry(
   folder: RemoteFolder, session: SftpSession, value: string,
   options: { allowWorkspaceRoot?: boolean; allowSymbolicLink?: boolean } = {}
@@ -3126,6 +3174,9 @@ async function ensureAgentMcpServer(context: vscode.ExtensionContext): Promise<A
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         read: async (input) => remoteRead({
+          ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
+        }),
+        edit: async (input) => remoteEdit({
           ...input, mountName: forwardedWindowMountName(context, boundMountName, input.mountName)
         }),
         write: async (input) => remoteWrite({

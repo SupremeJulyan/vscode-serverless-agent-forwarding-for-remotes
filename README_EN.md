@@ -198,7 +198,7 @@ platforms.
 5. The Agent can now use the remote tools directly: `#safsList`,
    `#safsWrite`, `#safsSearch`, and `#safsRun` for VS Code agents, or the MCP
    tools `safs_get_remote_workspace`, `remote_list`,
-   `remote_read`, `remote_write`, `remote_delete`, `remote_chmod`, `remote_move`,
+   `remote_read`, `remote_edit`, `remote_write`, `remote_delete`, `remote_chmod`, `remote_move`,
    `remote_upload`, `remote_download`, `remote_search`, and
    `run_remote_command`, plus
    `current_remote_file` to inspect the remote file currently open in VS Code.
@@ -252,7 +252,9 @@ as follows:
 - `workspaceRoot` is the remote directory actually open in that VS Code window,
   not the configured SFTP mount root. Relative `remote_list`/`remote_read`/`remote_search`
   paths and the default `run_remote_command` working directory start there.
-- `remote_write` can write files only inside `workspaceRoot` and its descendants.
+- `remote_edit` atomically changes an existing UTF-8 file using unique exact
+  matches; use `remote_write` to create or fully replace a file. Both can write
+  only inside `workspaceRoot` and its descendants.
   Read-only `remote_list`, `remote_read`, and `remote_search` may still inspect
   explicitly supplied absolute paths elsewhere.
 - **Currently open remote file**: call `current_remote_file` to get the remote
@@ -305,7 +307,7 @@ VS Code tools: `#safsList`,
 `#safsCurrentRemoteFile` (path and metadata of the currently open remote file).
 
 The loopback-only, token-protected MCP service exposes
-`safs_get_remote_workspace`, `remote_list`, `remote_read`, `remote_write`,
+`safs_get_remote_workspace`, `remote_list`, `remote_read`, `remote_edit`, `remote_write`,
 `remote_delete`, `remote_chmod`, `remote_move`,
 `remote_upload`, `remote_download`, `remote_search`, `run_remote_command`, and
 `current_remote_file`. For `remote_upload` and `remote_download`, the Agent
@@ -332,7 +334,7 @@ extension does not create or read Agent guidance files on the remote host.
 `run_remote_command` does not show per-command Shell confirmation prompts.
 Commands matching the high-risk rules are denied or allowed directly according
 to configuration, while ordinary commands run directly. Prefer workspace-confined
-`remote_write` for ordinary file writes. The command tool is not a filesystem
+`remote_edit` or `remote_write` for ordinary file changes. The command tool is not a filesystem
 sandbox: once allowed, it has every permission of the SSH login account. For
 strong isolation, use a least-privilege non-root account without passwordless
 privilege escalation and, when needed, a remote container, chroot, or restricted

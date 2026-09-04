@@ -21,6 +21,7 @@ function callbacks(label: string) {
       return { label, input };
     },
     read: async (input: unknown) => ({ label, input }),
+    edit: async (input: unknown) => ({ label, input }),
     write: async (input: unknown) => ({ label, input }),
     delete: async (input: unknown) => ({ label, input }),
     chmod: async (input: unknown) => ({ label, input }),
@@ -286,7 +287,7 @@ test('unmatched cwd returns Agent-conversation candidates and accepts workspaceI
     const tools = await client.listTools();
     for (const tool of tools.tools) {
       assert.equal(JSON.stringify(tool.inputSchema).includes('mountName'), false);
-      if (['current_remote_file', 'remote_list', 'remote_write', 'remote_search',
+      if (['current_remote_file', 'remote_list', 'remote_edit', 'remote_write', 'remote_search',
         'run_remote_command'].includes(tool.name)) {
         assert.ok((tool.inputSchema.required as string[] | undefined)?.includes('bindingId'));
       }

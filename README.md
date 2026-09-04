@@ -158,7 +158,7 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 5. 之后 Agent 可直接使用远程工具：VS Code Agent 的 `#safsList`、
    `#safsWrite`、`#safsSearch`、`#safsRun`，或 MCP 工具
    `safs_get_remote_workspace`、`remote_list`、
-   `remote_read`、`remote_write`、`remote_delete`、`remote_chmod`、`remote_move`、
+   `remote_read`、`remote_edit`、`remote_write`、`remote_delete`、`remote_chmod`、`remote_move`、
    `remote_upload`、`remote_download`、
    `remote_search`、`run_remote_command`，
    以及 `current_remote_file`（查看当前打开的远程文件路径与元数据）。
@@ -204,7 +204,8 @@ Agent 可以是 VS Code 扩展（Copilot Chat、Codex 等），也可以是桌�
 - `workspaceRoot` 是该 VS Code 窗口当前实际打开的远程目录，不是
   SFTP 配置的挂载根。`remote_list`、`remote_read`、`remote_search` 的相对路径以及
   `run_remote_command` 的默认工作目录都以它为基准。
-- `remote_write` 只能在 `workspaceRoot` 及其子目录内写入文件；只读的
+- `remote_edit` 用唯一精确匹配原子修改现有 UTF-8 文件，`remote_write` 用于新建或
+  完整替换文件；两者只能在 `workspaceRoot` 及其子目录内写入文件。只读的
   `remote_list`、`remote_read`、`remote_search` 仍可用绝对路径查看其他位置。
 - **当前打开的远程文件**：调用 `current_remote_file` 获取 VS Code 中当前
   打开的远程文件（路径、相对挂载根的路径、大小、是否有未保存修改）。需要查看内容时
@@ -259,7 +260,7 @@ VS Code Agent 可使用：
 - `#safsCurrentRemoteFile`（当前打开的远程文件路径与元数据）
 
 扩展还在 `127.0.0.1` 上提供令牌保护的 Streamable HTTP MCP 服务，工具包括
-`safs_get_remote_workspace`、`remote_list`、`remote_read`、`remote_write`、
+`safs_get_remote_workspace`、`remote_list`、`remote_read`、`remote_edit`、`remote_write`、
 `remote_delete`、`remote_chmod`、`remote_move`、
 `remote_upload`、`remote_download`、`remote_search`、`run_remote_command` 和
 `current_remote_file`。`remote_upload` / `remote_download` 的本地与远程路径均由
@@ -281,7 +282,7 @@ Agent 仅在 SAFS 远程任务中绑定当前 SFTP 虚拟工作区；
 
 `run_remote_command` 不再对 Shell 命令弹出逐次确认。命中高风险规则的命令按配置
 直接拒绝或放行，普通命令直接执行；普通文件创建或覆盖仍建议使用受当前工作区边界
-保护的 `remote_write`。命令工具不是文件系统沙箱，获准执行后拥有 SSH 登录账号的全部
+保护的 `remote_edit` 或 `remote_write`。命令工具不是文件系统沙箱，获准执行后拥有 SSH 登录账号的全部
 权限；强隔离应使用非 root 最小权限账号并禁用免密提权，必要时再在远端使用容器、chroot
 或受限执行账号。`remote_list`、`remote_read` 和 `remote_search` 保持可读取工作区外的
 绝对路径，便于排查系统环境，但不会因此扩大结构化写工具的边界。

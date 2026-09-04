@@ -72,6 +72,18 @@ test('logs every tool with Agent identity without storing file content', async (
   assert.match(line, /"contentBytes":18/);
   assert.equal(line.includes('top secret content'), false);
 
+  const editLine = formatMcpToolLogLine({
+    toolName: 'remote_edit', agentName: 'codex',
+    input: {
+      path: 'notes.txt', expectedHash: 'a'.repeat(64),
+      edits: [{ oldText: 'private source', newText: 'replacement source' }]
+    }
+  }, now);
+  assert.match(editLine, /"editCount":1/);
+  assert.match(editLine, /"expectedHash":"a{64}"/);
+  assert.equal(editLine.includes('private source'), false);
+  assert.equal(editLine.includes('replacement source'), false);
+
   const file = await appendMcpToolLog({
     toolName: 'remote_list', agentName: 'opencode', agentPlatform: 'linux',
     input: { mountName: 'yx', path: '.' }

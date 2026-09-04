@@ -26,6 +26,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       return { ...input, entries: [] };
     },
     read: async (input) => ({ ...input, content: 'hello', truncated: false }),
+    edit: async (input) => ({ ...input, replacements: input.edits.length }),
     write: async (input) => ({ ...input, bytes: input.content.length }),
     delete: async (input) => ({ ...input, deleted: true }),
     chmod: async (input) => ({ ...input, changed: true }),
@@ -51,6 +52,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
       'remote_chmod',
       'remote_delete',
       'remote_download',
+      'remote_edit',
       'remote_list',
       'remote_move',
       'remote_read',
@@ -89,6 +91,13 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     assert.deepEqual(JSON.parse(readText), {
       path: 'src/index.ts', offset: 10, length: 20, content: 'hello', truncated: false
     });
+    const edited = await client.callTool({
+      name: 'remote_edit', arguments: {
+        path: 'src/index.ts',
+        edits: [{ oldText: 'hello', newText: 'world' }]
+      }
+    });
+    assert.equal(JSON.parse((edited.content as any[])[0].text).replacements, 1);
     const downloaded = await client.callTool({
       name: 'remote_download', arguments: {
         remotePath: 'dist/app.bin', localPath: '/tmp/app.bin'
@@ -132,7 +141,7 @@ test('serves direct SFTP file and SSH command tools through MCP', async () => {
     });
     assert.deepEqual(audited.map((entry) => entry.toolName), [
       'current_remote_file', 'safs_get_remote_workspace', 'remote_list',
-      'remote_read', 'remote_download', 'remote_upload', 'remote_delete',
+      'remote_read', 'remote_edit', 'remote_download', 'remote_upload', 'remote_delete',
       'remote_chmod', 'remote_move', 'remote_list'
     ]);
     assert.ok(audited.every((entry) => entry.agentName === 'codex'));
@@ -154,6 +163,7 @@ test('allocates independent ports for concurrent window MCP servers', async () =
     currentFile: async () => null,
     list: async () => [],
     read: async () => ({}),
+    edit: async () => ({}),
     write: async () => ({}),
     delete: async () => ({}),
     chmod: async () => ({}),

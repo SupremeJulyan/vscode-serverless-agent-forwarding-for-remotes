@@ -7,8 +7,9 @@ import { z } from 'zod';
 export const directAgentMcpInstructions =
   'This MCP server is only for SAFS remote workspaces. Do not call SAFS tools for ordinary local workspaces. '
   + 'Only for an explicit SAFS task or known safs:// context, call safs_get_remote_workspace once to bind this window workspace. Virtual remote files are NOT present in the agent host filesystem. '
-  + 'Use the returned workspace and its remote_list, remote_read, remote_write, remote_delete, remote_chmod, remote_move, remote_search, remote_upload, remote_download, current_remote_file, and run_remote_command tools for workspace operations. Never substitute the local filesystem or local shell. '
+  + 'Use the returned workspace and its remote_list, remote_read, remote_edit, remote_write, remote_delete, remote_chmod, remote_move, remote_search, remote_upload, remote_download, current_remote_file, and run_remote_command tools for workspace operations. Never substitute the local filesystem or local shell. '
   + 'Use remote_read for bounded UTF-8 text reads; use remote_download for binary files, large files, and directories. '
+  + 'Prefer remote_edit for small changes to existing UTF-8 files; use remote_write to create or fully replace a file. '
   + 'Use remote_delete, remote_chmod, and remote_move instead of shell rm, chmod, or mv when changing workspace files. '
   + 'For remote_upload and remote_download, local paths must stay inside the Agent current cwd staging directory. '
   + 'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata. '
@@ -20,8 +21,9 @@ export const routedAgentMcpInstructions = [
   'If the cwd does not match exactly or is ambiguous, the tool returns candidates. Ask the user to choose in the Agent conversation, then call safs_switch_remote_workspace with that workspaceId and userConfirmed=true. Never select in the same turn as asking, and never treat one candidate as consent. No VS Code Quick Pick is used.',
   'When the user asks to list available SAFS workspaces, change host/configuration, or switch away from the current binding, call safs_switch_remote_workspace without a workspaceId. Never use safs_get_remote_workspace for switching.',
   'A successful safs_switch_remote_workspace call cancels the previous task. Stop the current workflow and wait for a new user request before calling workspace tools.',
-  'Use the returned workspace and its remote_list, remote_read, remote_write, remote_delete, remote_chmod, remote_move, remote_search, remote_upload, remote_download, current_remote_file, and run_remote_command tools for that workspace.',
+  'Use the returned workspace and its remote_list, remote_read, remote_edit, remote_write, remote_delete, remote_chmod, remote_move, remote_search, remote_upload, remote_download, current_remote_file, and run_remote_command tools for that workspace.',
   'Use remote_read for bounded UTF-8 text reads; use remote_download for binary files, large files, and directories.',
+  'Prefer remote_edit for small changes to existing UTF-8 files; use remote_write to create or fully replace a file.',
   'Use remote_delete, remote_chmod, and remote_move instead of shell rm, chmod, or mv when changing workspace files.',
   'For remote_upload and remote_download, local paths must stay inside the Agent current cwd staging directory.',
   'To learn which file is open in the VS Code window, call current_remote_file for its path and metadata.',
@@ -35,6 +37,7 @@ export type AgentMcpToolName =
   | 'current_remote_file'
   | 'remote_list'
   | 'remote_read'
+  | 'remote_edit'
   | 'remote_write'
   | 'remote_delete'
   | 'remote_chmod'
@@ -103,6 +106,21 @@ function toolDefinitions(routed: boolean): AgentMcpToolDefinition[] {
         length: z.number().int().min(1).max(65536).optional()
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    {
+      name: 'remote_edit',
+      title: 'Edit a remote text file',
+      description: 'Atomically applies exact text replacements to an existing UTF-8 file inside the current workspace. Each oldText must match exactly once; all edits are validated in order before anything is written. Use expectedHash from a prior result to reject stale edits. Files and resulting content are capped at 1 MiB.',
+      inputSchema: {
+        ...binding,
+        path: z.string().min(1),
+        edits: z.array(z.object({
+          oldText: z.string().min(1),
+          newText: z.string()
+        })).min(1).max(100),
+        expectedHash: z.string().regex(/^[0-9a-fA-F]{64}$/).optional()
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
     },
     {
       name: 'remote_write',
