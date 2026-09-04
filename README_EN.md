@@ -60,7 +60,7 @@ intranet hosts and remote servers that forbid port forwarding.
 ### Install
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.7.2.vsix
+code --install-extension safs-serverless-agent-forwarding-1.7.3.vsix
 ```
 
 ### Add an SSH config and open a remote folder
@@ -341,6 +341,10 @@ privilege escalation and, when needed, a remote container, chroot, or restricted
 execution account. `remote_list`, `remote_read`, and `remote_search` may read
 absolute paths outside the workspace for environment diagnostics; this does not
 expand the boundary of the structured write tools.
+
+MCP command audit logs under `~/.safs/mcp_logs/` include the redacted command text,
+its original byte count, and SHA-256. Common tokens, passwords, authentication
+headers, and URL credentials are replaced with `<hidden>`.
 
 Tool results are throttled so large output cannot blow up model context:
 `remote_list` returns at most 500 entries by default (raise with `limit`; when

@@ -50,7 +50,7 @@
 ### 安装
 
 ```sh
-code --install-extension safs-serverless-agent-forwarding-1.7.2.vsix
+code --install-extension safs-serverless-agent-forwarding-1.7.3.vsix
 ```
 
 ### 添加 SSH 配置并打开远程目录
@@ -413,7 +413,9 @@ claude mcp add --transport http --scope user safs 'http://127.0.0.1:9848/mcp?tok
   默认包含递归删除、磁盘/分区/文件系统操作、关机重启、管道执行远程脚本，以及 `sudo`/`su`/
   `doas`/`pkexec`/`runas`、setuid/setgid、账号管理、`visudo`/`sudoers` 等提权操作。命中即按
   `safs.highRiskCommandAction` 处理；设为 `[]` 可关闭拦截。匹配会忽略引号内的内容，避免搜索
-  “sudo” 这类关键词时误伤。`cat`/`tee` 的 heredoc 正文按数据处理，不参与匹配；Shell 或
-  解释器实际执行的 heredoc 仍会扫描。动态且无法确认目标范围的破坏操作直接拒绝，不弹窗。
+“sudo” 这类关键词时误伤。`cat`/`tee` 的 heredoc 正文按数据处理，不参与匹配；Shell 或
+解释器实际执行的 heredoc 仍会扫描。动态且无法确认目标范围的破坏操作直接拒绝，不弹窗。
+- MCP 命令审计日志位于 `~/.safs/mcp_logs/`，记录脱敏后的命令原文、原始字节数和
+  SHA-256；常见 Token、密码、认证头和 URL 凭据会替换为 `<hidden>`。
 - `safs.highRiskCommandAction`：`deny`（默认）直接拒绝高危命令并记录日志；`allow` 直接
   放行。两种模式均不弹出逐次确认；旧版 `confirm` 值按 `deny` 处理。
